@@ -1,4 +1,5 @@
 import { afterEach, expect, it as test, vi } from "vitest";
+
 import { AccessMode, createServer, deps } from "../../../src/server.ts";
 import type { SqlExecutor } from "../../../src/sql/safe-sql.ts";
 import { callToolText, connectClient } from "../../support/mcp-client.ts";

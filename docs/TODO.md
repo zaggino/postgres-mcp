@@ -249,7 +249,3 @@ Error messages returned to the client and written to stderr include the full SQL
 ## 2026-11-26 · Minor · Cleanup · Python-shaped data contracts
 
 `RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.
-
-## 2026-11-26 · Minor · Chore · Lint suppressions encode project-wide decisions
-
-About thirty inline `biome-ignore` comments in `src/` cover three rules (`noAwaitInLoops`, `useThisInClassMethods`, `noExcessiveClassesPerFile`). Decide each rule once in `biome.jsonc` or restructure the code, and remove the inline comments.

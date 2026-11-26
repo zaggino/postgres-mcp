@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+
 import {
   SqlBindParams,
   TableAliasVisitor,
@@ -32,9 +33,9 @@ async function analyse(sql: string): Promise<Analysis> {
 }
 
 test("a single table with WHERE and ORDER BY collects both columns", async () => {
-  expect(
-    await analyse("SELECT * FROM users WHERE name = 'Alice' ORDER BY age")
-  ).toEqual({
+  await expect(
+    analyse("SELECT * FROM users WHERE name = 'Alice' ORDER BY age")
+  ).resolves.toEqual({
     tables: ["users"],
     aliases: {},
     columns: { users: ["age", "name"] },
@@ -42,14 +43,14 @@ test("a single table with WHERE and ORDER BY collects both columns", async () =>
 });
 
 test("a JOIN resolves aliases for select, ON and WHERE columns", async () => {
-  expect(
-    await analyse(`
+  await expect(
+    analyse(`
       SELECT u.name, o.order_date
       FROM users u
       JOIN orders o ON u.id = o.user_id
       WHERE o.status = 'pending'
     `)
-  ).toEqual({
+  ).resolves.toEqual({
     tables: ["orders", "users"],
     aliases: { u: "users", o: "orders" },
     columns: {
@@ -60,11 +61,11 @@ test("a JOIN resolves aliases for select, ON and WHERE columns", async () => {
 });
 
 test("a subquery in FROM is scanned and its alias is treated as a table name", async () => {
-  expect(
-    await analyse(
+  await expect(
+    analyse(
       "SELECT s.id FROM (SELECT id, total FROM orders WHERE total > 10) s WHERE s.id > 5"
     )
-  ).toEqual({
+  ).resolves.toEqual({
     tables: ["orders"],
     aliases: {},
     columns: { s: ["id"], orders: ["id", "total"] },
@@ -72,12 +73,12 @@ test("a subquery in FROM is scanned and its alias is treated as a table name", a
 });
 
 test("GROUP BY, HAVING and an ORDER BY on a select alias collect the underlying column", async () => {
-  expect(
-    await analyse(
+  await expect(
+    analyse(
       `SELECT status AS st, count(*) AS n FROM orders
        WHERE amount > 5 GROUP BY status HAVING count(*) > 1 ORDER BY st`
     )
-  ).toEqual({
+  ).resolves.toEqual({
     tables: ["orders"],
     aliases: {},
     columns: { orders: ["amount", "status"] },
@@ -85,7 +86,7 @@ test("GROUP BY, HAVING and an ORDER BY on a select alias collect the underlying 
 });
 
 test("SELECT * collects no columns", async () => {
-  expect(await analyse("SELECT * FROM users")).toEqual({
+  await expect(analyse("SELECT * FROM users")).resolves.toEqual({
     tables: ["users"],
     aliases: {},
     columns: {},
@@ -93,9 +94,9 @@ test("SELECT * collects no columns", async () => {
 });
 
 test("$n placeholders are ignored and the compared columns are collected", async () => {
-  expect(
-    await analyse("SELECT id FROM users WHERE id = $1 AND status = $2")
-  ).toEqual({
+  await expect(
+    analyse("SELECT id FROM users WHERE id = $1 AND status = $2")
+  ).resolves.toEqual({
     tables: ["users"],
     aliases: {},
     columns: { users: ["id", "status"] },
@@ -107,9 +108,9 @@ function statsDriver(cells: Record<string, unknown>): SqlExecutor {
 }
 
 test("columns inside bare SQL/JSON structs are collected", async () => {
-  expect(
-    await analyse("SELECT json_value(t.col, '$.a') FROM t WHERE t.id = 1")
-  ).toEqual({
+  await expect(
+    analyse("SELECT json_value(t.col, '$.a') FROM t WHERE t.id = 1")
+  ).resolves.toEqual({
     tables: ["t"],
     aliases: {},
     columns: { t: ["col", "id"] },
@@ -125,9 +126,9 @@ test("a pg_stats integer beyond 2^53 is bound with every digit", async () => {
       histogram_bounds: null,
     })
   );
-  expect(await bind.replaceParameters("SELECT id FROM t WHERE t.id = $1")).toBe(
-    "SELECT id FROM t WHERE t.id = 1234567890123456789"
-  );
+  await expect(
+    bind.replaceParameters("SELECT id FROM t WHERE t.id = $1")
+  ).resolves.toBe("SELECT id FROM t WHERE t.id = 1234567890123456789");
 });
 
 test("a small pg_stats float is bound in Python's exponent notation", async () => {
@@ -139,9 +140,9 @@ test("a small pg_stats float is bound in Python's exponent notation", async () =
       histogram_bounds: null,
     })
   );
-  expect(
-    await bind.replaceParameters("SELECT id FROM t WHERE t.price = $1")
-  ).toBe("SELECT id FROM t WHERE t.price = 2e-05");
+  await expect(
+    bind.replaceParameters("SELECT id FROM t WHERE t.price = $1")
+  ).resolves.toBe("SELECT id FROM t WHERE t.price = 2e-05");
 });
 
 test("a quote in a pg_stats text value cannot end the bound string literal", async () => {

@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { afterEach, beforeEach, expect, test } from "vitest";
+
 import { DatabaseTuningAdvisor } from "../../src/index/dta-calc.ts";
 import type { WorkloadEntry } from "../../src/index/index-opt-base.ts";
 import { IndexTuningResult } from "../../src/index/index-opt-base.ts";
@@ -20,7 +22,6 @@ async function runRepeatedly(
   times: number
 ): Promise<void> {
   for (let i = 0; i < times; i += 1) {
-    // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
     await sqlDriver.executeQuery(query);
   }
 }
@@ -121,15 +122,18 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     });
   }
 
-  test("recommends useful indexes for a join order benchmark style workload", {
-    retry: 2,
-  }, async ({ skip }) => {
-    await setupTestTables(sqlDriver);
-    const dta = await createDta();
+  test(
+    "recommends useful indexes for a join order benchmark style workload",
+    {
+      retry: 2,
+    },
+    async ({ skip }) => {
+      await setupTestTables(sqlDriver);
+      const dta = await createDta();
 
-    try {
-      // Set up JOB-like schema (simplified movie database)
-      await sqlDriver.executeQuery(`
+      try {
+        // Set up JOB-like schema (simplified movie database)
+        await sqlDriver.executeQuery(`
         DROP TABLE IF EXISTS movie_cast;
         DROP TABLE IF EXISTS movie_companies;
         DROP TABLE IF EXISTS movie_genres;
@@ -185,8 +189,8 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         );
         `);
 
-      // Insert sample data with DETERMINISTIC values instead of random
-      await sqlDriver.executeQuery(`
+        // Insert sample data with DETERMINISTIC values instead of random
+        await sqlDriver.executeQuery(`
         -- Insert genres
         INSERT INTO genres (id, name) VALUES
             (1, 'Action'), (2, 'Comedy'), (3, 'Drama'), (4, 'Sci-Fi'), (5, 'Thriller');
@@ -277,25 +281,25 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         ) as movie_genre_assignment;
         `);
 
-      // Force a thorough ANALYZE to ensure consistent statistics
-      await sqlDriver.executeQuery(
-        "ANALYZE VERBOSE movies, actors, movie_cast, companies, movie_companies, genres, movie_genres"
-      );
+        // Force a thorough ANALYZE to ensure consistent statistics
+        await sqlDriver.executeQuery(
+          "ANALYZE VERBOSE movies, actors, movie_cast, companies, movie_companies, genres, movie_genres"
+        );
 
-      // Define JOB-style queries
-      const jobQueries: WorkloadQuery[] = [
-        {
-          query: `
+        // Define JOB-style queries
+        const jobQueries: WorkloadQuery[] = [
+          {
+            query: `
                 SELECT m.title, a.name
                 FROM movies m
                 JOIN movie_cast mc ON m.id = mc.movie_id
                 JOIN actors a ON mc.actor_id = a.id
                 WHERE m.year > 2010 AND a.gender = 'F'
                 `,
-          calls: 30,
-        },
-        {
-          query: `
+            calls: 30,
+          },
+          {
+            query: `
                 SELECT m.title, g.name, COUNT(a.id) as actor_count
                 FROM movies m
                 JOIN movie_genres mg ON m.id = mg.movie_id
@@ -307,10 +311,10 @@ describeWithPostgres("database tuning advisor", (postgres) => {
                 ORDER BY actor_count DESC
                 LIMIT 20
                 `,
-          calls: 25,
-        },
-        {
-          query: `
+            calls: 25,
+          },
+          {
+            query: `
                 SELECT c.name, COUNT(m.id) as movie_count, AVG(m.rating) as avg_rating
                 FROM companies c
                 JOIN movie_companies mc ON c.id = mc.company_id
@@ -320,10 +324,10 @@ describeWithPostgres("database tuning advisor", (postgres) => {
                 HAVING COUNT(m.id) > 5
                 ORDER BY avg_rating DESC
                 `,
-          calls: 20,
-        },
-        {
-          query: `
+            calls: 20,
+          },
+          {
+            query: `
                 SELECT a.name, COUNT(DISTINCT g.name) as genre_diversity
                 FROM actors a
                 JOIN movie_cast mc ON a.id = mc.actor_id
@@ -335,10 +339,10 @@ describeWithPostgres("database tuning advisor", (postgres) => {
                 ORDER BY genre_diversity DESC, a.name
                 LIMIT 10
                 `,
-          calls: 15,
-        },
-        {
-          query: `
+            calls: 15,
+          },
+          {
+            query: `
                 SELECT m.year, g.name, COUNT(*) as movie_count
                 FROM movies m
                 JOIN movie_genres mg ON m.id = mg.movie_id
@@ -347,151 +351,145 @@ describeWithPostgres("database tuning advisor", (postgres) => {
                 GROUP BY m.year, g.name
                 ORDER BY m.year DESC, movie_count DESC
                 `,
-          calls: 10,
-        },
-      ];
-
-      // Clear pg_stat_statements
-      await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
-
-      // Execute JOB workload multiple times to ensure stable stats
-      for (let i = 0; i < 2; i += 1) {
-        // Run twice to ensure stable statistics
-        for (const q of jobQueries) {
-          // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
-          await runRepeatedly(sqlDriver, q.query, q.calls);
-        }
-      }
-
-      // Write workload to temp file with a unique name to avoid collisions
-      const workDir = mkdtempSync(join(tmpdir(), "job-workload-"));
-      const sqlFilePath = join(
-        workDir,
-        `job_workload_queries_${process.pid}.sql`
-      );
-      writeFileSync(
-        sqlFilePath,
-        `${jobQueries.map((q) => q.query).join(";\n\n")};`
-      );
-
-      try {
-        // Analyze the workload with relaxed thresholds
-        const session = await dta.analyzeWorkload({
-          sqlFile: sqlFilePath,
-          minCalls: 1, // Lower threshold to ensure queries are considered
-          minAvgTimeMs: 0.1, // Lower threshold to ensure queries are considered
-        });
-
-        // Check that we got recommendations
-        expect(session).toBeInstanceOf(IndexTuningResult);
-
-        // Allow test to continue with zero recommendations
-        if (session.recommendations.length === 0) {
-          skip("No recommendations generated - skipping performance tests");
-        }
-
-        // Expected index patterns based on our JOB-style queries
-        const expectedPatterns: [string, string][] = [
-          ["movie_cast", "actor_id"],
-          ["movie_genres", "movie_id"],
-          ["actors", "gender"],
+            calls: 10,
+          },
         ];
 
-        // Check that our recommendations cover at least one expected pattern
-        let foundPatterns = 0;
-        for (const [table, column] of expectedPatterns) {
-          if (
-            session.recommendations.some(
-              (rec) => rec.table === table && rec.columns.includes(column)
-            )
-          ) {
-            foundPatterns += 1;
+        // Clear pg_stat_statements
+        await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
+
+        // Execute JOB workload multiple times to ensure stable stats
+        for (let i = 0; i < 2; i += 1) {
+          // Run twice to ensure stable statistics
+          for (const q of jobQueries) {
+            await runRepeatedly(sqlDriver, q.query, q.calls);
           }
         }
 
-        // We should find at least 1 of the expected patterns
-        // Relaxed assertion - just need one useful recommendation
-        expect(
-          foundPatterns,
-          `Found only ${foundPatterns} out of ${expectedPatterns.length} expected index patterns`
-        ).toBeGreaterThanOrEqual(1);
-
-        // Test performance improvement with recommended indexes
-        const topRecs = session.recommendations.slice(0, 1); // Test top 1 recommendation
-
-        // Measure baseline performance
-        const baselineTimes = new Map<string, number>();
-        for (const q of jobQueries) {
-          const start = performance.now();
-          // biome-ignore lint/performance/noAwaitInLoops: timings must not overlap
-          await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
-          baselineTimes.set(q.query, (performance.now() - start) / 1000);
-        }
-
-        // Create the recommended indexes
-        for (const rec of topRecs) {
-          const indexDef = rec.definition.replace("hypopg_", "");
-          // biome-ignore lint/performance/noAwaitInLoops: index creation is sequential
-          await sqlDriver.executeQuery(indexDef);
-        }
-
-        // Force stats update after index creation
-        await sqlDriver.executeQuery("ANALYZE VERBOSE");
-
-        // Measure performance with indexes - use multiple runs to reduce variance
-        const indexedTimes = new Map<string, number>();
-        for (const q of jobQueries) {
-          // Run 3 times and take the average to reduce variance
-          const times: number[] = [];
-          for (let i = 0; i < 3; i += 1) {
-            const start = performance.now();
-            // biome-ignore lint/performance/noAwaitInLoops: timings must not overlap
-            await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
-            times.push((performance.now() - start) / 1000);
-          }
-          indexedTimes.set(
-            q.query,
-            times.reduce((a, b) => a + b, 0) / times.length
-          );
-        }
-
-        // Clean up created indexes
-        await sqlDriver.executeQuery(
-          `DROP INDEX IF EXISTS ${topRecs
-            .map((r) => r.definition.split(" ")[2])
-            .join(", ")}`
+        // Write workload to temp file with a unique name to avoid collisions
+        const workDir = mkdtempSync(join(tmpdir(), "job-workload-"));
+        const sqlFilePath = join(
+          workDir,
+          `job_workload_queries_${process.pid}.sql`
+        );
+        writeFileSync(
+          sqlFilePath,
+          `${jobQueries.map((q) => q.query).join(";\n\n")};`
         );
 
-        // Calculate improvement - allow small degradations
-        const improvements: number[] = [];
-        for (const [query, baseline] of baselineTimes) {
-          const indexed = indexedTimes.get(query);
-          if (indexed !== undefined && baseline > 0) {
-            improvements.push(((baseline - indexed) / baseline) * 100);
+        try {
+          // Analyze the workload with relaxed thresholds
+          const session = await dta.analyzeWorkload({
+            sqlFile: sqlFilePath,
+            minCalls: 1, // Lower threshold to ensure queries are considered
+            minAvgTimeMs: 0.1, // Lower threshold to ensure queries are considered
+          });
+
+          // Check that we got recommendations
+          expect(session).toBeInstanceOf(IndexTuningResult);
+
+          // Allow test to continue with zero recommendations
+          if (session.recommendations.length === 0) {
+            skip("No recommendations generated - skipping performance tests");
           }
+
+          // Expected index patterns based on our JOB-style queries
+          const expectedPatterns: [string, string][] = [
+            ["movie_cast", "actor_id"],
+            ["movie_genres", "movie_id"],
+            ["actors", "gender"],
+          ];
+
+          // Check that our recommendations cover at least one expected pattern
+          let foundPatterns = 0;
+          for (const [table, column] of expectedPatterns) {
+            if (
+              session.recommendations.some(
+                (rec) => rec.table === table && rec.columns.includes(column)
+              )
+            ) {
+              foundPatterns += 1;
+            }
+          }
+
+          // We should find at least 1 of the expected patterns
+          // Relaxed assertion - just need one useful recommendation
+          expect(
+            foundPatterns,
+            `Found only ${foundPatterns} out of ${expectedPatterns.length} expected index patterns`
+          ).toBeGreaterThanOrEqual(1);
+
+          // Test performance improvement with recommended indexes
+          const topRecs = session.recommendations.slice(0, 1); // Test top 1 recommendation
+
+          // Measure baseline performance
+          const baselineTimes = new Map<string, number>();
+          for (const q of jobQueries) {
+            const start = performance.now();
+            await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+            baselineTimes.set(q.query, (performance.now() - start) / 1000);
+          }
+
+          // Create the recommended indexes
+          for (const rec of topRecs) {
+            const indexDef = rec.definition.replace("hypopg_", "");
+            await sqlDriver.executeQuery(indexDef);
+          }
+
+          // Force stats update after index creation
+          await sqlDriver.executeQuery("ANALYZE VERBOSE");
+
+          // Measure performance with indexes - use multiple runs to reduce variance
+          const indexedTimes = new Map<string, number>();
+          for (const q of jobQueries) {
+            // Run 3 times and take the average to reduce variance
+            const times: number[] = [];
+            for (let i = 0; i < 3; i += 1) {
+              const start = performance.now();
+              await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+              times.push((performance.now() - start) / 1000);
+            }
+            indexedTimes.set(
+              q.query,
+              times.reduce((a, b) => a + b, 0) / times.length
+            );
+          }
+
+          // Clean up created indexes
+          await sqlDriver.executeQuery(
+            `DROP INDEX IF EXISTS ${topRecs.map((r) => r.definition.split(" ")[2]).join(", ")}`
+          );
+
+          // Calculate improvement - allow small degradations
+          const improvements: number[] = [];
+          for (const [query, baseline] of baselineTimes) {
+            const indexed = indexedTimes.get(query);
+            if (indexed !== undefined && baseline > 0) {
+              improvements.push(((baseline - indexed) / baseline) * 100);
+            }
+          }
+
+          // Check that we have some improvement
+          if (improvements.length === 0) {
+            skip("Could not measure performance improvements for JOB workload");
+          }
+
+          // Find the best improvement - only need one query to show meaningful improvement
+          const bestImprovement = Math.max(...improvements);
+
+          // Relaxed assertion - at least one query should show some improvement
+          // Allow for small negative values due to measurement noise
+          expect(
+            bestImprovement,
+            `No performance improvement detected, best was ${bestImprovement.toFixed(2)}%`
+          ).toBeGreaterThan(-10);
+        } finally {
+          rmSync(workDir, { recursive: true, force: true });
         }
-
-        // Check that we have some improvement
-        if (improvements.length === 0) {
-          skip("Could not measure performance improvements for JOB workload");
-        }
-
-        // Find the best improvement - only need one query to show meaningful improvement
-        const bestImprovement = Math.max(...improvements);
-
-        // Relaxed assertion - at least one query should show some improvement
-        // Allow for small negative values due to measurement noise
-        expect(
-          bestImprovement,
-          `No performance improvement detected, best was ${bestImprovement.toFixed(2)}%`
-        ).toBeGreaterThan(-10);
       } finally {
-        rmSync(workDir, { recursive: true, force: true });
-      }
-    } finally {
-      // Clean up tables in finally block to ensure cleanup even if test fails
-      try {
-        await sqlDriver.executeQuery(`
+        // Clean up tables in finally block to ensure cleanup even if test fails
+        try {
+          await sqlDriver.executeQuery(`
         DROP TABLE IF EXISTS movie_genres;
         DROP TABLE IF EXISTS genres;
         DROP TABLE IF EXISTS movie_companies;
@@ -500,13 +498,14 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         DROP TABLE IF EXISTS actors;
         DROP TABLE IF EXISTS movies;
         `);
-      } finally {
-        await cleanupTestTables(sqlDriver);
+        } finally {
+          await cleanupTestTables(sqlDriver);
+        }
       }
     }
-  });
+  );
 
-  // biome-ignore lint/suspicious/noSkippedTests: skipped upstream, kept one to one with the reason in the title
+  // oxlint-disable-next-line vitest/no-disabled-tests -- skipped upstream, kept one to one with the reason in the title
   test.skip("recommends multi-column indexes when appropriate (Skipping multi-column indexes test for now)", async () => {
     await setupTestTables(sqlDriver);
     const dta = await createDta();
@@ -679,7 +678,6 @@ describeWithPostgres("database tuning advisor", (postgres) => {
       // Run each query multiple times to make sure it appears in query stats
       for (let i = 0; i < 3; i += 1) {
         try {
-          // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
           await sqlDriver.executeQuery(queryInfo.query);
         } catch {
           // Query execution errors are expected during testing
@@ -693,11 +691,11 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         query: queryInfo.query,
         queryid: 1000 + i, // Made-up queryid
         calls: queryInfo.calls,
-        avg_exec_time: 50.0, // Significant execution time
-        min_exec_time: 10.0,
-        max_exec_time: 100.0,
-        mean_exec_time: 50.0,
-        stddev_exec_time: 10.0,
+        avg_exec_time: 50, // Significant execution time
+        min_exec_time: 10,
+        max_exec_time: 100,
+        mean_exec_time: 50,
+        stddev_exec_time: 10,
         rows: 100,
       })
     );
@@ -706,7 +704,7 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     const session = await dta.analyzeWorkload({
       workload, // Use the manually populated workload
       minCalls: 1, // Lower threshold to ensure all queries are considered
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // Check that we got recommendations
@@ -730,7 +728,6 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     for (const q of multiColumnQueries) {
       const start = performance.now();
       try {
-        // biome-ignore lint/performance/noAwaitInLoops: timings must not overlap
         await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
         baselineTimes.set(q.query, (performance.now() - start) / 1000);
       } catch {
@@ -743,7 +740,6 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     for (const rec of topRecs) {
       try {
         const indexDef = rec.definition.replace("hypopg_", "");
-        // biome-ignore lint/performance/noAwaitInLoops: index creation is sequential
         await sqlDriver.executeQuery(indexDef);
         createdIndexes.push(rec.definition.split(" ")[2] ?? "");
       } catch {
@@ -755,7 +751,6 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     for (const q of multiColumnQueries) {
       if (baselineTimes.has(q.query)) {
         try {
-          // biome-ignore lint/performance/noAwaitInLoops: timings must not overlap
           await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
         } catch {
           // Error measuring indexed performance
@@ -782,17 +777,20 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     `);
   });
 
-  test("applies the diminishing returns threshold to recommendations", {
-    retry: 2,
-  }, async ({ skip }) => {
-    const dta = await createDta();
+  test(
+    "applies the diminishing returns threshold to recommendations",
+    {
+      retry: 2,
+    },
+    async ({ skip }) => {
+      const dta = await createDta();
 
-    try {
-      // Clear pg_stat_statements
-      await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
+      try {
+        // Clear pg_stat_statements
+        await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
 
-      // Set up schema with tables designed to show diminishing returns
-      await sqlDriver.executeQuery(`
+        // Set up schema with tables designed to show diminishing returns
+        await sqlDriver.executeQuery(`
         DROP TABLE IF EXISTS large_table CASCADE;
 
         CREATE TABLE large_table (
@@ -807,8 +805,8 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         );
         `);
 
-      // Create data with specific cardinality patterns - fully deterministic
-      await sqlDriver.executeQuery(`
+        // Create data with specific cardinality patterns - fully deterministic
+        await sqlDriver.executeQuery(`
         -- Insert data with specific cardinality patterns
         INSERT INTO large_table (
             high_cardinality_col1, high_cardinality_col2, high_cardinality_col3,
@@ -831,157 +829,160 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         FROM generate_series(1, 50000) i;
         `);
 
-      // Force a thorough ANALYZE to ensure consistent statistics
-      await sqlDriver.executeQuery("ANALYZE VERBOSE large_table");
+        // Force a thorough ANALYZE to ensure consistent statistics
+        await sqlDriver.executeQuery("ANALYZE VERBOSE large_table");
 
-      // Create queries with different index benefits
-      // Order them to show diminishing returns pattern
-      const queries: (WorkloadQuery & { expectedImprovement: number })[] = [
-        {
-          query: `
+        // Create queries with different index benefits
+        // Order them to show diminishing returns pattern
+        const queries: (WorkloadQuery & { expectedImprovement: number })[] = [
+          {
+            query: `
                 -- First query: benefits greatly from an index (30% improvement)
                 SELECT * FROM large_table
                 WHERE high_cardinality_col1 = 12345
                 ORDER BY id LIMIT 100
                 `,
-          calls: 100,
-          expectedImprovement: 0.3, // 30% improvement
-        },
-        {
-          query: `
+            calls: 100,
+            expectedImprovement: 0.3, // 30% improvement
+          },
+          {
+            query: `
                 -- Second query: good benefit from an index (20% improvement)
                 SELECT * FROM large_table
                 WHERE high_cardinality_col2 = 'value-9876'
                 ORDER BY id LIMIT 100
                 `,
-          calls: 80,
-          expectedImprovement: 0.2, // 20% improvement
-        },
-        {
-          query: `
+            calls: 80,
+            expectedImprovement: 0.2, // 20% improvement
+          },
+          {
+            query: `
                 -- Third query: moderate benefit from an index (10% improvement)
                 SELECT * FROM large_table
                 WHERE high_cardinality_col3 BETWEEN 5000 AND 5100
                 ORDER BY id LIMIT 100
                 `,
-          calls: 60,
-          expectedImprovement: 0.1, // 10% improvement
-        },
-        {
-          query: `
+            calls: 60,
+            expectedImprovement: 0.1, // 10% improvement
+          },
+          {
+            query: `
                 -- Fourth query: small benefit from an index (5% improvement)
                 SELECT * FROM large_table
                 WHERE medium_cardinality_col1 = 42
                 ORDER BY id LIMIT 100
                 `,
-          calls: 40,
-          expectedImprovement: 0.05, // 5% improvement
-        },
-        {
-          query: `
+            calls: 40,
+            expectedImprovement: 0.05, // 5% improvement
+          },
+          {
+            query: `
                 -- Fifth query: minimal benefit from an index (2% improvement)
                 SELECT * FROM large_table
                 WHERE medium_cardinality_col2 = 'category-25'
                 ORDER BY id LIMIT 100
                 `,
-          calls: 20,
-          expectedImprovement: 0.02, // 2% improvement
-        },
-      ];
+            calls: 20,
+            expectedImprovement: 0.02, // 2% improvement
+          },
+        ];
 
-      // Execute queries several times to build more stable statistics
-      for (let i = 0; i < 2; i += 1) {
-        // Run twice to ensure stable stats
-        for (const queryInfo of queries) {
-          // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
-          await runRepeatedly(sqlDriver, queryInfo.query, queryInfo.calls);
+        // Execute queries several times to build more stable statistics
+        for (let i = 0; i < 2; i += 1) {
+          // Run twice to ensure stable stats
+          for (const queryInfo of queries) {
+            await runRepeatedly(sqlDriver, queryInfo.query, queryInfo.calls);
+          }
         }
+
+        // Set the diminishing returns threshold to 5%
+        dta.minTimeImprovement = 0.05;
+
+        // Set a reasonable pareto_alpha for the test
+        dta.paretoAlpha = 2;
+
+        // Analyze the workload with 5% threshold and relaxed criteria
+        const sessionWithThreshold = await dta.analyzeWorkload({
+          queryList: queries.map((q) => q.query),
+          minCalls: 1,
+          minAvgTimeMs: 0.1, // Use lower threshold to ensure queries are considered
+        });
+
+        // Check recommendations with 5% threshold
+        expect(sessionWithThreshold).toBeInstanceOf(IndexTuningResult);
+
+        // Continue test even if no recommendations
+        if (sessionWithThreshold.recommendations.length === 0) {
+          skip("No recommendations generated - skipping further tests");
+        }
+
+        // We expect only recommendations for the first 3-4 queries (those with >5% improvement)
+        // The fifth query with only 2% improvement should not get a recommendation
+        const highImprovementColumns = [
+          "high_cardinality_col1",
+          "high_cardinality_col2",
+          "high_cardinality_col3",
+        ];
+        const lowImprovementColumns = ["medium_cardinality_col2"];
+
+        // Check that high improvement columns are recommended
+        const highImprovementRecommendations =
+          sessionWithThreshold.recommendations.filter((rec) =>
+            highImprovementColumns.some((col) => rec.columns.includes(col))
+          ).length;
+
+        // Check that low improvement columns are not recommended
+        const lowImprovementRecommendations =
+          sessionWithThreshold.recommendations.filter((rec) =>
+            lowImprovementColumns.some((col) => rec.columns.includes(col))
+          ).length;
+
+        // We should have found at least one recommendation for the high-improvement columns
+        expect(
+          highImprovementRecommendations,
+          "No recommendations for high-improvement columns"
+        ).toBeGreaterThan(0);
+
+        // We should have few or no recommendations for low-improvement columns
+        // Relaxed assertion to allow for occasional outliers
+        expect(
+          lowImprovementRecommendations,
+          `Found ${lowImprovementRecommendations} recommendations for low-improvement columns despite diminishing returns threshold`
+        ).toBeLessThanOrEqual(1);
+
+        // Now test with a lower threshold (1%)
+        dta.minTimeImprovement = 0.01;
+
+        // Analyze with 1% threshold
+        const sessionWithLowThreshold = await dta.analyzeWorkload({
+          queryList: queries.map((q) => q.query),
+          minCalls: 1,
+          minAvgTimeMs: 0.1,
+        });
+
+        // With lower threshold, we should get more recommendations
+        // Allow equal in case the workload doesn't generate more recommendations
+        expect(
+          sessionWithLowThreshold.recommendations.length,
+          `Lower threshold (0.01) didn't produce at least as many recommendations as higher threshold (0.05): ${sessionWithLowThreshold.recommendations.length} vs ${sessionWithThreshold.recommendations.length}`
+        ).toBeGreaterThanOrEqual(sessionWithThreshold.recommendations.length);
+      } finally {
+        await sqlDriver.executeQuery("DROP TABLE IF EXISTS large_table");
       }
-
-      // Set the diminishing returns threshold to 5%
-      dta.minTimeImprovement = 0.05;
-
-      // Set a reasonable pareto_alpha for the test
-      dta.paretoAlpha = 2.0;
-
-      // Analyze the workload with 5% threshold and relaxed criteria
-      const sessionWithThreshold = await dta.analyzeWorkload({
-        queryList: queries.map((q) => q.query),
-        minCalls: 1,
-        minAvgTimeMs: 0.1, // Use lower threshold to ensure queries are considered
-      });
-
-      // Check recommendations with 5% threshold
-      expect(sessionWithThreshold).toBeInstanceOf(IndexTuningResult);
-
-      // Continue test even if no recommendations
-      if (sessionWithThreshold.recommendations.length === 0) {
-        skip("No recommendations generated - skipping further tests");
-      }
-
-      // We expect only recommendations for the first 3-4 queries (those with >5% improvement)
-      // The fifth query with only 2% improvement should not get a recommendation
-      const highImprovementColumns = [
-        "high_cardinality_col1",
-        "high_cardinality_col2",
-        "high_cardinality_col3",
-      ];
-      const lowImprovementColumns = ["medium_cardinality_col2"];
-
-      // Check that high improvement columns are recommended
-      const highImprovementRecommendations =
-        sessionWithThreshold.recommendations.filter((rec) =>
-          highImprovementColumns.some((col) => rec.columns.includes(col))
-        ).length;
-
-      // Check that low improvement columns are not recommended
-      const lowImprovementRecommendations =
-        sessionWithThreshold.recommendations.filter((rec) =>
-          lowImprovementColumns.some((col) => rec.columns.includes(col))
-        ).length;
-
-      // We should have found at least one recommendation for the high-improvement columns
-      expect(
-        highImprovementRecommendations,
-        "No recommendations for high-improvement columns"
-      ).toBeGreaterThan(0);
-
-      // We should have few or no recommendations for low-improvement columns
-      // Relaxed assertion to allow for occasional outliers
-      expect(
-        lowImprovementRecommendations,
-        `Found ${lowImprovementRecommendations} recommendations for low-improvement columns despite diminishing returns threshold`
-      ).toBeLessThanOrEqual(1);
-
-      // Now test with a lower threshold (1%)
-      dta.minTimeImprovement = 0.01;
-
-      // Analyze with 1% threshold
-      const sessionWithLowThreshold = await dta.analyzeWorkload({
-        queryList: queries.map((q) => q.query),
-        minCalls: 1,
-        minAvgTimeMs: 0.1,
-      });
-
-      // With lower threshold, we should get more recommendations
-      // Allow equal in case the workload doesn't generate more recommendations
-      expect(
-        sessionWithLowThreshold.recommendations.length,
-        `Lower threshold (0.01) didn't produce at least as many recommendations as higher threshold (0.05): ${sessionWithLowThreshold.recommendations.length} vs ${sessionWithThreshold.recommendations.length}`
-      ).toBeGreaterThanOrEqual(sessionWithThreshold.recommendations.length);
-    } finally {
-      await sqlDriver.executeQuery("DROP TABLE IF EXISTS large_table");
     }
-  });
+  );
 
-  test("recommends indexes for simple queries with Pareto optimal selection", {
-    retry: 2,
-  }, async ({ skip }) => {
-    const dta = await createDta();
+  test(
+    "recommends indexes for simple queries with Pareto optimal selection",
+    {
+      retry: 2,
+    },
+    async ({ skip }) => {
+      const dta = await createDta();
 
-    try {
-      // Create a simple test table
-      await sqlDriver.executeQuery(`
+      try {
+        // Create a simple test table
+        await sqlDriver.executeQuery(`
         DROP TABLE IF EXISTS pareto_test CASCADE;
 
         CREATE TABLE pareto_test (
@@ -993,8 +994,8 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         );
         `);
 
-      // Insert a reasonable amount of data
-      await sqlDriver.executeQuery(`
+        // Insert a reasonable amount of data
+        await sqlDriver.executeQuery(`
         INSERT INTO pareto_test (col1, col2, col3, col4)
         SELECT
             i % 1000,
@@ -1004,63 +1005,63 @@ describeWithPostgres("database tuning advisor", (postgres) => {
         FROM generate_series(1, 10000) i;
         `);
 
-      // Force a thorough ANALYZE to ensure consistent statistics
-      await sqlDriver.executeQuery("ANALYZE VERBOSE pareto_test");
+        // Force a thorough ANALYZE to ensure consistent statistics
+        await sqlDriver.executeQuery("ANALYZE VERBOSE pareto_test");
 
-      // Simple queries that should be easy to index
-      const queries = [
-        "SELECT * FROM pareto_test WHERE col1 = 42",
-        "SELECT * FROM pareto_test WHERE col2 = 'value-100'",
-        "SELECT * FROM pareto_test WHERE col3 = 500",
-        "SELECT * FROM pareto_test WHERE col4 = 'text-50'",
-      ];
+        // Simple queries that should be easy to index
+        const queries = [
+          "SELECT * FROM pareto_test WHERE col1 = 42",
+          "SELECT * FROM pareto_test WHERE col2 = 'value-100'",
+          "SELECT * FROM pareto_test WHERE col3 = 500",
+          "SELECT * FROM pareto_test WHERE col4 = 'text-50'",
+        ];
 
-      // Run each query multiple times to ensure statistics are captured
-      for (let i = 0; i < 3; i += 1) {
-        // Run more iterations for stability
-        for (const query of queries) {
-          // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
-          await runRepeatedly(sqlDriver, query, 10);
+        // Run each query multiple times to ensure statistics are captured
+        for (let i = 0; i < 3; i += 1) {
+          // Run more iterations for stability
+          for (const query of queries) {
+            await runRepeatedly(sqlDriver, query, 10);
+          }
         }
+
+        // Reset HypoPG to ensure clean state
+        await sqlDriver.executeQuery("SELECT hypopg_reset()");
+
+        // Try running DTA with clear settings
+        dta.minTimeImprovement = 0.01; // Use minimal threshold
+        dta.paretoAlpha = 1.5; // Balanced setting
+
+        // Run with relaxed thresholds
+        const session = await dta.analyzeWorkload({
+          queryList: queries,
+          minCalls: 1,
+          minAvgTimeMs: 0.01, // Very low threshold to ensure queries are considered
+        });
+
+        // Just verify that we get some recommendations
+        if (session.recommendations.length === 0) {
+          skip("No recommendations produced - skipping validation");
+        }
+
+        // Verify the recommendations include the columns we expect
+        const expectedColumns = ["col1", "col2", "col3", "col4"];
+        for (const rec of session.recommendations) {
+          // At least one recommendation should be for a column we expect
+          const hasExpectedColumn = expectedColumns.some((col) =>
+            rec.columns.includes(col)
+          );
+          expect(
+            hasExpectedColumn,
+            `Recommendation ${rec.definition} doesn't include any expected columns`
+          ).toBe(true);
+        }
+      } finally {
+        await sqlDriver.executeQuery("DROP TABLE IF EXISTS pareto_test");
       }
-
-      // Reset HypoPG to ensure clean state
-      await sqlDriver.executeQuery("SELECT hypopg_reset()");
-
-      // Try running DTA with clear settings
-      dta.minTimeImprovement = 0.01; // Use minimal threshold
-      dta.paretoAlpha = 1.5; // Balanced setting
-
-      // Run with relaxed thresholds
-      const session = await dta.analyzeWorkload({
-        queryList: queries,
-        minCalls: 1,
-        minAvgTimeMs: 0.01, // Very low threshold to ensure queries are considered
-      });
-
-      // Just verify that we get some recommendations
-      if (session.recommendations.length === 0) {
-        skip("No recommendations produced - skipping validation");
-      }
-
-      // Verify the recommendations include the columns we expect
-      const expectedColumns = ["col1", "col2", "col3", "col4"];
-      for (const rec of session.recommendations) {
-        // At least one recommendation should be for a column we expect
-        const hasExpectedColumn = expectedColumns.some((col) =>
-          rec.columns.includes(col)
-        );
-        expect(
-          hasExpectedColumn,
-          `Recommendation ${rec.definition} doesn't include any expected columns`
-        ).toBe(true);
-      }
-    } finally {
-      await sqlDriver.executeQuery("DROP TABLE IF EXISTS pareto_test");
     }
-  });
+  );
 
-  // biome-ignore lint/suspicious/noSkippedTests: skipped upstream, kept one to one with the reason in the title
+  // oxlint-disable-next-line vitest/no-disabled-tests -- skipped upstream, kept one to one with the reason in the title
   test.skip("balances performance gains against storage costs (Skipping storage cost tradeoff test for now)", async () => {
     const dta = await createDta();
 
@@ -1147,18 +1148,17 @@ describeWithPostgres("database tuning advisor", (postgres) => {
 
     // Execute queries to build statistics
     for (const queryInfo of queries) {
-      // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
       await runRepeatedly(sqlDriver, queryInfo.query, queryInfo.calls);
     }
 
     // First test with high storage sensitivity (alpha=5.0)
     // This should favor small indexes with good benefit/cost ratio
-    dta.paretoAlpha = 5.0; // Very sensitive to storage costs
+    dta.paretoAlpha = 5; // Very sensitive to storage costs
 
     const sessionStorageSensitive = await dta.analyzeWorkload({
       queryList: queries.map((q) => q.query),
       minCalls: 1,
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // Check that we have recommendations
@@ -1190,7 +1190,7 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     const sessionPerformanceFocused = await dta.analyzeWorkload({
       queryList: queries.map((q) => q.query),
       minCalls: 1,
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // Should include more recommendations
@@ -1218,7 +1218,7 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     await sqlDriver.executeQuery("DROP TABLE IF EXISTS wide_table");
   });
 
-  // biome-ignore lint/suspicious/noSkippedTests: skipped upstream, kept one to one with the reason in the title
+  // oxlint-disable-next-line vitest/no-disabled-tests -- skipped upstream, kept one to one with the reason in the title
   test.skip("selects Pareto optimal indexes (Skipping pareto optimal index selection test for now)", async () => {
     const dta = await createDta();
 
@@ -1267,19 +1267,18 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     // Execute each query to build statistics
     for (const query of queries) {
       // Run each query multiple times
-      // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another
       await runRepeatedly(sqlDriver, query, 10);
     }
 
     // Set pareto parameters
-    dta.paretoAlpha = 2.0; // Balance between performance and storage
+    dta.paretoAlpha = 2; // Balance between performance and storage
     dta.minTimeImprovement = 0.05; // 5% minimum improvement threshold
 
     // Run DTA with the workload
     const session = await dta.analyzeWorkload({
       queryList: queries,
       minCalls: 1,
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // Verify we got recommendations
@@ -1308,11 +1307,11 @@ describeWithPostgres("database tuning advisor", (postgres) => {
 
     // 3. Run again with different alpha values to show how preferences change
     // With high alpha (storage sensitive)
-    dta.paretoAlpha = 5.0;
+    dta.paretoAlpha = 5;
     const sessionStorageSensitive = await dta.analyzeWorkload({
       queryList: queries,
       minCalls: 1,
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // With low alpha (performance sensitive)
@@ -1320,7 +1319,7 @@ describeWithPostgres("database tuning advisor", (postgres) => {
     const sessionPerformanceSensitive = await dta.analyzeWorkload({
       queryList: queries,
       minCalls: 1,
-      minAvgTimeMs: 1.0,
+      minAvgTimeMs: 1,
     });
 
     // Calculate total size of recommendations for each approach

@@ -1,11 +1,10 @@
-// biome-ignore-all lint/style/noExcessiveClassesPerFile: ErrorResult, PlanNode and ExplainPlanArtifact form one artifact model and live in a single module by design
 /** Artifacts for the Database Tuning Advisor. */
 
 import { structuredPatch } from "diff";
 
 // If the recommendation cost is 0.0, we can't calculate the improvement multiple.
 // Return 1000000.0 to indicate infinite improvement.
-export const INFINITE_IMPROVEMENT_MULTIPLIER = 1_000_000.0;
+export const INFINITE_IMPROVEMENT_MULTIPLIER = 1_000_000;
 
 const MAX_FILTER_LENGTH = 100;
 
@@ -37,12 +36,12 @@ export function calculateImprovementMultiple(
   baseCost: number,
   recCost: number
 ): number {
-  if (baseCost <= 0.0) {
+  if (baseCost <= 0) {
     // base_cost or rec_cost might be zero, but as they are floats, they might be
     // represented as -0.0. That's why we compare to <= 0.0.
-    return 1.0;
+    return 1;
   }
-  if (recCost <= 0.0) {
+  if (recCost <= 0) {
     return INFINITE_IMPROVEMENT_MULTIPLIER;
   }
   return baseCost / recCost;
@@ -187,7 +186,7 @@ function formatPlanNode(node: PlanNode, level = 0): string {
   // Add filter if present
   if (node.filter) {
     // Truncate long filters for readability (by code point)
-    const chars = Array.from(node.filter);
+    const chars = [...node.filter];
     const filterText =
       chars.length > MAX_FILTER_LENGTH
         ? `${chars.slice(0, MAX_FILTER_LENGTH - 3).join("")}...`

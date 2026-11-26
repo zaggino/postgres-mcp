@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+
 import { DbConnPool, SqlDriver } from "../../../src/sql/sql-driver.ts";
 import type { QueryHandler } from "../../support/fake-pool.ts";
 import {

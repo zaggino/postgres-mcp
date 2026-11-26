@@ -32,14 +32,18 @@ function typeName(value: unknown): string {
     return "<class 'list'>";
   }
   switch (typeof value) {
-    case "string":
+    case "string": {
       return "<class 'str'>";
-    case "boolean":
+    }
+    case "boolean": {
       return "<class 'bool'>";
-    case "number":
+    }
+    case "number": {
       return Number.isInteger(value) ? "<class 'int'>" : "<class 'float'>";
-    default:
+    }
+    default: {
       return "<class 'dict'>";
+    }
   }
 }
 
@@ -70,7 +74,7 @@ function toColumnList(columns: unknown): unknown[] {
     return columns;
   }
   if (typeof columns === "string") {
-    return Array.from(columns);
+    return [...columns];
   }
   if (isJsonObject(columns)) {
     return Object.keys(columns);

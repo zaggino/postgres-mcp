@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+
 import type { ExtensionStatus } from "../../src/sql/extension-utils.ts";
 import { SqlDriver } from "../../src/sql/sql-driver.ts";
 import {
@@ -63,13 +64,11 @@ async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
   // Run queries several times to ensure they're captured and have significant stats
   // Query 1: Simple select (should be fast)
   for (let i = 0; i < 10; i += 1) {
-    // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another against one session
     await sqlDriver.executeQuery("SELECT COUNT(*) FROM test_items");
   }
 
   // Query 2: More complex query (should be slower)
   for (let i = 0; i < 5; i += 1) {
-    // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another against one session
     await sqlDriver.executeQuery(`
                 SELECT name, value
                 FROM test_items
@@ -80,7 +79,6 @@ async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
 
   // Query 3: Very slow query - run more times to ensure it shows up
   for (let i = 0; i < 10; i += 1) {
-    // biome-ignore lint/performance/noAwaitInLoops: the calls must run one after another against one session
     await sqlDriver.executeQuery(`
                 SELECT t1.name, t2.name
                 FROM test_items t1

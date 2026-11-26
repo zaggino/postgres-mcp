@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it as test, vi } from "vitest";
+
 import { ExplainPlanArtifact } from "../../../src/artifacts.ts";
 import { AccessMode, createServer, deps } from "../../../src/server.ts";
 import type { SqlExecutor } from "../../../src/sql/safe-sql.ts";

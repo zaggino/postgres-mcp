@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+
 import { obfuscatePassword } from "../../../src/sql/sql-driver.ts";
 
 test("obfuscate returns None-equivalents and empty strings unchanged", () => {

@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+
 import type { PoolFactory } from "../../../src/sql/sql-driver.ts";
 import { DbConnPool } from "../../../src/sql/sql-driver.ts";
 import { createFakePool } from "../../support/fake-pool.ts";
@@ -56,7 +57,7 @@ test("poolConnect failure closes the pool, marks it invalid and obfuscates the t
   expect(dbPool.isValid).toBe(false);
   expect(dbPool.lastError).toContain("hunter2");
   expect(dbPool.pool).toBeNull();
-  expect(fake.end).toHaveBeenCalledTimes(1);
+  expect(fake.end).toHaveBeenCalledOnce();
 });
 
 test("poolConnect without a URL throws and records the error", async () => {
@@ -81,7 +82,7 @@ test("poolConnect returns the existing pool without reconnecting when it is vali
   const second = await dbPool.poolConnect();
 
   expect(second).toBe(first);
-  expect(factory).toHaveBeenCalledTimes(1);
+  expect(factory).toHaveBeenCalledOnce();
 });
 
 test("poolConnect rebuilds the pool after it was marked invalid", async () => {
@@ -98,7 +99,7 @@ test("poolConnect rebuilds the pool after it was marked invalid", async () => {
   const pool = await dbPool.poolConnect();
 
   expect(pool).toBe(second.pool);
-  expect(first.end).toHaveBeenCalledTimes(1);
+  expect(first.end).toHaveBeenCalledOnce();
 });
 
 test("close ends the pool and marks it invalid", async () => {
@@ -110,7 +111,7 @@ test("close ends the pool and marks it invalid", async () => {
 
   expect(dbPool.isValid).toBe(false);
   expect(dbPool.pool).toBeNull();
-  expect(fake.end).toHaveBeenCalledTimes(1);
+  expect(fake.end).toHaveBeenCalledOnce();
 });
 
 test("close swallows errors from ending the pool", async () => {
@@ -154,6 +155,6 @@ test("concurrent poolConnect calls on an invalid pool build one new pool and end
   expect(a).toBe(second.pool);
   expect(b).toBe(second.pool);
   expect(factory).toHaveBeenCalledTimes(2);
-  expect(first.end).toHaveBeenCalledTimes(1);
+  expect(first.end).toHaveBeenCalledOnce();
   expect(second.end).not.toHaveBeenCalled();
 });

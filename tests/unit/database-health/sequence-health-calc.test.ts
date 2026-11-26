@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { SequenceHealthCalc } from "../../../src/database-health/sequence-health-calc.ts";
 
 describe("SequenceHealthCalc.parseSequenceName", () => {

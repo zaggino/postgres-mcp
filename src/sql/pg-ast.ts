@@ -1,10 +1,8 @@
-// biome-ignore lint/style/noExcessiveClassesPerFile: Visitor and AstNode are specified to live beside SqlParseError in pg-ast.ts
 import { loadModule, parseSync, SqlError } from "libpg-query";
+
 import { STRUCT_FIELD_TYPES } from "./allowlists.ts";
 
-export interface JsonObject {
-  readonly [key: string]: unknown;
-}
+export type JsonObject = Readonly<Record<string, unknown>>;
 
 /** A statement as returned in `ParseResult.stmts` (the pglast `RawStmt`). */
 export type RawStmtJson = JsonObject;

@@ -1,4 +1,5 @@
 import { beforeAll, expect, test, vi } from "vitest";
+
 import { ExplainPlanArtifact } from "../../../src/artifacts.ts";
 import {
   ConditionColumnCollector,
@@ -63,7 +64,7 @@ async function parseStatement(query: string): Promise<AstNode> {
 }
 
 async function queryWeight(query: string): Promise<QueryWeight> {
-  return [query, await parseStatement(query), 1.0];
+  return [query, await parseStatement(query), 1];
 }
 
 function toRecord(
@@ -179,7 +180,7 @@ test("analyze workload recommends indexes for the workload tables", async () => 
         queryid: 1,
         query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)",
         calls: 100,
-        avg_exec_time: 10.0,
+        avg_exec_time: 10,
       });
     }
     if (query.includes("EXPLAIN")) {
@@ -187,7 +188,7 @@ test("analyze workload recommends indexes for the workload tables", async () => 
       return rows({
         "QUERY PLAN": [
           {
-            Plan: { "Total Cost": query.includes("COSTS TRUE") ? 80.0 : 100.0 },
+            Plan: { "Total Cost": query.includes("COSTS TRUE") ? 80 : 100 },
           },
         ],
       });
@@ -229,7 +230,7 @@ test("analyze workload recommends indexes for the workload tables", async () => 
 
   const session = await dta.analyzeWorkload({
     minCalls: 50,
-    minAvgTimeMs: 5.0,
+    minAvgTimeMs: 5,
   });
 
   expect(
@@ -244,7 +245,7 @@ test("analyze workload reports a failing database and tolerates invalid SQL", as
 
   const session = await dta.analyzeWorkload({
     minCalls: 50,
-    minAvgTimeMs: 5.0,
+    minAvgTimeMs: 5,
   });
   expect(session.error).toContain("HypoPG not available");
 
@@ -334,13 +335,13 @@ test("index size estimation handles positive, negative and zero ndistinct", () =
   const dta = createAdvisor();
 
   expect(
-    dta.estimateIndexSizeInternal({ total_width: 10.0, total_distinct: 5 })
+    dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 5 })
   ).toBe(180); // 18.0 * 5.0 * 2.0
   expect(
-    dta.estimateIndexSizeInternal({ total_width: 10.0, total_distinct: -0.5 })
+    dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: -0.5 })
   ).toBe(36); // 18.0 * 1.0 * 2.0
   expect(
-    dta.estimateIndexSizeInternal({ total_width: 10.0, total_distinct: 0 })
+    dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 0 })
   ).toBe(36); // 18.0 * 1.0 * 2.0
 });
 
@@ -417,13 +418,13 @@ test("basic workload analysis recommends indexes for the queried columns", async
             queryid: 1,
             query: "SELECT * FROM users WHERE name = 'Alice'",
             calls: 100,
-            avg_exec_time: 10.0,
+            avg_exec_time: 10,
           },
           {
             queryid: 2,
             query: "SELECT * FROM orders WHERE user_id = 123",
             calls: 50,
-            avg_exec_time: 5.0,
+            avg_exec_time: 5,
           }
         ),
         // pg_indexes
@@ -457,22 +458,22 @@ test("basic workload analysis recommends indexes for the queried columns", async
         // hypopg_reset
         [],
         // EXPLAIN without indexes
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 100.0 } }] }), // users.name
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 150.0 } }] }), // orders.user_id
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 100 } }] }), // users.name
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 150 } }] }), // orders.user_id
         rows({ rel_size: 10_000 }), // users table size
         rows({ rel_size: 10_000 }), // orders table size
         // pg_stats for size (users.name, orders.user_id)
         rows({ total_width: 10, total_distinct: 100 }),
         // EXPLAIN with users.name index
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 50.0 } }] }), // users.name
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 150.0 } }] }), // orders.user_id
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 50 } }] }), // users.name
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 150 } }] }), // orders.user_id
         rows({ total_width: 8, total_distinct: 50 }),
         // EXPLAIN without orders.user_id index
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 100.0 } }] }), // users.name
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 75.0 } }] }), // orders.user_id
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 100 } }] }), // users.name
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 75 } }] }), // orders.user_id
         // EXPLAIN with users.name and orders.user_id indexes
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 50.0 } }] }), // users.name
-        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 75.0 } }] }), // orders.user_id
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 50 } }] }), // users.name
+        rows({ "QUERY PLAN": [{ Plan: { "Total Cost": 75 } }] }), // orders.user_id
         // hypopg_reset (final cleanup)
         [],
       ])
@@ -487,7 +488,7 @@ test("basic workload analysis recommends indexes for the queried columns", async
 
   const session = await dta.analyzeWorkload({
     minCalls: 50,
-    minAvgTimeMs: 5.0,
+    minAvgTimeMs: 5,
   });
 
   expect(session.recommendations.length).toBeGreaterThan(0);
@@ -962,7 +963,7 @@ test("greedy enumeration stops at the minimum time improvement", async () => {
   for (let i = 0; i < 10; i += 1) {
     candidateIndexes.add(new IndexRecommendation("test_table", [`col${i}`]));
   }
-  const baseCost = 1000.0;
+  const baseCost = 1000;
 
   // Workload cost by the number of indexes in the configuration
   const configCosts = [1000, 700, 560, 504, 479, 474, 469, 464, 459, 454, 449];
@@ -979,7 +980,7 @@ test("greedy enumeration stops at the minimum time improvement", async () => {
   });
   vi.spyOn(dta, "estimateTableSize").mockResolvedValue(baseRelationSize);
 
-  dta.paretoAlpha = 2.0;
+  dta.paretoAlpha = 2;
 
   // 5% threshold: stops after 3 indexes
   dta.minTimeImprovement = 0.05;
@@ -1027,7 +1028,7 @@ test("explain plan diff reports the change from a sequential to an index scan", 
           "Node Type": "Seq Scan",
           "Relation Name": "users",
           Alias: "users",
-          "Startup Cost": 0.0,
+          "Startup Cost": 0,
           "Total Cost": 286_022.64,
           "Plan Rows": 1280,
           "Plan Width": 32,
@@ -1051,7 +1052,7 @@ test("explain plan diff reports the change from a sequential to an index scan", 
           Alias: "users",
           "Index Name": "users_email_idx",
           "Startup Cost": 0.43,
-          "Total Cost": 17_212.0,
+          "Total Cost": 17_212,
           "Plan Rows": 1280,
           "Plan Width": 32,
           Filter: "email LIKE '%example.com'",

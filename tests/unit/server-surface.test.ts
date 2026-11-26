@@ -1,4 +1,5 @@
 import { afterEach, expect, it as test, vi } from "vitest";
+
 import { AccessMode, createServer, dbConnection } from "../../src/server.ts";
 import { createFakePool } from "../support/fake-pool.ts";
 import { callToolText, connectClient } from "../support/mcp-client.ts";

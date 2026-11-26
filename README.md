@@ -377,7 +377,7 @@ pnpm install
 | Command | Purpose |
 |---------|---------|
 | `pnpm build` | Build to `dist/`. |
-| `pnpm check` | Lint and format check (Ultracite/Biome). |
+| `pnpm check` | Lint and format check (Ultracite: oxlint and oxfmt). |
 | `pnpm fix` | Apply lint and format fixes. |
 | `pnpm typecheck` | Type check with `tsc`. |
 | `pnpm test:unit` | Unit tests. |

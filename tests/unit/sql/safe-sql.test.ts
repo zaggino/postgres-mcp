@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
+
 import { describe, expect, it, vi } from "vitest";
+
 import { paramSqlToQuery } from "../../../src/sql/literal.ts";
 import type { SqlExecutor } from "../../../src/sql/safe-sql.ts";
 import { SafeSqlDriver } from "../../../src/sql/safe-sql.ts";
@@ -79,7 +81,9 @@ async function rejection(
   query: string
 ): Promise<{ message: string; cause: string }> {
   const { safeDriver } = setup();
-  const error = await safeDriver.executeQuery(query).catch((e: unknown) => e);
+  const error = await safeDriver
+    .executeQuery(query)
+    .catch((error_: unknown) => error_);
   if (!(error instanceof Error)) {
     throw new Error("expected the query to be rejected");
   }
@@ -89,150 +93,152 @@ async function rejection(
   };
 }
 
-describe("SafeSqlDriver", () => {
+describe(SafeSqlDriver, () => {
   it("allows simple SELECT statements", async () => {
-    expect(await runsReadOnly("SELECT * FROM users WHERE age > 18")).toBe(true);
+    await expect(
+      runsReadOnly("SELECT * FROM users WHERE age > 18")
+    ).resolves.toBe(true);
   });
 
   it("blocks UPDATE statements", async () => {
-    expect(
-      await isBlocked("UPDATE users SET status = 'active' WHERE id = 1")
-    ).toBe(true);
+    await expect(
+      isBlocked("UPDATE users SET status = 'active' WHERE id = 1")
+    ).resolves.toBe(true);
   });
 
   it("allows SELECT with JOIN", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT users.name, orders.order_date
     FROM users
     INNER JOIN orders ON users.id = orders.user_id
     WHERE orders.status = 'pending'
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows SHOW statements", async () => {
-    expect(await runsReadOnly("SHOW search_path")).toBe(true);
+    await expect(runsReadOnly("SHOW search_path")).resolves.toBe(true);
   });
 
   it("blocks SET statements", async () => {
-    expect(await isBlocked("SET search_path TO public")).toBe(true);
+    await expect(isBlocked("SET search_path TO public")).resolves.toBe(true);
   });
 
   it("allows SELECT with arithmetic expressions", async () => {
-    expect(
-      await runsReadOnly("SELECT id, price * quantity as total FROM orders")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT id, price * quantity as total FROM orders")
+    ).resolves.toBe(true);
   });
 
   it("allows SELECT current_user", async () => {
-    expect(await runsReadOnly("SELECT current_user")).toBe(true);
+    await expect(runsReadOnly("SELECT current_user")).resolves.toBe(true);
   });
 
   it("blocks DROP TABLE statements", async () => {
-    expect(await isBlocked("DROP TABLE users")).toBe(true);
+    await expect(isBlocked("DROP TABLE users")).resolves.toBe(true);
   });
 
   it("blocks DELETE FROM statements", async () => {
-    expect(await isBlocked("DELETE FROM users WHERE status = 'inactive'")).toBe(
-      true
-    );
+    await expect(
+      isBlocked("DELETE FROM users WHERE status = 'inactive'")
+    ).resolves.toBe(true);
   });
 
   it("allows SELECT with subqueries", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT name FROM users
     WHERE id IN (SELECT user_id FROM orders WHERE total > 1000)
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks SQL injection via a second statement", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     SELECT * FROM users; DROP TABLE users;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows UNION queries", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT id, name FROM users
     UNION
     SELECT NULL, concat(table_name) FROM information_schema.tables
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks SELECT INTO statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     SELECT id, name
     INTO new_table
     FROM users
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks SELECT FOR UPDATE statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     SELECT id, name
     FROM users
     FOR UPDATE
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks SELECT with explicit locking clauses", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     SELECT id, name
     FROM users
     FOR SHARE NOWAIT
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks statements containing COMMIT", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     SELECT id FROM users;
     COMMIT;
     SELECT name FROM users;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows EXPLAIN (without ANALYZE) with bind variables", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     EXPLAIN (FORMAT JSON)
     SELECT id, name
     FROM users
     WHERE age > $1 AND status = $2
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks EXPLAIN ANALYZE", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     EXPLAIN ANALYZE
     SELECT id, name FROM users
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks transaction blocks", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     BEGIN;
     SELECT id, name FROM users;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks queries with invalid SQL syntax", async () => {
@@ -241,67 +247,67 @@ describe("SafeSqlDriver", () => {
       "SELECT * FROM users INNER JOON posts ON users.id = posts.user_id;",
       "SELECT * FROM users WHERE (age > 21 AND active = true;",
     ];
-    expect(await blockedWith("Failed to parse SQL statement", ...queries)).toBe(
-      true
-    );
+    await expect(
+      blockedWith("Failed to parse SQL statement", ...queries)
+    ).resolves.toBe(true);
   });
 
   it("blocks CREATE INDEX statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     CREATE INDEX idx_user_email ON users(email);
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks DROP INDEX statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     DROP INDEX idx_user_email;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks CREATE TABLE statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     CREATE TABLE test_table (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks CREATE TABLE AS statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     CREATE TABLE user_backup AS
     SELECT * FROM users;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks CREATE EXTENSION for extensions outside the allowlist", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     CREATE EXTENSION pg_hack;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks DROP EXTENSION statements", async () => {
-    expect(
-      await isBlocked(`
+    await expect(
+      isBlocked(`
     DROP EXTENSION pg_stat_statements;
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows complex SELECT queries for index metadata", async () => {
-    expect(
-      await runsReadOnly(`SELECT indexrelid::regclass AS index_name, array_agg(attname) AS columns,
+    await expect(
+      runsReadOnly(`SELECT indexrelid::regclass AS index_name, array_agg(attname) AS columns,
     indisunique, indisprimary
     FROM pg_index i
     JOIN pg_attribute a ON a.attnum = ANY(i.indkey)
@@ -309,7 +315,7 @@ describe("SafeSqlDriver", () => {
         (SELECT oid FROM pg_namespace WHERE nspname = 'public'))
     GROUP BY indexrelid, indisunique, indisprimary
     HAVING COUNT(array_agg(attname)) > 1`)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows newly added functions", async () => {
@@ -327,43 +333,45 @@ describe("SafeSqlDriver", () => {
       "SELECT pg_read_file('/etc/passwd');",
       "SELECT lo_import('/etc/passwd');",
     ];
-    expect(await isBlocked(...queries)).toBe(true);
+    await expect(isBlocked(...queries)).resolves.toBe(true);
   });
 
   it("allows session info functions", async () => {
-    expect(
-      await runsReadOnly("SELECT current_user, current_database(), version()")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT current_user, current_database(), version()")
+    ).resolves.toBe(true);
   });
 
   it("allows blocking pids functions", async () => {
-    expect(await runsReadOnly("SELECT pg_blocking_pids(1234)")).toBe(true);
+    await expect(runsReadOnly("SELECT pg_blocking_pids(1234)")).resolves.toBe(
+      true
+    );
   });
 
   it("allows logfile functions", async () => {
-    expect(await runsReadOnly("SELECT pg_current_logfile()")).toBe(true);
+    await expect(runsReadOnly("SELECT pg_current_logfile()")).resolves.toBe(
+      true
+    );
   });
 
   it("allows complex session info queries", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT current_user, current_database(), version(),
            pg_backend_pid(), pg_blocking_pids(pg_backend_pid())
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows security privilege functions", async () => {
-    expect(
-      await runsReadOnly(
-        "SELECT has_table_privilege('user', 'table', 'SELECT')"
-      )
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT has_table_privilege('user', 'table', 'SELECT')")
+    ).resolves.toBe(true);
   });
 
   it("allows complex queries using security privilege functions", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         `
         SELECT tablename, has_table_privilege(current_user, tablename, 'SELECT') as can_select,
                has_table_privilege(current_user, tablename, 'UPDATE') as can_update
@@ -389,12 +397,12 @@ describe("SafeSqlDriver", () => {
         ORDER BY a.attnum
         `
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows security privilege functions inside subqueries", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         `
         SELECT nspname
         FROM pg_namespace
@@ -414,27 +422,27 @@ describe("SafeSqlDriver", () => {
         AND t.schemaname = 'public'
         `
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it.each(["LIKE", "ILIKE"])(
     "allows %s with constant string patterns",
     async (operator) => {
-      expect(
-        await runsReadOnly(
+      await expect(
+        runsReadOnly(
           `SELECT name FROM users WHERE name ${operator} '%smith'`,
           `SELECT name FROM users WHERE name ${operator} 'john%'`,
           `SELECT name FROM users WHERE name ${operator} 'jo%hn'`,
           `SELECT name FROM users WHERE name ${operator} '%jo%hn%'`,
           `SELECT name FROM users WHERE name ${operator} '%john%'`
         )
-      ).toBe(true);
+      ).resolves.toBe(true);
     }
   );
 
   it("allows date/time functions", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT age(timestamp '2001-04-10', timestamp '1957-06-13')",
         "SELECT clock_timestamp()",
         "SELECT current_date",
@@ -459,12 +467,12 @@ describe("SafeSqlDriver", () => {
         "SELECT timeofday()",
         "SELECT transaction_timestamp()"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows type conversion functions", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT CAST('100' AS integer)",
         "SELECT '100'::integer",
         "SELECT text '100'",
@@ -482,117 +490,121 @@ describe("SafeSqlDriver", () => {
         "SELECT timestamptz '2001-10-05 04:05:06.789-08'",
         "SELECT interval '1 year 2 months 3 days'"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows regexp functions", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT regexp_replace('Hello World', 'World', 'PostgreSQL')"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows complex type conversion queries", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT to_char(current_timestamp, 'YYYY-MM-DD'),
            to_date('2023-01-01'),
            to_timestamp('2023-01-01 12:00:00'),
            to_number('123.45', '999.99')
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows network functions", async () => {
-    expect(
-      await runsReadOnly("SELECT inet_client_addr(), inet_client_port()")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT inet_client_addr(), inet_client_port()")
+    ).resolves.toBe(true);
   });
 
   it("allows network functions in complex queries", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT inet_client_addr() as client_ip,
            inet_client_port() as client_port,
            inet_server_addr() as server_ip,
            inet_server_port() as server_port
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows notification and server functions", async () => {
-    expect(
-      await runsReadOnly(
-        "SELECT pg_listening_channels(), pg_postmaster_start_time()"
-      )
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT pg_listening_channels(), pg_postmaster_start_time()")
+    ).resolves.toBe(true);
   });
 
   it("allows minmax expressions", async () => {
-    expect(await runsReadOnly("SELECT GREATEST(1, 2, 3), LEAST(1, 2, 3)")).toBe(
-      true
-    );
+    await expect(
+      runsReadOnly("SELECT GREATEST(1, 2, 3), LEAST(1, 2, 3)")
+    ).resolves.toBe(true);
   });
 
   it("allows row expressions", async () => {
-    expect(await runsReadOnly("SELECT ROW(1, 2, 3) = ROW(1, 2, 3)")).toBe(true);
+    await expect(
+      runsReadOnly("SELECT ROW(1, 2, 3) = ROW(1, 2, 3)")
+    ).resolves.toBe(true);
   });
 
   it("allows extension check queries", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT extname, extversion FROM pg_extension WHERE extname = 'hypopg'"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows CREATE EXTENSION for allowlisted extensions", async () => {
-    expect(await runsReadOnly("CREATE EXTENSION IF NOT EXISTS hypopg")).toBe(
-      true
-    );
+    await expect(
+      runsReadOnly("CREATE EXTENSION IF NOT EXISTS hypopg")
+    ).resolves.toBe(true);
   });
 
   it("allows hypopg create index queries", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT * FROM hypopg_create_index('CREATE INDEX idx ON users(id)')"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows hypopg reset queries", async () => {
-    expect(await runsReadOnly("SELECT * FROM hypopg_reset()")).toBe(true);
-  });
-
-  it("allows hypopg list indexes queries", async () => {
-    expect(await runsReadOnly("SELECT * FROM hypopg_list_indexes()")).toBe(
+    await expect(runsReadOnly("SELECT * FROM hypopg_reset()")).resolves.toBe(
       true
     );
   });
 
+  it("allows hypopg list indexes queries", async () => {
+    await expect(
+      runsReadOnly("SELECT * FROM hypopg_list_indexes()")
+    ).resolves.toBe(true);
+  });
+
   it("allows pg_stat_statements queries", async () => {
-    expect(
-      await runsReadOnly(
+    await expect(
+      runsReadOnly(
         "SELECT * FROM pg_stat_statements ORDER BY calls DESC LIMIT 10"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows pg_indexes queries", async () => {
-    expect(
-      await runsReadOnly("SELECT * FROM pg_indexes WHERE schemaname = 'public'")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT * FROM pg_indexes WHERE schemaname = 'public'")
+    ).resolves.toBe(true);
   });
 
   it("allows pg_stats queries", async () => {
-    expect(
-      await runsReadOnly("SELECT * FROM pg_stats WHERE schemaname = 'public'")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT * FROM pg_stats WHERE schemaname = 'public'")
+    ).resolves.toBe(true);
   });
 
   it("allows EXPLAIN queries", async () => {
-    expect(await runsReadOnly("EXPLAIN SELECT * FROM users")).toBe(true);
+    await expect(runsReadOnly("EXPLAIN SELECT * FROM users")).resolves.toBe(
+      true
+    );
   });
 
   it("allows a query built from SQL parameters", async () => {
@@ -605,32 +617,32 @@ describe("SafeSqlDriver", () => {
     LIMIT {}
     `;
 
-    expect(
-      await runsReadOnly(paramSqlToQuery(queryTemplate, [50, 5.0, 100]))
-    ).toBe(true);
+    await expect(
+      runsReadOnly(paramSqlToQuery(queryTemplate, [50, 5, 100]))
+    ).resolves.toBe(true);
   });
 
   it("handles multiple queries in sequence", async () => {
-    expect(
-      await runsReadOnly("SELECT * FROM users", "SELECT * FROM orders")
-    ).toBe(true);
+    await expect(
+      runsReadOnly("SELECT * FROM users", "SELECT * FROM orders")
+    ).resolves.toBe(true);
   });
 
   it("allows queries with comments", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     -- Get user information
     SELECT id, name, email
     FROM users
     WHERE status = 'active'
     -- Only get active users
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("allows queries with extra whitespace", async () => {
-    expect(
-      await runsReadOnly(`
+    await expect(
+      runsReadOnly(`
     SELECT    id,
               name,
               email
@@ -638,7 +650,7 @@ describe("SafeSqlDriver", () => {
     WHERE     status = 'active'
     ORDER BY  name
     `)
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("blocks dangerous functions in the FROM clause", async () => {
@@ -648,13 +660,13 @@ describe("SafeSqlDriver", () => {
       "SELECT * FROM pg_read_binary_file('/etc/passwd') AS t",
       "SELECT * FROM pg_stat_file('/etc/passwd') AS t",
     ];
-    expect(await isBlocked(...queries)).toBe(true);
+    await expect(isBlocked(...queries)).resolves.toBe(true);
   });
 
   it("allows permitted functions in the FROM clause", async () => {
-    expect(await runsReadOnly("SELECT * FROM unnest(ARRAY[1,2,3]) AS t")).toBe(
-      true
-    );
+    await expect(
+      runsReadOnly("SELECT * FROM unnest(ARRAY[1,2,3]) AS t")
+    ).resolves.toBe(true);
   });
 
   it.each([
@@ -693,11 +705,11 @@ describe("SafeSqlDriver", () => {
   });
 
   it("no longer skips a function hidden in a ROWS FROM column definition list", async () => {
-    expect(
-      await isBlocked(
+    await expect(
+      isBlocked(
         "SELECT * FROM ROWS FROM (json_to_record('{\"a\":1}') AS (a numeric(pg_sleep(0)::int))) AS t"
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it.each([
@@ -709,6 +721,6 @@ describe("SafeSqlDriver", () => {
     "SELECT * FROM (VALUES (1), (2)) AS v(a)",
     "SELECT 1 WHERE 1 IN (VALUES (1), (2))",
   ])("keeps allowing the nested construct %s", async (query) => {
-    expect(await runsReadOnly(query)).toBe(true);
+    await expect(runsReadOnly(query)).resolves.toBe(true);
   });
 });

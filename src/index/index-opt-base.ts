@@ -1,5 +1,5 @@
-// biome-ignore-all lint/style/noExcessiveClassesPerFile: the recommendation types and the tuning base class belong together in index-opt-base.ts
 import { readFileSync } from "node:fs";
+
 import { calculateImprovementMultiple } from "../artifacts.ts";
 import type { DtaTracer } from "../explain/explain-plan.ts";
 import { ExplainPlanTool } from "../explain/explain-plan.ts";
@@ -320,7 +320,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       sqlFile,
       queryList,
       minCalls = 50,
-      minAvgTimeMs = 5.0,
+      minAvgTimeMs = 5,
       limit = MAX_NUM_INDEX_TUNING_QUERIES,
       maxIndexSizeMb = -1,
     } = options;
@@ -452,9 +452,8 @@ export abstract class IndexTuningBase implements DtaTracer {
       const loweredQuery = rawQuery.trim().toLowerCase();
 
       // Replace parameter placeholders with dummy values
-      const binding = this.sqlBindParams.replaceParameters(loweredQuery);
-      // biome-ignore lint/performance/noAwaitInLoops: queries are bound one after another so statistics lookups share the cache
-      const queryText = await binding;
+      const queryText =
+        await this.sqlBindParams.replaceParameters(loweredQuery);
 
       const { stmts } = await parseSql(queryText);
       const stmt = AstNode.from(stmts[0]?.stmt);
@@ -481,11 +480,8 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Convert query info to weight based on query frequency. */
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   convertQueryInfoToWeight(queryInfo: WorkloadEntry): number {
-    return (
-      Number(queryInfo.calls ?? 1.0) * Number(queryInfo.avg_exec_time ?? 1.0)
-    );
+    return Number(queryInfo.calls ?? 1) * Number(queryInfo.avg_exec_time ?? 1);
   }
 
   /**
@@ -518,10 +514,9 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Load queries from an SQL file, split on semicolons. */
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   getWorkloadFromFile(filePath: string): WorkloadEntry[] {
     try {
-      const content = readFileSync(filePath, "utf8");
+      const content = readFileSync(filePath, "utf-8");
       return content
         .split(";")
         .map((text) => text.trim())
@@ -545,7 +540,7 @@ export abstract class IndexTuningBase implements DtaTracer {
 
   async getQueryStatsDirect(
     minCalls = 50,
-    minAvgTimeMs = 5.0,
+    minAvgTimeMs = 5,
     limit = 100
   ): Promise<WorkloadEntry[]> {
     const query = `
@@ -565,7 +560,6 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Check if a statement can be analyzed for index recommendations. */
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   isAnalyzableStmt(stmt: AstNode): boolean {
     if (!stmt.is("SelectStmt")) {
       return false;
@@ -604,13 +598,12 @@ export abstract class IndexTuningBase implements DtaTracer {
       `  - Evaluating cost for configuration: ${candidateStr(unique)}`
     );
 
-    let totalCost = 0.0;
+    let totalCost = 0;
     let validQueries = 0;
 
     try {
       for (const [queryText, , weight] of weightedWorkload) {
         try {
-          // biome-ignore lint/performance/noAwaitInLoops: explain plans are requested one query at a time against a single connection
           const planData = await this.getExplainPlanWithIndexes(
             queryText,
             unique
@@ -679,14 +672,13 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
   }
 
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   estimateIndexSizeInternal(stats: Readonly<Record<string, unknown>>): number {
     // 8 bytes for the heap TID
     const width = (Number(stats.total_width ?? 0) || 0) + 8;
-    let ndistinct = Number(stats.total_distinct ?? 0) || 1.0;
-    ndistinct = ndistinct > 0 ? ndistinct : 1.0;
+    let ndistinct = Number(stats.total_distinct ?? 0) || 1;
+    ndistinct = ndistinct > 0 ? ndistinct : 1;
     // simplistic formula
-    return Math.trunc(width * ndistinct * 2.0);
+    return Math.trunc(width * ndistinct * 2);
   }
 
   /** Format the best configuration into recommendations with cost estimates. */
@@ -698,12 +690,11 @@ export abstract class IndexTuningBase implements DtaTracer {
     let totalSize = 0;
     const budgetBytes = this.budgetMb * MEGABYTE;
     const individualBaseCost =
-      (await this.evaluateConfigurationCost(queryWeights, [])) || 1.0;
+      (await this.evaluateConfigurationCost(queryWeights, [])) || 1;
     let progressiveBaseCost = individualBaseCost;
     const indexesSoFar: IndexRecommendation[] = [];
     for (const indexConfig of bestConfig[0]) {
       indexesSoFar.push(indexConfig);
-      // biome-ignore lint/performance/noAwaitInLoops: each recommendation builds on the previous ones and shares the cost cache
       const progressiveCost = await this.evaluateConfigurationCost(
         queryWeights,
         indexesSoFar.map((idx) => idx.indexDefinition)

@@ -74,13 +74,17 @@ export class ReplicationCalc {
       const inactiveSlots = metrics.replicationSlots.filter((s) => !s.active);
 
       if (activeSlots.length > 0) {
-        result.push("\nActive replication slots:");
-        result.push(...activeSlots.map(describeSlot));
+        result.push(
+          "\nActive replication slots:",
+          ...activeSlots.map(describeSlot)
+        );
       }
 
       if (inactiveSlots.length > 0) {
-        result.push("\nInactive replication slots:");
-        result.push(...inactiveSlots.map(describeSlot));
+        result.push(
+          "\nInactive replication slots:",
+          ...inactiveSlots.map(describeSlot)
+        );
       }
     } else {
       result.push("\nNo replication slots found.");

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { ErrorResult, ExplainPlanArtifact } from "../../../src/artifacts.ts";
 import { ExplainPlanTool } from "../../../src/explain/explain-plan.ts";
 import { resetPostgresVersionCache } from "../../../src/sql/extension-utils.ts";
@@ -38,8 +39,8 @@ const seqScanPlan = {
   Plan: {
     "Node Type": "Seq Scan",
     "Relation Name": "users",
-    "Startup Cost": 0.0,
-    "Total Cost": 10.0,
+    "Startup Cost": 0,
+    "Total Cost": 10,
     "Plan Rows": 100,
     "Plan Width": 20,
   },
@@ -61,7 +62,7 @@ beforeEach(() => {
   resetPostgresVersionCache();
 });
 
-describe("ExplainPlanTool", () => {
+describe(ExplainPlanTool, () => {
   it("keeps the driver it was created with", () => {
     const { driver } = createDriver();
     expect(new ExplainPlanTool(driver).sqlDriver).toBe(driver);
@@ -302,8 +303,8 @@ describe("ExplainPlanTool", () => {
         "Node Type": "Index Scan",
         "Index Name": "hypothetical_idx",
         "Relation Name": "title_basics",
-        "Startup Cost": 0.0,
-        "Total Cost": 100.0,
+        "Startup Cost": 0,
+        "Total Cost": 100,
         "Plan Rows": 100,
         "Plan Width": 20,
       },

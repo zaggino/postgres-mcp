@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+
 import { AccessMode, getSqlDriver } from "../../../src/server.ts";
 import { DbConnPool } from "../../../src/sql/sql-driver.ts";
 import { createFakePool, rowsResult } from "../../support/fake-pool.ts";
@@ -20,33 +21,37 @@ async function beginStatementFor(
 }
 
 test("unrestricted mode is not read-only by default", async () => {
-  expect(await beginStatementFor(AccessMode.UNRESTRICTED)).toBe("BEGIN");
+  await expect(beginStatementFor(AccessMode.UNRESTRICTED)).resolves.toBe(
+    "BEGIN"
+  );
 });
 
 test("unrestricted mode honours forceReadonly=true", async () => {
-  expect(await beginStatementFor(AccessMode.UNRESTRICTED, true)).toBe(
+  await expect(beginStatementFor(AccessMode.UNRESTRICTED, true)).resolves.toBe(
     "BEGIN TRANSACTION READ ONLY"
   );
 });
 
 test("unrestricted mode honours forceReadonly=false", async () => {
-  expect(await beginStatementFor(AccessMode.UNRESTRICTED, false)).toBe("BEGIN");
+  await expect(beginStatementFor(AccessMode.UNRESTRICTED, false)).resolves.toBe(
+    "BEGIN"
+  );
 });
 
 test("restricted mode is read-only by default", async () => {
-  expect(await beginStatementFor(AccessMode.RESTRICTED)).toBe(
+  await expect(beginStatementFor(AccessMode.RESTRICTED)).resolves.toBe(
     "BEGIN TRANSACTION READ ONLY"
   );
 });
 
 test("restricted mode stays read-only when forceReadonly=false is passed", async () => {
-  expect(await beginStatementFor(AccessMode.RESTRICTED, false)).toBe(
+  await expect(beginStatementFor(AccessMode.RESTRICTED, false)).resolves.toBe(
     "BEGIN TRANSACTION READ ONLY"
   );
 });
 
 test("restricted mode stays read-only when forceReadonly=true is passed", async () => {
-  expect(await beginStatementFor(AccessMode.RESTRICTED, true)).toBe(
+  await expect(beginStatementFor(AccessMode.RESTRICTED, true)).resolves.toBe(
     "BEGIN TRANSACTION READ ONLY"
   );
 });

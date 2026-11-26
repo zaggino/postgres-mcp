@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import type { ExtensionStatus } from "../../../src/sql/extension-utils.ts";
 import type { SqlExecutor } from "../../../src/sql/safe-sql.ts";
 import type { RowResult } from "../../../src/sql/sql-driver.ts";
@@ -44,21 +45,21 @@ function createDriver(pgVersion: number): {
             row({
               query: "SELECT * FROM users",
               calls: 100,
-              [total]: 1000.0,
-              [mean]: 10.0,
+              [total]: 1000,
+              [mean]: 10,
               rows: 1000,
             }),
             row({
               query: "SELECT * FROM orders",
               calls: 50,
-              [total]: 750.0,
-              [mean]: 15.0,
+              [total]: 750,
+              [mean]: 15,
               rows: 500,
             }),
             row({
               query: "SELECT * FROM products",
               calls: 200,
-              [total]: 500.0,
+              [total]: 500,
               [mean]: 2.5,
               rows: 2000,
             }),
@@ -75,7 +76,7 @@ function executedQuery(
   return String(executeQuery.mock.lastCall?.[0]);
 }
 
-describe("TopQueriesCalc", () => {
+describe(TopQueriesCalc, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     extensionUtils.checkExtension.mockResolvedValue(extensionStatus(true));

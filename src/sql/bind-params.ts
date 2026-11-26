@@ -1,4 +1,3 @@
-// biome-ignore lint/style/noExcessiveClassesPerFile: the visitors, SqlBindParams and the PgFloat value type belong together in bind-params.ts
 import { pyFloatStr } from "../py-format.ts";
 import { literal } from "./literal.ts";
 import { AstNode, isJsonObject, parseSql, Visitor } from "./pg-ast.ts";
@@ -436,7 +435,7 @@ function contextReplace(colName: string, op: string): string {
 /** Fallback generic parameter replacement when catalog lookup fails. */
 function replaceParametersGeneric(query: string): string {
   const withEquals = replaceWithGroups(
-    query.replace(/like \$\d+/gu, "like '%'"),
+    query.replaceAll(/like \$\d+/gu, "like '%'"),
     EQUALS_PARAM_PATTERN,
     (groups) => contextReplace(groups.column ?? "", "=")
   );
@@ -446,12 +445,12 @@ function replaceParametersGeneric(query: string): string {
   return replaceWithGroups(withLess, GREATER_PARAM_PATTERN, (groups) =>
     contextReplace(groups.column ?? "", ">")
   )
-    .replace(/(?<num>\d+) and \$\d+/gu, "$<num> and 100")
-    .replace(/\$\d+ and (?<num>\d+)/gu, "1 and $<num>")
-    .replace(/>\s*\$\d+/gu, "> 1")
-    .replace(/<\s*\$\d+/gu, "< 100")
-    .replace(/[=]\s*\$\d+\b/gu, "= 45")
-    .replace(/\$\d+/gu, "'sample_value'");
+    .replaceAll(/(?<num>\d+) and \$\d+/gu, "$<num> and 100")
+    .replaceAll(/\$\d+ and (?<num>\d+)/gu, "1 and $<num>")
+    .replaceAll(/>\s*\$\d+/gu, "> 1")
+    .replaceAll(/<\s*\$\d+/gu, "< 100")
+    .replaceAll(/[=]\s*\$\d+\b/gu, "= 45")
+    .replaceAll(/\$\d+/gu, "'sample_value'");
 }
 
 /** The LIMIT / INTERVAL / OFFSET rewrites, in the order that prevents clashes. */
@@ -459,13 +458,16 @@ function replaceStaticPatterns(query: string): string {
   return (
     query
       // LIMIT clauses are always replaced with integers
-      .replace(/limit\s+\$\d+/giu, "limit 100")
+      .replaceAll(/limit\s+\$\d+/giu, "limit 100")
       // Static INTERVAL expressions
-      .replace(/interval\s+'\d+\s+(?<unit>[a-z]+)'/giu, "interval '2 $<unit>'")
+      .replaceAll(
+        /interval\s+'\d+\s+(?<unit>[a-z]+)'/giu,
+        "interval '2 $<unit>'"
+      )
       // Parameterized INTERVAL expressions (INTERVAL $1)
-      .replace(/interval\s+\$\d+/giu, "interval '2 days'")
+      .replaceAll(/interval\s+\$\d+/giu, "interval '2 days'")
       // OFFSET clauses
-      .replace(/offset\s+\$\d+/giu, "offset 0")
+      .replaceAll(/offset\s+\$\d+/giu, "offset 0")
   );
 }
 
@@ -724,7 +726,6 @@ export class SqlBindParams {
       if (!(column && first && second)) {
         continue;
       }
-      // biome-ignore lint/performance/noAwaitInLoops: each BETWEEN is resolved and applied in order; statistics lookups share the cache
       const { tableName, colName } = await this.findBetweenColumn(
         query,
         column
@@ -745,8 +746,8 @@ export class SqlBindParams {
       const lower = statSql(lowerBound);
       const upper = statSql(upperBound);
       result = result
-        .replace(new RegExp(String.raw`\$${first}`, "gu"), () => lower)
-        .replace(new RegExp(String.raw`\$${second}`, "gu"), () => upper);
+        .replaceAll(new RegExp(String.raw`\$${first}`, "gu"), () => lower)
+        .replaceAll(new RegExp(String.raw`\$${second}`, "gu"), () => upper);
     }
     return result;
   }
@@ -793,7 +794,6 @@ export class SqlBindParams {
       );
       if (columnInfo) {
         const [tableName, columnName] = columnInfo;
-        // biome-ignore lint/performance/noAwaitInLoops: replacements mutate the query string, so positions must be applied in order
         const stats = await this.getColumnStatistics(tableName, columnName);
         replacement = stats
           ? this.getReplacementValue(stats, precedingText)
@@ -811,7 +811,6 @@ export class SqlBindParams {
   }
 
   /** Identify which column a parameter likely belongs to based on context. */
-  // biome-ignore lint/style/useThisInClassMethods: instance method kept for API parity (callers and tests replace it per instance)
   identifyParameterColumn(
     context: string,
     tableColumns: TableColumns
@@ -864,7 +863,7 @@ export class SqlBindParams {
       for (const key of ["common_vals", "common_freqs", "histogram_bounds"]) {
         const value = stats[key];
         if (typeof value === "string") {
-          const arrayStr = value.replace(ARRAY_BRACES_PATTERN, "");
+          const arrayStr = value.replaceAll(ARRAY_BRACES_PATTERN, "");
           stats[key] = arrayStr
             ? arrayStr.split(",").map(parsePgArrayValue)
             : [];
@@ -883,7 +882,6 @@ export class SqlBindParams {
   }
 
   /** A replacement value based on column statistics. */
-  // biome-ignore lint/style/useThisInClassMethods: instance method kept for API parity (callers and tests replace it per instance)
   getReplacementValue(stats: ColumnStats, context: string): string {
     const dataType = dataTypeOf(stats);
     const commonVals = statList(stats.common_vals);
@@ -907,7 +905,10 @@ export class SqlBindParams {
         dataType,
         commonVals ?? [],
         histogramBounds ?? [],
-        { isEquality, isRange }
+        {
+          isEquality,
+          isRange,
+        }
       );
     }
     if (dataType.includes("date") || dataType.includes("time")) {
@@ -920,7 +921,6 @@ export class SqlBindParams {
   }
 
   /** A generic replacement when the specific column type is unknown. */
-  // biome-ignore lint/style/useThisInClassMethods: instance method kept for API parity (callers and tests replace it per instance)
   getGenericReplacement(context: string): string {
     const lowered = context.toLowerCase();
 
@@ -962,7 +962,6 @@ export class SqlBindParams {
   }
 
   /** Extract columns from a parsed SelectStmt. */
-  // biome-ignore lint/style/useThisInClassMethods: instance method kept for API parity (callers and tests replace it per instance)
   extractStmtColumns(stmt: AstNode): Map<string, Set<string>> {
     try {
       const collector = new ColumnCollector();

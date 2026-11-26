@@ -1,4 +1,3 @@
-// biome-ignore-all lint/style/noExcessiveClassesPerFile: DbConnPool and SqlDriver are one module by design
 import type { CustomTypesConfig } from "pg";
 import pg from "pg";
 
@@ -59,10 +58,10 @@ export function obfuscatePassword(
   if (urlMatch) {
     const netloc = urlMatch.groups?.netloc ?? "";
     const at = netloc.lastIndexOf("@");
-    if (at >= 0) {
+    if (at !== -1) {
       const userinfo = netloc.slice(0, at);
       const colon = userinfo.indexOf(":");
-      const password = colon >= 0 ? userinfo.slice(colon + 1) : "";
+      const password = colon === -1 ? "" : userinfo.slice(colon + 1);
       if (password) {
         const obfuscatedNetloc = netloc.replaceAll(password, "****");
         const prefix = `${urlMatch.groups?.scheme ?? ""}://`;

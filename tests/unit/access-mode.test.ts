@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
   AccessMode,
   dbConnection,
@@ -15,7 +16,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("getSqlDriver", () => {
+describe(getSqlDriver, () => {
   it.each([
     [AccessMode.UNRESTRICTED, SqlDriver],
     [AccessMode.RESTRICTED, SafeSqlDriver],

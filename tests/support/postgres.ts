@@ -1,5 +1,3 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   GenericContainer,
   getContainerRuntimeClient,
@@ -7,15 +5,13 @@ import {
   Wait,
 } from "testcontainers";
 import { afterAll, beforeAll, beforeEach, describe } from "vitest";
+
 import { resetPostgresVersionCache } from "../../src/sql/extension-utils.ts";
 
 const ALL_VERSIONS = ["12", "15", "16"];
 const POSTGRES_PASSWORD = "test_password";
 const POSTGRES_DB = "test_db";
-const CONTEXT_DIR = dirname(fileURLToPath(import.meta.url)).replace(
-  /[\\/]support$/u,
-  ""
-);
+const CONTEXT_DIR = import.meta.dirname.replace(/[\\/]support$/u, "");
 
 /** PostgreSQL major versions under test; `PG_VERSIONS=16` narrows the matrix. */
 const versions = (process.env.PG_VERSIONS ?? ALL_VERSIONS.join(","))
@@ -82,7 +78,6 @@ export function describeWithPostgres(
   for (const version of versions) {
     const suiteName = `${name} [postgres:${version}]`;
     if (!(dockerAvailable || requireDocker)) {
-      // biome-ignore lint/suspicious/noSkippedTests: skipping the suite is the documented behaviour without Docker
       describe.skip(suiteName, () => {
         define({
           version,

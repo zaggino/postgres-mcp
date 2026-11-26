@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import { constants as osConstants } from "node:os";
 import { parseArgs } from "node:util";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -10,6 +11,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+
 import { ErrorResult, ExplainPlanArtifact } from "./artifacts.ts";
 import {
   DatabaseHealthTool,
@@ -760,7 +762,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
       if (overflowed) {
         return;
       }
-      const text = Buffer.concat(chunks).toString("utf8");
+      const text = Buffer.concat(chunks).toString("utf-8");
       if (!text) {
         resolve(undefined);
         return;
@@ -1294,20 +1296,24 @@ export async function main(argv: string[]): Promise<void> {
 
   const factory = () => createServer(accessMode);
   switch (options.transport) {
-    case "stdio":
+    case "stdio": {
       await runners.runStdio(factory);
       break;
-    case "sse":
+    }
+    case "sse": {
       await runners.runSse(factory, options.sseHost, options.ssePort);
       break;
-    case "streamable-http":
+    }
+    case "streamable-http": {
       await runners.runStreamableHttp(
         factory,
         options.streamableHttpHost,
         options.streamableHttpPort
       );
       break;
-    default:
+    }
+    default: {
       break;
+    }
   }
 }

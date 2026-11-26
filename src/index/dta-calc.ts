@@ -1,4 +1,3 @@
-// biome-ignore-all lint/style/noExcessiveClassesPerFile: the advisor and its condition collector are specified to live together in dta-calc.ts
 import { pyFloatStr } from "../py-format.ts";
 import { ColumnCollector, TableAliasVisitor } from "../sql/bind-params.ts";
 import {
@@ -134,7 +133,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     this.minColumnUsage = options.minColumnUsage ?? 1;
     this.seedColumnsCount = options.seedColumnsCount ?? 3;
     this.analysisStartTime = 0;
-    this.paretoAlpha = options.paretoAlpha ?? 2.0;
+    this.paretoAlpha = options.paretoAlpha ?? 2;
     this.minTimeImprovement = options.minTimeImprovement ?? 0.1;
   }
 
@@ -177,7 +176,6 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       }
 
       this.dtaTrace("Evaluating seed:");
-      // biome-ignore lint/performance/noAwaitInLoops: seeds are evaluated one after another against the shared caches
       const currentCost = await this.evaluateConfigurationCost(
         queryWeights,
         [...seed].map((idx) => idx.indexDefinition)
@@ -354,7 +352,6 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     // Estimate base relation size for each table
     let baseRelationSize = 0;
     for (const table of tables) {
-      // biome-ignore lint/performance/noAwaitInLoops: table sizes are looked up one at a time and memoized
       baseRelationSize += await this.getTableSize(table);
     }
 
@@ -381,7 +378,6 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const addedIndexes: IndexRecommendation[] = [];
     let iteration = 1;
 
-    // biome-ignore lint/suspicious/noUnnecessaryConditions: the search ends through the stopping criteria below, not a loop condition
     while (true) {
       this.dtaTrace(`\n[ITERATION ${iteration}] Evaluating candidates`);
       let bestIndex: IndexRecommendation | undefined;
@@ -393,7 +389,6 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       for (const candidate of candidateIndexes) {
         this.dtaTrace(`Evaluating candidate: ${candidateStr([candidate])}`);
         // Additional size from this index
-        // biome-ignore lint/performance/noAwaitInLoops: candidates are evaluated one at a time; each evaluation shares the cost cache
         const indexSize = await this.estimateIndexSize(
           candidate.table,
           candidate.columns
@@ -534,14 +529,12 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   ): Promise<number> {
     let total = 0;
     for (const idx of indexes) {
-      // biome-ignore lint/performance/noAwaitInLoops: sizes are estimated one at a time and memoized
       total += await this.estimateIndexSize(idx.table, idx.columns);
     }
     return total;
   }
 
   /** Filter out index candidates that contain columns not used in query conditions. */
-  // biome-ignore lint/style/useThisInClassMethods: public instance method, callers may replace it per instance
   filterCandidatesByQueryConditions(
     workload: readonly QueryWeight[],
     candidates: IndexRecommendation[]
@@ -823,7 +816,6 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   }
 
   /** Check if two indexes are functionally equivalent. */
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   isSameIndex(index1: IndexInfo, index2: IndexInfo): boolean {
     if (index1.table !== index2.table) {
       return false;

@@ -1,8 +1,10 @@
 import { request } from "node:http";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, expect, it as test, vi } from "vitest";
+
 import type { HttpServerHandle } from "../../src/server.ts";
 import {
   AccessMode,
@@ -18,7 +20,6 @@ const cleanups: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) {
-    // biome-ignore lint/performance/noAwaitInLoops: clients must close before the servers they talk to, in reverse order
     await cleanup();
   }
   vi.restoreAllMocks();

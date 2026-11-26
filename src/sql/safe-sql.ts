@@ -88,21 +88,25 @@ function checkExplain(fields: JsonObject): void {
 
 function checkNodeRules(type: string, fields: JsonObject): void {
   switch (type) {
-    case "A_Expr":
+    case "A_Expr": {
       checkLikePattern(fields);
       break;
-    case "FuncCall":
+    }
+    case "FuncCall": {
       checkFunctionCall(fields);
       break;
-    case "SelectStmt":
+    }
+    case "SelectStmt": {
       if (Array.isArray(fields.lockingClause) && fields.lockingClause.length) {
         throw new Error("Locking clause on select is prohibited");
       }
       break;
-    case "ExplainStmt":
+    }
+    case "ExplainStmt": {
       checkExplain(fields);
       break;
-    case "CreateExtensionStmt":
+    }
+    case "CreateExtensionStmt": {
       if (
         typeof fields.extname !== "string" ||
         !ALLOWED_EXTENSIONS.has(fields.extname)
@@ -112,8 +116,10 @@ function checkNodeRules(type: string, fields: JsonObject): void {
         );
       }
       break;
-    default:
+    }
+    default: {
       break;
+    }
   }
 }
 

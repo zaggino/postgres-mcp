@@ -44,7 +44,7 @@ export class TextPresentation {
   analyzeWorkload(maxIndexSizeMb = 10_000): Promise<JsonRecord> {
     return this.executeAnalysis({
       minCalls: 50,
-      minAvgTimeMs: 5.0,
+      minAvgTimeMs: 5,
       limit: 100,
       maxIndexSizeMb,
     });
@@ -89,7 +89,7 @@ export class TextPresentation {
       const session = await this.indexTuning.analyzeWorkload({
         queryList: options.queryList,
         minCalls: options.minCalls ?? 50,
-        minAvgTimeMs: options.minAvgTimeMs ?? 5.0,
+        minAvgTimeMs: options.minAvgTimeMs ?? 5,
         limit: options.limit ?? 100,
         maxIndexSizeMb: options.maxIndexSizeMb ?? 10_000,
       });
@@ -151,7 +151,6 @@ export class TextPresentation {
     }
   }
 
-  // biome-ignore lint/style/useThisInClassMethods: overridable instance method
   buildRecommendationsList(session: IndexTuningResult): JsonRecord[] {
     return session.recommendations.map((rec, i) => {
       const recDict: JsonRecord = {
@@ -206,7 +205,6 @@ export class TextPresentation {
 
     for (const query of uniqueQueries) {
       // Plan with no indexes
-      // biome-ignore lint/performance/noAwaitInLoops: plans are requested one query at a time against a single connection
       const beforePlan = await this.indexTuning.getExplainPlanWithIndexes(
         query,
         []

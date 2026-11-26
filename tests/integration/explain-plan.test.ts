@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
+
 import { ErrorResult, ExplainPlanArtifact } from "../../src/artifacts.ts";
 import { ExplainPlanTool } from "../../src/explain/explain-plan.ts";
 import { SqlDriver } from "../../src/sql/sql-driver.ts";
@@ -186,7 +187,7 @@ describeWithPostgres("explain plan with a real database", (postgres) => {
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
-    expect(typeof parsePlan(result)).toBe("object");
+    expect(parsePlan(result)).toBeTypeOf("object");
   });
 
   test("explains a query with LIKE expressions", async () => {
@@ -217,7 +218,7 @@ describeWithPostgres("explain plan with a real database", (postgres) => {
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
-    expect(typeof parsePlan(result)).toBe("object");
+    expect(parsePlan(result)).toBeTypeOf("object");
   });
 
   test("returns an error result for an invalid query", async () => {

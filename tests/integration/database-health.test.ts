@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
+
 import { DatabaseHealthTool } from "../../src/database-health/database-health.ts";
 import { SqlDriver } from "../../src/sql/sql-driver.ts";
 import { describeWithPostgres } from "../support/postgres.ts";
@@ -97,7 +98,6 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
     'ANALYZE "UpperCaseOrders"',
   ];
   for (const statement of statements) {
-    // biome-ignore lint/performance/noAwaitInLoops: statements depend on each other and must run in order
     await sqlDriver.executeQuery(statement);
   }
 }
@@ -130,7 +130,7 @@ describeWithPostgres("database health with a real database", (postgres) => {
 
     const healthReport = await healthTool.health("all");
 
-    expect(typeof healthReport).toBe("string");
+    expect(healthReport).toBeTypeOf("string");
     // Check that all health components are present
     expect(healthReport).toContain("Invalid index check:");
     expect(healthReport).toContain("Duplicate index check:");

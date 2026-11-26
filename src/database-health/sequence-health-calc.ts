@@ -149,7 +149,6 @@ export class SequenceHealthCalc {
       const maxValue = columnType === "integer" ? INTEGER_MAX : BIGINT_MAX;
 
       // Get sequence attributes
-      // biome-ignore lint/performance/noAwaitInLoops: queries run one at a time on the shared connection, in catalog order
       const attrs = await SafeSqlDriver.executeParamQuery(
         this.sqlDriver,
         `

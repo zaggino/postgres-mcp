@@ -6,18 +6,21 @@
   "bugs": {
     "url": "https://github.com/zaggino/postgres-mcp/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zaggino/postgres-mcp.git"
   },
-  "license": "MIT",
-  "type": "module",
   "bin": {
     "postgres-mcp": "dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown",
     "check": "ultracite check",
@@ -35,20 +38,18 @@
     "zod": "^4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2",
     "@types/node": "^26",
     "@types/pg": "^8",
+    "oxfmt": "^0.80.0",
+    "oxlint": "^1.95.0",
     "testcontainers": "^12",
     "tsdown": "^0.23",
     "typescript": "~7.0",
     "ultracite": "^8",
     "vitest": "^5"
   },
-  "packageManager": "pnpm@11.18.0",
   "engines": {
     "node": ">=26"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "packageManager": "pnpm@11.18.0"
 }

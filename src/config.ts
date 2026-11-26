@@ -10,6 +10,7 @@ export const DEFAULT_IDLE_MINUTES = 10;
 
 const DATABASE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const VARIABLE_PATTERN = /\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}/gu;
+const JSON_ERROR_POSITION = /position \d+(?: \(line \d+ column \d+\))?/u;
 
 const uriSchema = z.object({ uri: z.string() }).strict();
 
@@ -100,7 +101,9 @@ function readConfig(path: string, readFile: (path: string) => string): z.infer<t
   try {
     json = JSON.parse(text);
   } catch (error) {
-    throw new CliError(`invalid JSON in config file ${path}: ${errorMessage(error)}`, { cause: error });
+    // V8's message quotes the text around the error, which can be part of a literal URI with a password.
+    const at = JSON_ERROR_POSITION.exec(errorMessage(error))?.[0];
+    throw new CliError(`invalid JSON in config file ${path}${at ? ` at ${at}` : ''}`, { cause: error });
   }
   const parsed = configSchema.safeParse(json);
   if (!parsed.success) {

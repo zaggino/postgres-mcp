@@ -70,6 +70,31 @@ function serverLabel(uri: string): string {
   }
 }
 
+/**
+ * The URI of a discovered database. pg decodes the URL path with `decodeURI`, which leaves `%2F`, `%3F`, `%23`
+ * and the other reserved escapes in place, so such a name would reach a different database than the one listed.
+ */
+function databaseUri(serverUri: string, datname: string, name: string): UriSpec {
+  const path = encodeURIComponent(datname);
+  if (decodeURI(path) !== datname) {
+    return {
+      error: `Database "${name}" cannot be used: its name contains characters a connection URL cannot carry (such as / ? # & =).`,
+    };
+  }
+  const url = new URL(serverUri);
+  url.pathname = `/${path}`;
+  return { uri: url.toString() };
+}
+
+/**
+ * An error message with any password masked. An echo of `uri` itself is replaced as a whole first, because the
+ * pattern-based masking can miss a password containing `@` or other unusual characters.
+ */
+function maskError(error: unknown, uri: string): string {
+  const message = errorMessage(error).replaceAll(uri, String(obfuscatePassword(uri)));
+  return String(obfuscatePassword(message));
+}
+
 function globToRegExp(glob: string): RegExp {
   const pattern = glob
     .replaceAll(REGEX_METACHARACTERS, String.raw`\$&`)
@@ -107,8 +132,9 @@ class IdlePool {
     return this.#uri;
   }
 
+  // A pool marked invalid by a failed query is still held, and its idle timer still runs, so it counts as open.
   get isOpen(): boolean {
-    return Boolean(this.#conn?.pool && this.#conn.isValid);
+    return Boolean(this.#conn?.pool);
   }
 
   /** Retired and with no call left in flight, so its pool is closed or closing. */
@@ -196,8 +222,8 @@ interface SourceState {
   pool: IdlePool | null;
   /** Whether a discovered database name passes the source's include and exclude globs. */
   matches: (datname: string) => boolean;
-  /** Discovered database name to its URI, from the last successful run. */
-  found: Map<string, string>;
+  /** Discovered database name to its URI (or why it cannot be used), from the last successful run. */
+  found: Map<string, UriSpec>;
   error: string | null;
 }
 
@@ -251,30 +277,41 @@ export class DatabaseRegistry {
 
   async use<T>(name: string, fn: (sqlDriver: SqlExecutor) => Promise<T>): Promise<T> {
     let entry = this.#catalog.get(name);
-    if (!entry) {
+    if (!entry && this.#sources.length > 0) {
       await this.#discover();
       entry = this.#catalog.get(name);
     }
     if (!entry) {
-      throw new DatabaseAccessError(`Unknown database "${name}". Call list_databases to see the available databases.`);
+      throw new DatabaseAccessError(
+        `Unknown database "${name}". Call list_databases to see the available databases.${this.#discoveryFailures()}`
+      );
     }
     if ('error' in entry.uri) {
       throw new DatabaseAccessError(entry.uri.error);
     }
 
+    const { uri } = entry.uri;
     let pool = this.#pools.get(name);
     if (!pool) {
-      pool = new IdlePool(entry.uri.uri, this.#poolFactory, this.#idleMinutes);
+      pool = new IdlePool(uri, this.#poolFactory, this.#idleMinutes);
       this.#pools.set(name, pool);
     }
-    return await pool.use((conn) => fn(this.#createDriver(conn)));
+    return await pool.use((conn) => fn(this.#createDriver(conn, uri)));
   }
 
-  #createDriver(conn: DbConnPool): SqlExecutor {
+  /** Why discovery may have missed a name: the servers whose last run failed. */
+  #discoveryFailures(): string {
+    const failures = this.#sources.flatMap(({ source, error }) =>
+      error ? [`${'uri' in source.uri ? serverLabel(source.uri.uri) : source.prefix}: ${error}`] : []
+    );
+    return failures.length > 0 ? ` Discovery failed on ${failures.join('; ')}.` : '';
+  }
+
+  #createDriver(conn: DbConnPool, uri: string): SqlExecutor {
     try {
       return this.#getSqlDriver(this.accessMode, conn);
     } catch (error) {
-      throw new DatabaseAccessError(String(obfuscatePassword(errorMessage(error))), { cause: error });
+      throw new DatabaseAccessError(maskError(error, uri), { cause: error });
     }
   }
 
@@ -327,7 +364,7 @@ export class DatabaseRegistry {
           const error = `Database "${name}" is found on more than one server; set a distinct "prefix" on the servers in the config file.`;
           catalog.set(name, { source: 'server', uri: { error } });
         } else {
-          catalog.set(name, { source: 'server', uri: { uri } });
+          catalog.set(name, { source: 'server', uri });
         }
       }
     }
@@ -384,23 +421,22 @@ export class DatabaseRegistry {
 
     try {
       state.pool ??= new IdlePool(serverUri, this.#poolFactory, this.#idleMinutes);
-      const rows = await state.pool.use((conn) => this.#createDriver(conn).executeQuery(DISCOVERY_QUERY));
+      const rows = await state.pool.use((conn) => this.#createDriver(conn, serverUri).executeQuery(DISCOVERY_QUERY));
 
-      const found = new Map<string, string>();
+      const found = new Map<string, UriSpec>();
       for (const row of rows ?? []) {
         const datname = String(row.cells.datname);
         if (!state.matches(datname)) {
           continue;
         }
-        const url = new URL(serverUri);
-        url.pathname = `/${encodeURIComponent(datname)}`;
-        found.set(`${source.prefix}${datname}`, url.toString());
+        const name = `${source.prefix}${datname}`;
+        found.set(name, databaseUri(serverUri, datname, name));
       }
       state.found = found;
       state.error = null;
     } catch (error) {
       // The previous result stays usable; only this source reports the failure.
-      state.error = String(obfuscatePassword(errorMessage(error)));
+      state.error = maskError(error, serverUri);
     }
   }
 }

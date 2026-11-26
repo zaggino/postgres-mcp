@@ -312,6 +312,46 @@ test('a driver that cannot be created for discovery is reported on its server, m
   expect(servers[0]?.error).not.toContain('secret');
 });
 
+test('a discovered name with a reserved URL character is an error, not a connection to another database', async () => {
+  const { urls, poolFactory } = setup(datnames(['a/b', 'ok']));
+  const reg = registry({ poolFactory, servers: [source()] });
+
+  const { databases } = await reg.list();
+
+  expect(databases.find(({ database }) => database === 'a/b')).toMatchObject({
+    state: 'error',
+    error: expect.stringContaining('cannot be used') as unknown,
+  });
+  await expect(reg.use('a/b', query)).rejects.toThrow('Database "a/b" cannot be used');
+  expect(urls.filter((url) => !url.endsWith('/postgres'))).toEqual([]);
+});
+
+test('an unknown name names the servers whose discovery failed', async () => {
+  const { poolFactory } = setup(() => {
+    throw new Error('connection refused');
+  });
+  const reg = registry({ poolFactory, servers: [source()] });
+
+  await expect(reg.use('missing', query)).rejects.toThrow(
+    'Unknown database "missing". Call list_databases to see the available databases. Discovery failed on h:5432: Connection attempt failed: connection refused.'
+  );
+});
+
+test('a pool whose last query failed still lists as open while its idle timer runs', async () => {
+  const { poolFactory } = setup(({ text }) => {
+    if (text.includes('SELECT 1 AS one')) {
+      throw new Error('syntax error');
+    }
+    return [noRowsResult];
+  });
+  const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
+  await expect(reg.use('app', query)).rejects.toThrow('syntax error');
+
+  const { databases } = await reg.list();
+
+  expect(databases[0]).toMatchObject({ database: 'app', state: 'open', idle_seconds_left: 300 });
+});
+
 test('closeAll also closes a pool retired while its call is still running', async () => {
   let names = ['one'];
   const { urls, fakes, poolFactory } = setup((recorded) => datnames(names)(recorded));

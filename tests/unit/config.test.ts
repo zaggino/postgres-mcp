@@ -73,6 +73,14 @@ describe('config file', () => {
     expect(result.databases[0]?.uri).toEqual({ error: 'environment variable MISSING is not set' });
   });
 
+  it('reports invalid JSON by position without quoting the file', () => {
+    const text = '{"databases": {"a": {"uri": "postgres://u:hunter2@h/d" }}';
+    const read = () => resolveConfig(cli({ configPath: 'c.json' }), {}, () => text);
+
+    expect(read).toThrow(/invalid JSON in config file c\.json at position \d+/u);
+    expect(read).not.toThrow(/hunter2/u);
+  });
+
   it('rejects an unknown top-level key', () => {
     expect(() => withConfig({ databases: { a: { uri: 'postgres://h/d' } }, extra: 1 })).toThrow(/extra/u);
   });

@@ -124,9 +124,11 @@ A `uri` is either a literal URI or contains `${VAR}` references that are expande
 
 The server reads variables from its own environment. Claude Code passes its environment to the server. Clients that do not pass their environment need an `env` block in their config; alternatively load a file with Node: `node --env-file=/path/.env dist/index.js ...`.
 
+Treat a config file like code you run: `${VAR}` can read any variable of the server's environment and send it to the host the file names. Only point `--config` at files you trust.
+
 ### Lifecycle
 
-Pools open on the first call to a database, and the server makes no connection at startup. A pool closes after `idleMinutes` with no call in flight, and reopens on the next call. A name that rediscovery moves to another server gets a new pool; the old one closes once its calls finish. Discovery runs lazily, on the first call to a name that is not known yet and again on every `list_databases` call or call to an unknown name; a failed run keeps the previous result.
+Pools open on the first call to a database, and the server makes no connection at startup. A pool closes after `idleMinutes` with no call in flight, and reopens on the next call. A name that rediscovery moves to another server gets a new pool; the old one closes once its calls finish. Discovery runs lazily, on the first call to a name that is not known yet and again on every `list_databases` call or call to an unknown name; a failed run keeps the previous result, and the error for an unknown name says which servers failed. In restricted mode the discovery query is checked and run read-only like any other. A discovered database whose name contains a character a connection URL cannot carry (such as `/`, `?`, `#`, `&` or `=`) is listed as an error and cannot be used.
 
 ## Transports
 

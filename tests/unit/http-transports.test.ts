@@ -248,6 +248,68 @@ test('a streamable HTTP session idle past --session-idle-minutes is closed and i
   expect(expired).toBe(404);
 });
 
+test('--session-idle-minutes=0 never closes an idle streamable HTTP session', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startStreamable({ sessionIdleMinutes: 0 });
+  const { sessionId } = await initializeSession(port);
+
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  const status = await statusOf(
+    port,
+    { method: 'POST', body: '{}', headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId ?? '' } },
+    '/mcp'
+  );
+
+  expect(sessionId).toBeTruthy();
+  expect(status).not.toBe(404);
+});
+
+/** Opens a raw SSE stream and resolves with the session id from its `endpoint` event. */
+function openSseSession(port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: HOST, port, path: '/sse', method: 'GET' }, (res) => {
+      let text = '';
+      res.setEncoding('utf-8');
+      res.on('data', (chunk: string) => {
+        text += chunk;
+        const match = /sessionId=(?<id>[\w-]+)/u.exec(text);
+        if (match?.groups?.id) {
+          resolve(match.groups.id);
+        }
+      });
+    });
+    req.on('error', reject);
+    cleanups.push(() => {
+      req.destroy();
+      return Promise.resolve();
+    });
+    req.end();
+  });
+}
+
+test('an SSE session idle past --session-idle-minutes is closed and its id gets 404', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startSse({ sessionIdleMinutes: 1 });
+  const sessionId = await openSseSession(port);
+  const post = () =>
+    statusOf(port, { method: 'POST', body: '{}', headers: MCP_HEADERS }, `/messages?sessionId=${sessionId}`);
+
+  const beforeExpiry = await post();
+  await vi.advanceTimersByTimeAsync(60_001);
+  const expired = await post();
+
+  expect(beforeExpiry).not.toBe(404);
+  expect(expired).toBe(404);
+});
+
 test('a streamable HTTP session with a request still open is not closed past --session-idle-minutes', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   cleanups.push(() => {

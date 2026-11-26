@@ -59,19 +59,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the manual-publish guard below compares HEAD with the release tag
+          fetch-depth: 0 # the guard below compares HEAD with the release tag
           persist-credentials: false
 
-      - name: Guard manual publish
-        if: ${{ inputs.publish }}
+      # Runs on both paths. On a push, the run's commit is normally the tagged release commit, but it is not
+      # when a newer push replaced the queued run of the release merge, or when a failed release is retried by
+      # a later push. Building the tag instead would make the npm provenance (the run's ref and sha) false, so
+      # such a run fails here; the release is then recovered by releasing a new version.
+      - name: Verify HEAD is the tagged release
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "::error::Manual publish must be dispatched from main, not $GITHUB_REF"
+            echo "::error::Releases are published from main, not $GITHUB_REF"
             exit 1
           fi
           tag="v$(node -p "require('./package.json').version")"
           if ! git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
-            echo "::error::Tag $tag does not exist; manual publish only recovers an existing release"
+            echo "::error::Tag $tag does not exist; only a released version is published"
             exit 1
           fi
           if ! git diff --quiet "$tag" HEAD -- . ':(exclude).github'; then

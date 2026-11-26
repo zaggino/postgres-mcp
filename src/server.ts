@@ -12,6 +12,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
 import { ExplainPlanTool } from './explain/explain-plan.ts';
@@ -25,7 +26,7 @@ import { DbConnPool, obfuscatePassword, SqlDriver } from './sql/sql-driver.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 
 const SERVER_NAME = 'postgres-mcp';
-const SERVER_VERSION = '0.4.0'; // x-release-please-version
+const SERVER_VERSION = packageJson.version;
 const PG_STAT_STATEMENTS = 'pg_stat_statements';
 const RESTRICTED_TIMEOUT_SECONDS = 30;
 

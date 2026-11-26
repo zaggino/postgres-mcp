@@ -2,10 +2,6 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
-## 2026-11-26 · Minor · Security · GitHub Actions are referenced by tag, not by commit
-
-`.github/workflows/build.yml` uses `actions/checkout@v7`, `pnpm/action-setup@v6` and `actions/setup-node@v7`. A moved tag would run different code with the workflow's permissions. Pin each action to a commit sha with the version in a trailing comment.
-
 ## 2026-11-26 · Minor · Dependencies · Dependabot does not cover GitHub Actions and has no cooldown
 
 `.github/dependabot.yml` only has the `npm` ecosystem. Add the `github-actions` ecosystem (needed once actions are pinned by sha) and `cooldown: default-days: 7` on both, so a freshly published version is not proposed before it has had a week to be found malicious. Keep the single grouped npm PR.
@@ -244,6 +240,10 @@ The zod schema in `src/server.ts` accepts only an array, while the Python tool a
 
 Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt-base.ts` and `src/database-health/vacuum-health-calc.ts`, so a missing or non-numeric value silently turns into 0 instead of being reported.
 
+## 2026-11-26 · Minor · Security · Publishing has no approval gate
+
+The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Add required reviewers to the environment, and a tag ruleset that limits who can create `v*` tags, since the publish guard trusts any `v<version>` tag.
+
 ## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
 
 The session maps in `src/server.ts` grow with every client that initializes and are cleaned up only when the client closes. Add a session limit and an idle timeout.
@@ -325,6 +325,6 @@ The two agree for strings and numbers, but not for the parsed `json`/`jsonb` obj
 
 `SSEServerTransport` (used in `src/server.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. Each use carries an inline `typescript/no-deprecated` disable, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision. Once the planned `src/transports/` split (see "Split `src/server.ts`") is done, one file-level disable in the SSE module can replace the per-line ones.
 
-## 2026-11-26 · Major · Infra · Remove `release-as` after the 0.4.0 release
+## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
-`release-please-config.json` pins `release-as: "0.4.0"` so the first release PR is 0.4.0 even though the history since `bootstrap-sha` holds a breaking change. While it stays, every later release PR is also 0.4.0. Remove it once 0.4.0 is released. The first npm publish also needs a manual step: a trusted publisher can only be configured on an existing package, so publish 0.4.0 by hand if the workflow's OIDC publish fails, configure the trusted publisher (workflow `release-please.yml`, environment `main`), and leave later releases to the workflow.
+`.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of 0.4.0 will fail; publish 0.4.0 by hand from the `v0.4.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.

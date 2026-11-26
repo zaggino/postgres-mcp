@@ -37,7 +37,7 @@ export default defineConfig({
   extends: [core],
   overrides: vitestOverrides,
   ignorePatterns: [
-    "dist",
+    ...(core.ignorePatterns ?? []),
     ".claude",
     "**/*.md",
     ".github",

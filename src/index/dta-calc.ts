@@ -378,6 +378,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const addedIndexes: IndexRecommendation[] = [];
     let iteration = 1;
 
+    // Exits through the stopping criteria inside the loop.
     while (true) {
       this.dtaTrace(`\n[ITERATION ${iteration}] Evaluating candidates`);
       let bestIndex: IndexRecommendation | undefined;

@@ -5,7 +5,6 @@ export default defineConfig({
   ...ultracite,
   ignorePatterns: [
     ...(ultracite.ignorePatterns ?? []),
-    "dist",
     ".claude",
     "**/*.md",
     ".github",

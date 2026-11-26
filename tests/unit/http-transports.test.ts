@@ -5,7 +5,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, expect, it as test, vi } from 'vitest';
 
-import type { HttpServerHandle } from '../../src/server.ts';
+import type { HttpServerHandle, HttpServerOptions } from '../../src/server.ts';
 import { createServer, startSseServer, startStreamableHttpServer } from '../../src/server.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
@@ -25,16 +25,16 @@ function factory() {
   return createServer(createTestRegistry(['app']).registry);
 }
 
-async function startStreamable(): Promise<HttpServerHandle> {
+async function startStreamable(options: Partial<HttpServerOptions> = {}): Promise<HttpServerHandle> {
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-  const handle = await startStreamableHttpServer(factory, HOST, 0);
+  const handle = await startStreamableHttpServer(factory, { host: HOST, port: 0, ...options });
   cleanups.push(handle.close);
   return handle;
 }
 
-async function startSse(): Promise<HttpServerHandle> {
+async function startSse(options: Partial<HttpServerOptions> = {}): Promise<HttpServerHandle> {
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-  const handle = await startSseServer(factory, HOST, 0);
+  const handle = await startSseServer(factory, { host: HOST, port: 0, ...options });
   cleanups.push(handle.close);
   return handle;
 }
@@ -144,4 +144,40 @@ test('a foreign Host header is rejected with 403 on GET /sse', async () => {
   const status = await statusOf(port, { method: 'GET', headers: { Host: 'evil.example' } }, '/sse');
 
   expect(status).toBe(403);
+});
+
+test('a Host header outside --allowed-hosts is rejected and a listed one is accepted, port optional', async () => {
+  const { port } = await startSse({ allowedHosts: ['example.test'] });
+  const post = (host: string) => statusOf(port, { method: 'POST', headers: { Host: host } }, '/messages');
+
+  await expect(post('evil.test')).resolves.toBe(403);
+  await expect(post(`Example.Test:${port}`)).resolves.toBe(400);
+});
+
+test('a foreign Origin header is rejected and the server own origin is accepted', async () => {
+  const { port } = await startSse();
+  const post = (origin: string) => statusOf(port, { method: 'POST', headers: { Origin: origin } }, '/messages');
+
+  await expect(post('http://evil.example')).resolves.toBe(403);
+  await expect(post(`http://${HOST}:${port}`)).resolves.toBe(400);
+});
+
+test('POST /messages with a foreign Host header is rejected with 403', async () => {
+  const { port } = await startSse();
+
+  const status = await statusOf(port, { method: 'POST', headers: { Host: 'evil.example' } }, '/messages');
+
+  expect(status).toBe(403);
+});
+
+test('--allowed-origins and --allowed-hosts set to * accept any Origin and Host', async () => {
+  const { port } = await startSse({ allowedHosts: ['*'], allowedOrigins: ['*'] });
+
+  const status = await statusOf(
+    port,
+    { method: 'POST', headers: { Host: 'anything.test', Origin: 'http://anything.test' } },
+    '/messages'
+  );
+
+  expect(status).toBe(400);
 });

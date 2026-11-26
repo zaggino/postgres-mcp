@@ -184,10 +184,6 @@ Costs and sizes are formatted with `toFixed` (for example in `src/index/index-op
 
 The zod schema in `src/server.ts` accepts only an array, while the Python tool accepted `None`. Clients that send `null` get a validation error.
 
-## 2026-11-26 · Minor · Security · Non-loopback HTTP binds have no Host or Origin checks
-
-`hostGuard` in `src/server.ts` enables DNS-rebinding protection only for loopback hosts. A server bound to another address accepts any `Host` and `Origin` and has no authentication.
-
 ## 2026-11-26 · Minor · Bug · `getPostgresVersion` rejects pre-release versions
 
 `getPostgresVersion` in `src/sql/extension-utils.ts` cannot parse server versions such as `17beta1`, so the version lookup fails on a pre-release server.

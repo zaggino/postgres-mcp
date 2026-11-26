@@ -14,7 +14,7 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
-import { exitOnCliError, HELP, parseCli } from './cli.ts';
+import { exitOnCliError, HELP, LOOPBACK_HOSTS, parseCli } from './cli.ts';
 import { resolveConfig } from './config.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
 import { DatabaseAccessError, DatabaseRegistry } from './database-registry.ts';
@@ -654,11 +654,15 @@ export function createServer(registry: DatabaseRegistry): McpServer {
 type ServerFactory = () => McpServer;
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
-interface HostGuard {
-  allowedHosts?: string[];
-  enableDnsRebindingProtection?: boolean;
+/** Options shared by the HTTP transports. */
+export interface HttpServerOptions {
+  /** Host header values to accept besides loopback on a loopback bind; `['*']` accepts any. */
+  allowedHosts?: readonly string[];
+  /** Origin header values to accept; `['*']` accepts any. */
+  allowedOrigins?: readonly string[];
+  host: string;
+  port: number;
 }
 
 /** A running HTTP transport: the bound port and a way to stop it. */
@@ -667,37 +671,75 @@ export interface HttpServerHandle {
   port: number;
 }
 
-/**
- * A server bound to loopback only accepts requests addressed to loopback, so
- * a web page cannot reach it through a DNS name it controls.
- */
-function hostGuard(host: string, port: number): HostGuard {
-  if (!LOOPBACK_HOSTS.has(host)) {
-    return {};
+const ANY = '*';
+
+/** The hostname of a Host header value or allow-list entry, and whether it names a port. */
+function splitHostPort(value: string): { hasPort: boolean; hostname: string } {
+  const lower = value.toLowerCase();
+  if (lower.startsWith('[')) {
+    const close = lower.indexOf(']');
+    if (close !== -1) {
+      return { hostname: lower.slice(0, close + 1), hasPort: close + 1 < lower.length };
+    }
   }
-  return {
-    enableDnsRebindingProtection: true,
-    allowedHosts: [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`],
+  const colon = lower.lastIndexOf(':');
+  if (colon === -1 || lower.indexOf(':') !== colon) {
+    return { hostname: lower, hasPort: false };
+  }
+  return { hostname: lower.slice(0, colon), hasPort: true };
+}
+
+function hostAllowed(header: string, allowed: readonly string[]): boolean {
+  const actual = splitHostPort(header);
+  const lower = header.toLowerCase();
+  return allowed.some((entry) => {
+    const expected = splitHostPort(entry);
+    return expected.hasPort ? entry.toLowerCase() === lower : expected.hostname === actual.hostname;
+  });
+}
+
+/**
+ * Builds the Host and Origin check applied to every request of an HTTP
+ * transport: a web page cannot reach the server through a DNS name it controls
+ * or from a foreign origin. Returns the rejection message, or null to accept.
+ */
+function createRequestGuard(options: HttpServerOptions, boundPort: number): (req: IncomingMessage) => string | null {
+  const loopback = LOOPBACK_HOSTS.has(options.host);
+  const configuredHosts = options.allowedHosts ?? [];
+  const allowedHosts = [
+    ...(loopback ? [`localhost:${boundPort}`, `127.0.0.1:${boundPort}`, `[::1]:${boundPort}`] : []),
+    ...configuredHosts,
+  ];
+  const anyHost = configuredHosts.includes(ANY);
+  const anyOrigin = options.allowedOrigins?.includes(ANY) ?? false;
+  const allowedOrigins = new Set(
+    (
+      options.allowedOrigins ??
+      (loopback ? [`http://localhost:${boundPort}`, `http://127.0.0.1:${boundPort}`, `http://[::1]:${boundPort}`] : [])
+    ).map((origin) => origin.toLowerCase())
+  );
+
+  return (req) => {
+    const hostHeader = req.headers.host;
+    if (!anyHost && !(hostHeader && hostAllowed(hostHeader, allowedHosts))) {
+      return `Invalid Host header: ${hostHeader}`;
+    }
+    const originHeader = req.headers.origin;
+    if (originHeader !== undefined && !anyOrigin && !allowedOrigins.has(originHeader.toLowerCase())) {
+      return `Invalid Origin header: ${originHeader}`;
+    }
+    return null;
   };
 }
 
-/** The message for a request whose Host header the guard rejects, if any. */
-function hostViolation(guard: HostGuard, req: IncomingMessage): string | null {
-  if (!(guard.enableDnsRebindingProtection && guard.allowedHosts)) {
-    return null;
-  }
-  const hostHeader = req.headers.host;
-  if (hostHeader && guard.allowedHosts.includes(hostHeader)) {
-    return null;
-  }
-  return `Invalid Host header: ${hostHeader}`;
-}
+type RequestGuard = ReturnType<typeof createRequestGuard>;
 
-function warnIfExposed(host: string, accessMode: string): void {
+function warnIfExposed(host: string, accessMode: string, allowedHosts: readonly string[] | undefined): void {
   if (!LOOPBACK_HOSTS.has(host)) {
+    const hostChecks = allowedHosts?.includes(ANY) ? ' Host checks are disabled by --allowed-hosts=*.' : '';
     log(
       'WARNING',
-      `Listening on ${host}: the server is reachable from the network with no authentication and no Host or Origin checks. Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
+      `Listening on ${host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
     );
   }
 }
@@ -813,7 +855,6 @@ async function handleSseRequest(
   createMcpServer: ServerFactory,
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   sessions: Map<string, SSEServerTransport>,
-  guard: HostGuard,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
@@ -824,13 +865,8 @@ async function handleSseRequest(
   }
   const path = url.pathname;
   if (req.method === 'GET' && path === '/sse') {
-    const violation = hostViolation(guard, req);
-    if (violation) {
-      res.writeHead(403).end(violation);
-      return;
-    }
     // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-    const transport = new SSEServerTransport('/messages', res, guard);
+    const transport = new SSEServerTransport('/messages', res);
     sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
     res.on('close', () => {
@@ -856,15 +892,20 @@ async function handleSseRequest(
 /** Serve MCP over SSE and resolve once listening. */
 export async function startSseServer(
   createMcpServer: ServerFactory,
-  host: string,
-  port: number
+  options: HttpServerOptions
 ): Promise<HttpServerHandle> {
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   const sessions = new Map<string, SSEServerTransport>();
-  const state: { guard: HostGuard } = { guard: {} };
+  // The bound port is only known after listening, and the default allow-list names it.
+  const state: { guard: RequestGuard | undefined } = { guard: undefined };
 
   const httpServer = createHttpServer((req, res) => {
-    handleSseRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+    const violation = state.guard ? state.guard(req) : 'Server not ready';
+    if (violation !== null) {
+      res.writeHead(403).end(violation);
+      return;
+    }
+    handleSseRequest(createMcpServer, sessions, req, res).catch((error: unknown) => {
       log('ERROR', `SSE request failed: ${errorMessage(error)}`);
       if (!res.headersSent) {
         res.writeHead(500).end('Internal Server Error');
@@ -872,9 +913,9 @@ export async function startSseServer(
     });
   });
 
-  const boundPort = await listen(httpServer, host, port);
-  state.guard = hostGuard(host, boundPort);
-  log('INFO', `SSE server listening on http://${host}:${boundPort}/sse`);
+  const boundPort = await listen(httpServer, options.host, options.port);
+  state.guard = createRequestGuard(options, boundPort);
+  log('INFO', `SSE server listening on http://${options.host}:${boundPort}/sse`);
   return { port: boundPort, close: () => closeHttpServer(httpServer) };
 }
 
@@ -883,13 +924,11 @@ type McpSessions = Map<string, StreamableHTTPServerTransport>;
 async function startMcpSession(
   createMcpServer: ServerFactory,
   sessions: McpSessions,
-  guard: HostGuard,
   req: IncomingMessage,
   res: ServerResponse,
   body: unknown
 ): Promise<void> {
   const transport = new StreamableHTTPServerTransport({
-    ...guard,
     sessionIdGenerator: () => randomUUID(),
     onsessioninitialized: (id) => {
       sessions.set(id, transport);
@@ -907,7 +946,6 @@ async function startMcpSession(
 async function handleMcpRequest(
   createMcpServer: ServerFactory,
   sessions: McpSessions,
-  guard: HostGuard,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
@@ -919,7 +957,7 @@ async function handleMcpRequest(
     if (existing) {
       await existing.handleRequest(req, res, body);
     } else if (!sessionId && isInitializeRequest(body)) {
-      await startMcpSession(createMcpServer, sessions, guard, req, res, body);
+      await startMcpSession(createMcpServer, sessions, req, res, body);
     } else {
       sendMissingSession(res, sessionId);
     }
@@ -949,13 +987,18 @@ function sendMissingSession(res: ServerResponse, sessionId: string | undefined):
 /** Serve MCP over streamable HTTP and resolve once listening. */
 export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
-  host: string,
-  port: number
+  options: HttpServerOptions
 ): Promise<HttpServerHandle> {
   const sessions: McpSessions = new Map();
-  const state: { guard: HostGuard } = { guard: {} };
+  // The bound port is only known after listening, and the default allow-list names it.
+  const state: { guard: RequestGuard | undefined } = { guard: undefined };
 
   const httpServer = createHttpServer((req, res) => {
+    const violation = state.guard ? state.guard(req) : 'Server not ready';
+    if (violation !== null) {
+      res.writeHead(403).end(violation);
+      return;
+    }
     const path = parseRequestUrl(req)?.pathname;
     if (path === undefined) {
       res.writeHead(400).end('Bad Request');
@@ -965,7 +1008,7 @@ export async function startStreamableHttpServer(
       res.writeHead(404).end('Not Found');
       return;
     }
-    handleMcpRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+    handleMcpRequest(createMcpServer, sessions, req, res).catch((error: unknown) => {
       log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
       if (error instanceof RangeError) {
         sendBodyTooLarge(req, res);
@@ -981,9 +1024,9 @@ export async function startStreamableHttpServer(
     });
   });
 
-  const boundPort = await listen(httpServer, host, port);
-  state.guard = hostGuard(host, boundPort);
-  log('INFO', `Streamable HTTP server listening on http://${host}:${boundPort}/mcp`);
+  const boundPort = await listen(httpServer, options.host, options.port);
+  state.guard = createRequestGuard(options, boundPort);
+  log('INFO', `Streamable HTTP server listening on http://${options.host}:${boundPort}/mcp`);
   return {
     port: boundPort,
     close: async () => {
@@ -993,12 +1036,12 @@ export async function startStreamableHttpServer(
   };
 }
 
-async function runSse(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
-  await startSseServer(createMcpServer, host, port);
+async function runSse(createMcpServer: ServerFactory, options: HttpServerOptions): Promise<void> {
+  await startSseServer(createMcpServer, options);
 }
 
-async function runStreamableHttp(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
-  await startStreamableHttpServer(createMcpServer, host, port);
+async function runStreamableHttp(createMcpServer: ServerFactory, options: HttpServerOptions): Promise<void> {
+  await startStreamableHttpServer(createMcpServer, options);
 }
 
 /** Replaceable seams so tests can observe which transport ran. */
@@ -1069,9 +1112,9 @@ export async function main(argv: string[]): Promise<void> {
   installSignalHandlers(registry);
 
   if (options.transport === 'sse') {
-    warnIfExposed(options.sseHost, accessMode);
+    warnIfExposed(options.sseHost, accessMode, options.allowedHosts);
   } else if (options.transport === 'streamable-http') {
-    warnIfExposed(options.streamableHttpHost, accessMode);
+    warnIfExposed(options.streamableHttpHost, accessMode, options.allowedHosts);
   }
 
   const factory = () => createServer(registry);
@@ -1083,11 +1126,21 @@ export async function main(argv: string[]): Promise<void> {
       break;
     }
     case 'sse': {
-      await runners.runSse(factory, options.sseHost, options.ssePort);
+      await runners.runSse(factory, {
+        host: options.sseHost,
+        port: options.ssePort,
+        allowedHosts: options.allowedHosts,
+        allowedOrigins: options.allowedOrigins,
+      });
       break;
     }
     case 'streamable-http': {
-      await runners.runStreamableHttp(factory, options.streamableHttpHost, options.streamableHttpPort);
+      await runners.runStreamableHttp(factory, {
+        host: options.streamableHttpHost,
+        port: options.streamableHttpPort,
+        allowedHosts: options.allowedHosts,
+        allowedOrigins: options.allowedOrigins,
+      });
       break;
     }
     default: {

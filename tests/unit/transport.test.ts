@@ -80,17 +80,29 @@ describe('transport host and port', () => {
       '--transport=streamable-http',
       '--streamable-http-host=0.0.0.0',
       '--streamable-http-port=9000',
+      '--allowed-hosts=mcp.example,other.example:9000',
+      '--allowed-origins=https://app.example',
     ]);
 
-    expect(spies.http).toHaveBeenCalledWith(expect.any(Function), '0.0.0.0', 9000);
+    expect(spies.http).toHaveBeenCalledWith(expect.any(Function), {
+      host: '0.0.0.0',
+      port: 9000,
+      allowedHosts: ['mcp.example', 'other.example:9000'],
+      allowedOrigins: ['https://app.example'],
+    });
   });
 
   it('passes the SSE host and port to the transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080']);
+    await main([DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080', '--allowed-hosts=*']);
 
-    expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), '0.0.0.0', 8080);
+    expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), {
+      host: '0.0.0.0',
+      port: 8080,
+      allowedHosts: ['*'],
+      allowedOrigins: undefined,
+    });
   });
 });
 

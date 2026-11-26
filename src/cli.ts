@@ -24,8 +24,13 @@ export interface CliOptions {
   ssePort: number;
   streamableHttpHost: string;
   streamableHttpPort: number;
+  allowedHosts: string[] | undefined;
+  allowedOrigins: string[] | undefined;
   transport: Transport;
 }
+
+/** Hosts a server can bind to without being reachable from the network. */
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '::1']);
 
 const PROG = 'postgres-mcp';
 const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
@@ -33,6 +38,7 @@ const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
                     [--sse-host SSE_HOST] [--sse-port SSE_PORT]
                     [--streamable-http-host STREAMABLE_HTTP_HOST]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
+                    [--allowed-hosts HOSTS] [--allowed-origins ORIGINS]
                     [--database NAME] [--config FILE] [--idle-minutes N]`;
 
 export const HELP = `${USAGE}
@@ -61,6 +67,17 @@ options:
                         localhost)
   --streamable-http-port STREAMABLE_HTTP_PORT
                         Port for streamable HTTP server (default: 8000)
+  --allowed-hosts HOSTS
+                        Comma-separated Host header values the HTTP transports
+                        accept, in addition to loopback on a loopback bind. An
+                        entry without a port matches any port; '*' accepts any
+                        Host. Required when the bind host is not loopback
+  --allowed-origins ORIGINS
+                        Comma-separated Origin header values (scheme://host[:port])
+                        the HTTP transports accept; '*' accepts any Origin.
+                        Requests without an Origin header are not checked.
+                        Default: loopback origins on a loopback bind, none
+                        otherwise
 `;
 
 /** The matching choice, or `undefined` when the flag is absent. */
@@ -103,6 +120,34 @@ function parseIdleMinutes(value: string | undefined): number | undefined {
   return minutes;
 }
 
+/** The comma-separated entries, `undefined` when the flag is absent. */
+function parseList(flag: string, value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const entries = value.split(',').map((entry) => entry.trim());
+  if (entries.some((entry) => entry === '')) {
+    throw new CliError(`argument ${flag}: empty entry in '${value}'`);
+  }
+  return entries;
+}
+
+function requireAllowedHosts(options: CliOptions): void {
+  let host: string;
+  if (options.transport === 'sse') {
+    host = options.sseHost;
+  } else if (options.transport === 'streamable-http') {
+    host = options.streamableHttpHost;
+  } else {
+    return;
+  }
+  if (!LOOPBACK_HOSTS.has(host) && options.allowedHosts === undefined) {
+    throw new CliError(
+      `binding ${host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
+    );
+  }
+}
+
 function parseRaw(argv: string[]) {
   try {
     return parseArgs({
@@ -119,6 +164,8 @@ function parseRaw(argv: string[]) {
         'sse-port': { type: 'string' },
         'streamable-http-host': { type: 'string' },
         'streamable-http-port': { type: 'string' },
+        'allowed-hosts': { type: 'string' },
+        'allowed-origins': { type: 'string' },
       },
     });
   } catch (error) {
@@ -136,7 +183,7 @@ export function parseCli(argv: string[]): CliOptions | null {
     throw new CliError(`unrecognized arguments: ${positionals.join(' ')}`);
   }
 
-  return {
+  const options: CliOptions = {
     accessMode: choice('--access-mode', values['access-mode'], ACCESS_MODES),
     databases: values.database ?? [],
     configPath: values.config,
@@ -146,7 +193,11 @@ export function parseCli(argv: string[]): CliOptions | null {
     ssePort: parsePort('--sse-port', values['sse-port']),
     streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
     streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
+    allowedHosts: parseList('--allowed-hosts', values['allowed-hosts']),
+    allowedOrigins: parseList('--allowed-origins', values['allowed-origins']),
   };
+  requireAllowedHosts(options);
+  return options;
 }
 
 export function exitOnCliError<T>(run: () => T): T {

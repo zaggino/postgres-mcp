@@ -304,6 +304,39 @@ Error messages returned to the client and written to stderr include the full SQL
 
 `RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.
 
-## 2026-11-26 · Minor · Tooling · Two type-aware lint rules are switched off
+## 2026-11-26 · Minor · Tooling · `promise-function-async` and `strict-boolean-expressions` are switched off
 
-`oxlint.config.ts` switches off `typescript/promise-function-async` (50 findings) and `typescript/strict-boolean-expressions` (40) because their fixes can change behaviour. Marking a promise-returning function `async` turns its synchronous throws into rejections. Replacing a truthiness check on a nullable string or boolean changes which values pass, for example `""`. Go through the findings one by one, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.
+`oxlint.config.ts` switches off `typescript/promise-function-async` (50 findings) and `typescript/strict-boolean-expressions` (40) because some of their fixes change behaviour.
+
+Of the `promise-function-async` findings, 24 are in `tests/`, and most of the rest are one-line delegations or the tool callbacks in `src/server.ts`, which can be marked `async` mechanically. About ten need judgement, because marking them `async` turns a synchronous throw into a rejection: `SafeSqlDriver.executeParamQuery` (`src/sql/safe-sql.ts`), `poolConnect` (`src/sql/sql-driver.ts`), and the methods with default parameters in `src/index/presentation.ts` and `src/database-health/buffer-health-calc.ts`.
+
+Replacing a truthiness check on a nullable string or boolean changes which values pass, for example `""`. Triage these five first, because they are not that case:
+
+- `!this.timeout` in `src/sql/safe-sql.ts`, where `0` means no timeout.
+- `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/server.ts`.
+
+Go through the findings, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.
+
+## 2026-11-26 · Minor · Bug · Objects, arrays and dates are stringified differently from Python `str()`
+
+Eight sites, each marked with an inline `typescript/no-base-to-string` disable, turn an `unknown` value into text with `String(value)` where upstream used `str()`:
+
+- `nullableText` in `src/database-health/constraint-health-calc.ts` and in `src/database-health/index-health-calc.ts`
+- `src/database-health/replication-calc.ts`
+- `src/sql/extension-utils.ts`
+- `src/sql/literal.ts`
+- `src/sql/bind-params.ts`
+- `src/index/index-opt-base.ts`
+- `src/index/dta-calc.ts`
+
+The two agree for strings and numbers, but not for the parsed `json`/`jsonb` objects, arrays and `Date` values that `pg` returns:
+
+- `[object Object]` instead of `{'a': 1}`
+- `1,2` instead of `[1, 2]`
+- the JavaScript date form instead of Python's
+
+`src/sql/literal.ts` puts the result into SQL array-literal text. Route the sites through one shared cell-to-text helper, which is the "shared cell readers" step of "Python-shaped data contracts", and decide there which values need Python's form.
+
+## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
+
+`SSEServerTransport` (used in `src/server.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. Each use carries an inline `typescript/no-deprecated` disable, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision. Once the planned `src/transports/` split (see "Split `src/server.ts`") is done, one file-level disable in the SSE module can replace the per-line ones.

@@ -45,6 +45,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 }
 
 function nullableText(value: unknown): string | null {
+  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
   return value === null || value === undefined ? null : String(value);
 }
 

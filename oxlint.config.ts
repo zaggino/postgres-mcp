@@ -39,15 +39,11 @@ export default defineConfig({
     typeAware: true,
   },
   rules: {
-    // Type-aware rules whose fixes would change behaviour relative to upstream (see docs/TODO.md).
+    // Type-aware rules whose fixes can change behaviour relative to upstream (see docs/TODO.md).
     // Making a promise-returning function async turns its synchronous throws into rejections (50 findings).
     'typescript/promise-function-async': 'off',
     // Replacing truthiness checks on nullable strings and booleans changes which values pass (40).
     'typescript/strict-boolean-expressions': 'off',
-    // Database cells are unknown and are stringified like Python str(), deliberately (8).
-    'typescript/no-base-to-string': 'off',
-    // The ESLint default-case rule already requires a default; count it as covering the rest of a union.
-    'typescript/switch-exhaustiveness-check': ['error', { considerDefaultExhaustiveForUnions: true }],
 
     // Database calls on one connection are sequential by design.
     'no-await-in-loop': 'off',

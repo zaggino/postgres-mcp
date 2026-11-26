@@ -141,6 +141,7 @@ export async function checkExtension(
   if (available) {
     result.isAvailable = true;
     const defaultVersion = available.cells.default_version;
+    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
     result.defaultVersion = defaultVersion === undefined || defaultVersion === null ? null : String(defaultVersion);
 
     if (includeMessages) {

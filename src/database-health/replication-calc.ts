@@ -17,6 +17,7 @@ type Feature = 'replication_lag' | 'replication_slots' | 'replicating';
 
 function describeSlot(slot: ReplicationSlot): string {
   // Physical slots have no database; it is reported as "None".
+  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
   const database = slot.database === null || slot.database === undefined ? 'None' : String(slot.database);
   return `- ${slot.slotName} (database: ${database})`;
 }

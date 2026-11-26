@@ -30,8 +30,7 @@ export function createFakePool(handler: QueryHandler = () => [noRowsResult]) {
           try {
             return Promise.resolve(handler(recorded));
           } catch (error) {
-            // Rethrows whatever the handler threw, so tests can simulate non-Error failures.
-            // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- passes on whatever the handler threw, Error or not
             return Promise.reject(error);
           }
         },

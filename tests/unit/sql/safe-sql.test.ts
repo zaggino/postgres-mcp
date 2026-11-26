@@ -47,21 +47,12 @@ function isBlocked(...queries: string[]): Promise<true | string> {
  */
 async function runsReadOnly(...queries: string[]): Promise<true | string> {
   const { safeDriver, executeQuery } = setup();
-  // An accepted query yields undefined, so the next one is tried.
-  // oxlint-disable-next-line typescript/consistent-return
-  const failure = await queries.reduce<Promise<string | undefined>>(async (previous, query) => {
-    const earlier = await previous;
-    if (earlier !== undefined) {
-      return earlier;
-    }
+  for (const query of queries) {
     try {
       await safeDriver.executeQuery(query);
     } catch (error) {
       return `rejected ${query}: ${String(error)}`;
     }
-  }, Promise.resolve(undefined));
-  if (failure !== undefined) {
-    return failure;
   }
   const expected = queries.map((query) => [PREFIX + query, null, true]);
   return (

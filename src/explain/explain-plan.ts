@@ -31,6 +31,7 @@ function typeName(value: unknown): string {
   if (Array.isArray(value)) {
     return "<class 'list'>";
   }
+  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- every other typeof is reported as dict, as upstream does
   switch (typeof value) {
     case 'string': {
       return "<class 'str'>";
@@ -74,8 +75,7 @@ function toColumnList(columns: unknown): unknown[] {
     return columns;
   }
   if (typeof columns === 'string') {
-    // Mirrors upstream's list(str), which splits a string into characters (see docs/TODO.md).
-    // oxlint-disable-next-line typescript/no-misused-spread
+    // oxlint-disable-next-line typescript/no-misused-spread -- mirrors upstream's list(str), see docs/TODO.md
     return [...columns];
   }
   if (isJsonObject(columns)) {

@@ -94,6 +94,7 @@ function toInt(value: unknown): number {
   }
   const parsed = Number(value);
   if (Number.isNaN(parsed)) {
+    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
     throw new TypeError(`Invalid number: ${String(value)}`);
   }
   return Math.trunc(parsed);

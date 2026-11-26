@@ -30,6 +30,7 @@ function arrayElement(value: unknown): string {
   if (typeof value === 'boolean') {
     return value ? 't' : 'f';
   }
+  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
   const text = value instanceof Date ? value.toISOString() : String(value);
   return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }

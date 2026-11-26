@@ -174,9 +174,7 @@ describe(ExplainPlanTool, () => {
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
     expect(result).toBeInstanceOf(ErrorResult);
-    expect(result).toMatchObject({
-      value: expect.stringContaining('Database error') as unknown,
-    });
+    expect(result).toHaveProperty('value', expect.stringContaining('Database error'));
   });
 
   it('rejects a QUERY PLAN that is not a list', async () => {
@@ -186,9 +184,7 @@ describe(ExplainPlanTool, () => {
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
     expect(result).toBeInstanceOf(ErrorResult);
-    expect(result).toMatchObject({
-      value: expect.stringContaining('Expected list') as unknown,
-    });
+    expect(result).toHaveProperty('value', expect.stringContaining('Expected list'));
   });
 
   it('reports no results when the driver returns null', async () => {
@@ -198,9 +194,7 @@ describe(ExplainPlanTool, () => {
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
     expect(result).toBeInstanceOf(ErrorResult);
-    expect(result).toMatchObject({
-      value: expect.stringContaining('No results') as unknown,
-    });
+    expect(result).toHaveProperty('value', expect.stringContaining('No results'));
   });
 
   it('reports no results when QUERY PLAN is an empty list', async () => {
@@ -210,9 +204,7 @@ describe(ExplainPlanTool, () => {
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
     expect(result).toBeInstanceOf(ErrorResult);
-    expect(result).toMatchObject({
-      value: expect.stringContaining('No results') as unknown,
-    });
+    expect(result).toHaveProperty('value', expect.stringContaining('No results'));
   });
 
   it('replaces bind variables for LIKE queries even on PostgreSQL 16', async () => {

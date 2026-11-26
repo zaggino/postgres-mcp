@@ -531,19 +531,14 @@ test('replace parameters binds several parameters of a complex query by column',
       ['orders', new Set(['id', 'user_id', 'amount', 'order_date'])],
     ])
   );
-  // Any other context has no column, which the mock reports by returning nothing.
-  // oxlint-disable-next-line typescript/consistent-return
-  vi.spyOn(bind, 'identifyParameterColumn').mockImplementation((context) => {
-    if (context.includes('status =')) {
-      return ['users', 'status'];
-    }
-    if (context.includes('amount BETWEEN')) {
-      return ['orders', 'amount'];
-    }
-    if (context.includes('order_date >')) {
-      return ['orders', 'order_date'];
-    }
-  });
+  const parameterColumns: [string, [string, string]][] = [
+    ['status =', ['users', 'status']],
+    ['amount BETWEEN', ['orders', 'amount']],
+    ['order_date >', ['orders', 'order_date']],
+  ];
+  vi.spyOn(bind, 'identifyParameterColumn').mockImplementation(
+    (context) => parameterColumns.find(([needle]) => context.includes(needle))?.[1]
+  );
   vi.spyOn(bind, 'getColumnStatistics').mockImplementation((table, column) => {
     if (table === 'users' && column === 'status') {
       return Promise.resolve({

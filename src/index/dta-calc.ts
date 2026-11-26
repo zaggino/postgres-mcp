@@ -681,8 +681,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       return {
         table: tableName.toLowerCase(),
         columns: columns.map((col) => col.toLowerCase()),
-        // An empty access method falls back to btree, as upstream's `or` did.
-        // oxlint-disable-next-line typescript/prefer-nullish-coalescing
+        // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- an empty access method falls back to btree, as upstream's `or` does
         type: (node.string('accessMethod') || 'btree').toLowerCase(),
         unique: node.fields.unique === true,
       };
@@ -712,6 +711,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         }
         const { ival } = expr.fields;
         if (isJsonObject(ival)) {
+          // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
           return String(ival.ival ?? 0);
         }
         const { fval } = expr.fields;

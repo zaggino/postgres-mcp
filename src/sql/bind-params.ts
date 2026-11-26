@@ -342,6 +342,7 @@ function toStatValue(value: unknown): StatValue {
   if (typeof value === 'bigint') {
     return value;
   }
+  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
   return String(value);
 }
 

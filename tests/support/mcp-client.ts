@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
 /** Connects an in-memory MCP client to the server. */
 export async function connectClient(server: McpServer): Promise<Client> {
@@ -13,20 +14,12 @@ export async function connectClient(server: McpServer): Promise<Client> {
 
 /** The text of the single content item a tool call returned. */
 export async function callToolText(client: Client, name: string, args: Record<string, unknown> = {}): Promise<string> {
-  const result = await client.callTool({ name, arguments: args });
-  const content: unknown[] = Array.isArray(result.content) ? result.content : [];
+  const { content } = CallToolResultSchema.parse(await client.callTool({ name, arguments: args }));
   if (content.length !== 1) {
     throw new Error(`Expected one content item, got ${content.length}`);
   }
   const [item] = content;
-  if (
-    typeof item !== 'object' ||
-    item === null ||
-    !('type' in item) ||
-    item.type !== 'text' ||
-    !('text' in item) ||
-    typeof item.text !== 'string'
-  ) {
+  if (item?.type !== 'text') {
     throw new Error('Expected a text content item');
   }
   return item.text;

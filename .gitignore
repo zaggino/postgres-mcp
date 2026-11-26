@@ -4,6 +4,7 @@ coverage/
 *.tsbuildinfo
 .env
 .env.*
+.mcp.json
 .claude/temp/
 .claude/worktrees/
 

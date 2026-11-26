@@ -21,6 +21,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - One file: `pnpm vitest run --project unit tests/unit/sql/safe-sql.test.ts`. One test: add `-t "<name>"`.
 - Integration tests build `tests/Dockerfile.postgres-hypopg` and run every file against Postgres 12, 15 and 16 through testcontainers (`tests/support/postgres.ts`). `PG_VERSIONS=16` limits the versions. Without Docker the tests skip, unless `REQUIRE_DOCKER=1` (set in CI). They are slow and run files serially: run them alone.
 - On Windows, start Vitest from a path with an uppercase drive letter (`/D/dev/...`). From a lowercase one it fails with "failed to find the current suite".
+- `pnpm install` installs lefthook git hooks (`lefthook.yml`): pre-commit runs `ultracite check` on the staged files, pre-push runs typecheck and build.
 - CI (`.github/workflows/build.yml`) runs check, typecheck, build, unit, integration, in that order.
 - Run from source: `pnpm build && node dist/index.js "postgresql://..." --access-mode=restricted`.
 

@@ -1,0 +1,9 @@
+pre-commit:
+  commands:
+    check:
+      run: pnpm exec ultracite check {staged_files}
+
+pre-push:
+  commands:
+    verify:
+      run: pnpm typecheck && pnpm build

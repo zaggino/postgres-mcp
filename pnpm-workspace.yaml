@@ -1,5 +1,7 @@
 allowBuilds:
   cpu-features: false
+  lefthook: false
   protobufjs: false
   ssh2: false
+engineStrict: true
 saveExact: true

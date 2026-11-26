@@ -84,11 +84,11 @@ Select the mode with `--access-mode=restricted` or `--access-mode=unrestricted` 
 
 ## Transports
 
-| Transport | Flags | Endpoint |
-|-----------|-------|----------|
-| stdio (default) | `--transport=stdio` | standard input and output |
-| SSE | `--transport=sse --sse-host --sse-port` | `/sse` (messages are posted to `/messages`) |
-| Streamable HTTP | `--transport=streamable-http --streamable-http-host --streamable-http-port` | `/mcp` |
+| Transport       | Flags                                                                       | Endpoint                                    |
+| --------------- | --------------------------------------------------------------------------- | ------------------------------------------- |
+| stdio (default) | `--transport=stdio`                                                         | standard input and output                   |
+| SSE             | `--transport=sse --sse-host --sse-port`                                     | `/sse` (messages are posted to `/messages`) |
+| Streamable HTTP | `--transport=streamable-http --streamable-http-host --streamable-http-port` | `/mcp`                                      |
 
 The SSE and streamable HTTP transports let several MCP clients share one server. For example:
 
@@ -127,22 +127,22 @@ When the server is bound to a loopback host (`localhost`, `127.0.0.1`, `::1`), i
 postgres-mcp [options] [database_url]
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `database_url` | none | Database connection URL (positional). |
-| `--access-mode` | `unrestricted` | `unrestricted` or `restricted`. |
-| `--transport` | `stdio` | `stdio`, `sse` or `streamable-http`. |
-| `--sse-host` | `localhost` | Host to bind the SSE server to. |
-| `--sse-port` | `8000` | Port of the SSE server. |
-| `--streamable-http-host` | `localhost` | Host to bind the streamable HTTP server to. |
-| `--streamable-http-port` | `8000` | Port of the streamable HTTP server. |
-| `-h`, `--help` | | Show help. |
+| Option                   | Default        | Description                                 |
+| ------------------------ | -------------- | ------------------------------------------- |
+| `database_url`           | none           | Database connection URL (positional).       |
+| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.             |
+| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.        |
+| `--sse-host`             | `localhost`    | Host to bind the SSE server to.             |
+| `--sse-port`             | `8000`         | Port of the SSE server.                     |
+| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to. |
+| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.         |
+| `-h`, `--help`           |                | Show help.                                  |
 
 Environment variables:
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URI` | Database connection URL. Takes precedence over the positional argument. |
+| Variable                              | Description                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URI`                        | Database connection URL. Takes precedence over the positional argument.                                      |
 | `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` | Set to `false` to leave the `_langfuse_trace` field out of index recommendation results. Defaults to `true`. |
 
 ## Postgres extension installation (optional)
@@ -168,35 +168,40 @@ Before creating `pg_stat_statements`, list it in `shared_preload_libraries` in t
 ## Usage examples
 
 Check database health:
+
 > Check the health of my database and identify any issues.
 
 Analyze slow queries:
+
 > What are the slowest queries in my database? And how can I speed them up?
 
 Get recommendations:
+
 > My app is slow. How can I make it faster?
 
 Generate index recommendations:
+
 > Analyze my database workload and suggest indexes to improve performance.
 
 Optimize a specific query:
+
 > Help me optimize this query: SELECT \* FROM orders JOIN customers ON orders.customer_id = customers.id WHERE orders.created_at > '2023-01-01';
 
 ## MCP server API
 
 The server provides its functionality through [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools) only, because tool support is widespread across the [MCP client ecosystem](https://modelcontextprotocol.io/clients). Some other Postgres MCP servers, such as the [reference Postgres MCP server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), expose schema information as [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources).
 
-| Tool name | Description |
-|-----------|-------------|
-| `list_schemas` | Lists all schemas in the database. |
-| `list_objects` | Lists objects (tables, views, sequences, extensions) in a schema. |
-| `get_object_details` | Shows details of one object, for example a table's columns, constraints and indexes. |
-| `execute_sql` | Executes SQL. In restricted mode only read-only statements are accepted. |
-| `explain_query` | Gets the execution plan for a query and its cost estimates. Accepts hypothetical indexes to simulate the plan after adding them. |
-| `get_top_queries` | Reports the slowest or most resource-intensive queries using `pg_stat_statements`. `sort_by` is `total_time`, `mean_time` or `resources`. |
-| `analyze_workload_indexes` | Analyzes the workload for resource-intensive queries and recommends indexes. |
-| `analyze_query_indexes` | Analyzes a list of up to 10 SQL queries and recommends indexes. |
-| `analyze_db_health` | Runs health checks: index, connection, constraint, buffer cache, sequence, vacuum, and replication health. |
+| Tool name                  | Description                                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_schemas`             | Lists all schemas in the database.                                                                                                        |
+| `list_objects`             | Lists objects (tables, views, sequences, extensions) in a schema.                                                                         |
+| `get_object_details`       | Shows details of one object, for example a table's columns, constraints and indexes.                                                      |
+| `execute_sql`              | Executes SQL. In restricted mode only read-only statements are accepted.                                                                  |
+| `explain_query`            | Gets the execution plan for a query and its cost estimates. Accepts hypothetical indexes to simulate the plan after adding them.          |
+| `get_top_queries`          | Reports the slowest or most resource-intensive queries using `pg_stat_statements`. `sort_by` is `total_time`, `mean_time` or `resources`. |
+| `analyze_workload_indexes` | Analyzes the workload for resource-intensive queries and recommends indexes.                                                              |
+| `analyze_query_indexes`    | Analyzes a list of up to 10 SQL queries and recommends indexes.                                                                           |
+| `analyze_db_health`        | Runs health checks: index, connection, constraint, buffer cache, sequence, vacuum, and replication health.                                |
 
 ## Related projects
 
@@ -206,10 +211,10 @@ The server provides its functionality through [MCP tools](https://modelcontextpr
 
 ## Frequently asked questions
 
-*What Postgres versions are supported?*
+_What Postgres versions are supported?_
 The integration tests run against Postgres 12, 15 and 16. SQL is parsed with the PostgreSQL 18 grammar, so restricted mode accepts syntax up to that version.
 
-*Who created this project?*
+_Who created this project?_
 This is a TypeScript fork maintained by Martin Zagora. The original project was created by [Crystal DBA](https://www.crystaldba.ai).
 
 ## Issues and contributions
@@ -222,31 +227,31 @@ This section describes the technical considerations behind the design.
 
 ### Index tuning
 
-Missing indexes are one of the most common causes of database performance problems. Indexes let Postgres locate data quickly. On small tables they make little difference, but as data grows the gap between a table scan and an index lookup becomes significant (typically *O*(*n*) vs *O*(*log* *n*), more if joins on multiple tables are involved).
+Missing indexes are one of the most common causes of database performance problems. Indexes let Postgres locate data quickly. On small tables they make little difference, but as data grows the gap between a table scan and an index lookup becomes significant (typically _O_(_n_) vs _O_(_log_ _n_), more if joins on multiple tables are involved).
 
 Index recommendations are generated in several stages:
 
-1. *Identify SQL queries in need of tuning*.
-    If you know a specific query is slow you can provide it. The server can also analyze the workload to find tuning targets, using the `pg_stat_statements` extension, which records the runtime and resource consumption of each query.
+1. _Identify SQL queries in need of tuning_.
+   If you know a specific query is slow you can provide it. The server can also analyze the workload to find tuning targets, using the `pg_stat_statements` extension, which records the runtime and resource consumption of each query.
 
-    A query is a candidate if it is a top resource consumer, either per execution or in aggregate. Execution time is used as a proxy for cumulative resource consumption. `analyze_workload_indexes` focuses on slow queries, using the mean time per execution with thresholds for execution count and mean execution time. Agents may also call `get_top_queries`, which accepts a parameter for mean vs. total execution time, then pass those queries to `analyze_query_indexes`.
+   A query is a candidate if it is a top resource consumer, either per execution or in aggregate. Execution time is used as a proxy for cumulative resource consumption. `analyze_workload_indexes` focuses on slow queries, using the mean time per execution with thresholds for execution count and mean execution time. Agents may also call `get_top_queries`, which accepts a parameter for mean vs. total execution time, then pass those queries to `analyze_query_indexes`.
 
-    Index tuning systems often use "workload compression" to produce a representative subset of queries. This server does a limited form of it by normalizing queries so that those generated from the same template appear as one. Each query is weighted equally, a simplification that works when the benefits of indexing are large.
+   Index tuning systems often use "workload compression" to produce a representative subset of queries. This server does a limited form of it by normalizing queries so that those generated from the same template appear as one. Each query is weighted equally, a simplification that works when the benefits of indexing are large.
 
-2. *Generate candidate indexes*.
-    The SQL is parsed and columns used in filters, joins, grouping or sorting are identified.
+2. _Generate candidate indexes_.
+   The SQL is parsed and columns used in filters, joins, grouping or sorting are identified.
 
-    All possible indexes would need combinations of these columns, because Postgres supports [multicolumn indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html). The present implementation includes only one permutation of each multicolumn index to reduce the search space, because permutations often have equivalent performance.
+   All possible indexes would need combinations of these columns, because Postgres supports [multicolumn indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html). The present implementation includes only one permutation of each multicolumn index to reduce the search space, because permutations often have equivalent performance.
 
-3. *Search for the optimal index configuration*.
-    The goal is the combination of indexes that best balances performance benefit against the cost of storing and maintaining them. The performance improvement is estimated with the "what if?" capabilities of the `hypopg` extension, which simulates how the Postgres optimizer would execute a query after the indexes are added, using the actual Postgres cost model.
+3. _Search for the optimal index configuration_.
+   The goal is the combination of indexes that best balances performance benefit against the cost of storing and maintaining them. The performance improvement is estimated with the "what if?" capabilities of the `hypopg` extension, which simulates how the Postgres optimizer would execute a query after the indexes are added, using the actual Postgres cost model.
 
-    Planning a query generally needs the parameter values used in it, but query normalization removes constants and bind variables are not available. To address this, the server produces realistic constants by sampling table statistics. Postgres 16 added [generic explain plans](https://www.postgresql.org/docs/current/sql-explain.html), but they have limitations, for example around `LIKE` clauses.
+   Planning a query generally needs the parameter values used in it, but query normalization removes constants and bind variables are not available. To address this, the server produces realistic constants by sampling table statistics. Postgres 16 added [generic explain plans](https://www.postgresql.org/docs/current/sql-explain.html), but they have limitations, for example around `LIKE` clauses.
 
-    Search strategy matters because evaluating all index combinations is feasible only in simple situations. Adapting Microsoft's Anytime algorithm, the server uses a greedy search: find the best one-index solution, then the best index to add to it for a two-index solution, and so on. The search ends when the time budget is used up or a round fails to produce gains above the minimum improvement threshold of 10%.
+   Search strategy matters because evaluating all index combinations is feasible only in simple situations. Adapting Microsoft's Anytime algorithm, the server uses a greedy search: find the best one-index solution, then the best index to add to it for a two-index solution, and so on. The search ends when the time budget is used up or a round fails to produce gains above the minimum improvement threshold of 10%.
 
-4. *Cost-benefit analysis*.
-    When one alternative performs better and another needs less space, the choice is framed as selecting a point along the [Pareto front](https://en.wikipedia.org/wiki/Pareto_front). The server takes a storage budget (`max_index_size_mb`), and also compares changes in relative terms: by default the change in the log (base 10) of the performance improvement must be 2x the difference in the log of the space cost. That allows a 10x increase in space for a 100x performance improvement.
+4. _Cost-benefit analysis_.
+   When one alternative performs better and another needs less space, the choice is framed as selecting a point along the [Pareto front](https://en.wikipedia.org/wiki/Pareto_front). The server takes a storage budget (`max_index_size_mb`), and also compares changes in relative terms: by default the change in the log (base 10) of the performance improvement must be 2x the difference in the log of the space cost. That allows a 10x increase in space for a 100x performance improvement.
 
 The implementation is most closely related to the [Anytime Algorithm](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf) in Microsoft SQL Server. Compared with [Dexter](https://github.com/ankane/dexter), it searches a larger space and uses different heuristics, which gives better solutions at the cost of longer runtime.
 
@@ -256,13 +261,13 @@ The result shows the work done in each round of the search, including a comparis
 
 Health checks identify tuning opportunities and maintenance needs before they become critical. They are adapted from [PgHero](https://github.com/ankane/pghero).
 
-- *Index health*. Looks for unused indexes, duplicate indexes, and bloated indexes. Autovacuum marks index entries that point to dead tuples as reusable but does not compact index pages, so eventually pages may contain few live references.
-- *Buffer cache hit rate*. Measures the proportion of reads served from the buffer cache instead of disk. A low rate often means degraded application performance.
-- *Connection health*. Checks the number of connections and their utilization. The biggest risk is running out of connections, but many idle or blocked connections can also indicate problems.
-- *Vacuum health*. Vacuum prevents transaction id wraparound, which can make the database stop accepting writes. Postgres uses 32-bit transaction ids, so after about 2 billion transactions it must reuse them. To do that it "freezes" old records, replacing their transaction ids with a special value that means distant past. This check looks for tables that need vacuuming to prevent wraparound.
-- *Replication health*. Monitors lag between primary and replicas, replication status, and replication slot usage.
-- *Constraint health*. Postgres rejects transactions that would violate a constraint, but invalid constraints can appear after loading data or in recovery scenarios. This check looks for invalid constraints.
-- *Sequence health*. Looks for sequences at risk of exceeding their maximum value.
+- _Index health_. Looks for unused indexes, duplicate indexes, and bloated indexes. Autovacuum marks index entries that point to dead tuples as reusable but does not compact index pages, so eventually pages may contain few live references.
+- _Buffer cache hit rate_. Measures the proportion of reads served from the buffer cache instead of disk. A low rate often means degraded application performance.
+- _Connection health_. Checks the number of connections and their utilization. The biggest risk is running out of connections, but many idle or blocked connections can also indicate problems.
+- _Vacuum health_. Vacuum prevents transaction id wraparound, which can make the database stop accepting writes. Postgres uses 32-bit transaction ids, so after about 2 billion transactions it must reuse them. To do that it "freezes" old records, replacing their transaction ids with a special value that means distant past. This check looks for tables that need vacuuming to prevent wraparound.
+- _Replication health_. Monitors lag between primary and replicas, replication status, and replication slot usage.
+- _Constraint health_. Postgres rejects transactions that would violate a constraint, but invalid constraints can appear after loading data or in recovery scenarios. This check looks for invalid constraints.
+- _Sequence health_. Looks for sequences at risk of exceeding their maximum value.
 
 ### Postgres client library
 
@@ -291,13 +296,13 @@ The two modes sit at opposite ends of the convenience and safety spectrum:
 
 Requirements: Node.js 26+ and pnpm 12. Clone and build as shown in [Run the server](#run-the-server).
 
-| Command | Purpose |
-|---------|---------|
-| `pnpm build` | Build to `dist/`. |
-| `pnpm check` | Lint and format check (Ultracite: oxlint and oxfmt). |
-| `pnpm fix` | Apply lint and format fixes. |
-| `pnpm typecheck` | Type check with `tsc`. |
-| `pnpm test:unit` | Unit tests. |
+| Command                 | Purpose                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `pnpm build`            | Build to `dist/`.                                        |
+| `pnpm check`            | Lint and format check (Ultracite: oxlint and oxfmt).     |
+| `pnpm fix`              | Apply lint and format fixes.                             |
+| `pnpm typecheck`        | Type check with `tsc`.                                   |
+| `pnpm test:unit`        | Unit tests.                                              |
 | `pnpm test:integration` | Integration tests against real databases (needs Docker). |
 
 The integration tests start Postgres 12, 15 and 16 in containers. Set `PG_VERSIONS=16` to run a single version, and `REQUIRE_DOCKER=1` to fail instead of skip when Docker is missing.

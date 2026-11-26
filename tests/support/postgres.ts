@@ -1,21 +1,16 @@
-import {
-  GenericContainer,
-  getContainerRuntimeClient,
-  ImageName,
-  Wait,
-} from "testcontainers";
-import { afterAll, beforeAll, beforeEach, describe } from "vitest";
+import { GenericContainer, getContainerRuntimeClient, ImageName, Wait } from 'testcontainers';
+import { afterAll, beforeAll, beforeEach, describe } from 'vitest';
 
-import { resetPostgresVersionCache } from "../../src/sql/extension-utils.ts";
+import { resetPostgresVersionCache } from '../../src/sql/extension-utils.ts';
 
-const ALL_VERSIONS = ["12", "15", "16"];
-const POSTGRES_PASSWORD = "test_password";
-const POSTGRES_DB = "test_db";
-const CONTEXT_DIR = import.meta.dirname.replace(/[\\/]support$/u, "");
+const ALL_VERSIONS = ['12', '15', '16'];
+const POSTGRES_PASSWORD = 'test_password';
+const POSTGRES_DB = 'test_db';
+const CONTEXT_DIR = import.meta.dirname.replace(/[\\/]support$/u, '');
 
 /** PostgreSQL major versions under test; `PG_VERSIONS=16` narrows the matrix. */
-const versions = (process.env.PG_VERSIONS ?? ALL_VERSIONS.join(","))
-  .split(",")
+const versions = (process.env.PG_VERSIONS ?? ALL_VERSIONS.join(','))
+  .split(',')
   .map((version) => version.trim())
   .filter(Boolean);
 
@@ -29,7 +24,7 @@ async function isDockerAvailable(): Promise<boolean> {
 }
 
 const dockerAvailable = await isDockerAvailable();
-const requireDocker = process.env.REQUIRE_DOCKER === "1";
+const requireDocker = process.env.REQUIRE_DOCKER === '1';
 
 const READY_MESSAGE = /database system is ready to accept connections/u;
 
@@ -47,10 +42,7 @@ function ensureImage(major: string): Promise<string> {
     if (await client.image.exists(ImageName.fromString(tag))) {
       return tag;
     }
-    await GenericContainer.fromDockerfile(
-      CONTEXT_DIR,
-      "Dockerfile.postgres-hypopg"
-    )
+    await GenericContainer.fromDockerfile(CONTEXT_DIR, 'Dockerfile.postgres-hypopg')
       .withBuildArgs({ PG_VERSION: major, PG_MAJOR: major })
       .build(tag, { deleteOnExit: false });
     return tag;
@@ -71,29 +63,26 @@ export interface PostgresContext {
  * by the tests it defines. Skips when Docker is unavailable, unless
  * `REQUIRE_DOCKER=1`, in which case it fails.
  */
-export function describeWithPostgres(
-  name: string,
-  define: (context: PostgresContext) => void
-): void {
+export function describeWithPostgres(name: string, define: (context: PostgresContext) => void): void {
   for (const version of versions) {
     const suiteName = `${name} [postgres:${version}]`;
     if (!(dockerAvailable || requireDocker)) {
       describe.skip(suiteName, () => {
         define({
           version,
-          connectionString: () => "",
+          connectionString: () => '',
         });
       });
       continue;
     }
 
     describe(suiteName, () => {
-      let container: Awaited<ReturnType<GenericContainer["start"]>> | undefined;
-      let connectionString = "";
+      let container: Awaited<ReturnType<GenericContainer['start']>> | undefined;
+      let connectionString = '';
 
       beforeAll(async () => {
         if (!dockerAvailable) {
-          throw new Error("Docker is not available and REQUIRE_DOCKER=1");
+          throw new Error('Docker is not available and REQUIRE_DOCKER=1');
         }
         const image = await ensureImage(version);
         container = await new GenericContainer(image)
@@ -103,12 +92,12 @@ export function describeWithPostgres(
           })
           .withExposedPorts(5432)
           .withCommand([
-            "-c",
-            "shared_preload_libraries=pg_stat_statements",
-            "-c",
-            "pg_stat_statements.track=all",
-            "-c",
-            "log_statement=all",
+            '-c',
+            'shared_preload_libraries=pg_stat_statements',
+            '-c',
+            'pg_stat_statements.track=all',
+            '-c',
+            'log_statement=all',
           ])
           // The entrypoint starts a temporary server for init scripts first.
           .withWaitStrategy(Wait.forLogMessage(READY_MESSAGE, 2))

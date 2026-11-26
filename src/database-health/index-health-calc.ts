@@ -1,5 +1,5 @@
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 interface IndexInfo {
   columns: string[];
@@ -32,7 +32,7 @@ function compareStrings(a: string, b: string): number {
 function compareLists(a: readonly string[], b: readonly string[]): number {
   const shared = Math.min(a.length, b.length);
   for (let i = 0; i < shared; i += 1) {
-    const order = compareStrings(a[i] ?? "", b[i] ?? "");
+    const order = compareStrings(a[i] ?? '', b[i] ?? '');
     if (order !== 0) {
       return order;
     }
@@ -49,10 +49,7 @@ function nullableText(value: unknown): string | null {
 }
 
 /** Whether the columns of an index start with all of `columns`. */
-function indexCovers(
-  indexedColumns: readonly string[],
-  columns: readonly string[]
-): boolean {
+function indexCovers(indexedColumns: readonly string[], columns: readonly string[]): boolean {
   return sameList(indexedColumns.slice(0, columns.length), columns);
 }
 
@@ -68,10 +65,7 @@ function coversAsDuplicate(covering: IndexInfo, index: IndexInfo): boolean {
     return false;
   }
   return (
-    !sameList(covering.columns, index.columns) ||
-    index.name > covering.name ||
-    covering.primary ||
-    covering.unique
+    !sameList(covering.columns, index.columns) || index.name > covering.name || covering.primary || covering.unique
   );
 }
 
@@ -92,12 +86,12 @@ export class IndexHealthCalc {
     // Check for invalid indexes being created
     const invalidIndexes = indexes.filter((idx) => !idx.valid);
     if (invalidIndexes.length === 0) {
-      return "No invalid indexes found.";
+      return 'No invalid indexes found.';
     }
 
     return `Invalid indexes found: ${invalidIndexes
       .map((idx) => `${idx.name} on ${idx.table} is invalid.`)
-      .join("\n")}`;
+      .join('\n')}`;
   }
 
   async duplicateIndexCheck(): Promise<string> {
@@ -117,21 +111,16 @@ export class IndexHealthCalc {
     }
 
     // Check each valid non-primary/unique index for duplicates
-    for (const index of indexes.filter(
-      (i) => i.valid && !i.primary && !i.unique
-    )) {
-      const tableIndexes =
-        indexesByTable.get(JSON.stringify([index.schema, index.table])) ?? [];
-      const coveringIndex = tableIndexes.find((covering) =>
-        coversAsDuplicate(covering, index)
-      );
+    for (const index of indexes.filter((i) => i.valid && !i.primary && !i.unique)) {
+      const tableIndexes = indexesByTable.get(JSON.stringify([index.schema, index.table])) ?? [];
+      const coveringIndex = tableIndexes.find((covering) => coversAsDuplicate(covering, index));
       if (coveringIndex) {
         dupIndexes.push({ unneededIndex: index, coveringIndex });
       }
     }
 
     if (dupIndexes.length === 0) {
-      return "No duplicate indexes found.";
+      return 'No duplicate indexes found.';
     }
 
     // Sort by table and columns and format the output
@@ -141,7 +130,7 @@ export class IndexHealthCalc {
         compareLists(a.unneededIndex.columns, b.unneededIndex.columns)
     );
 
-    const result = ["Duplicate indexes found:"];
+    const result = ['Duplicate indexes found:'];
     for (const dup of sortedDups) {
       result.push(
         `Index '${dup.unneededIndex.name}' on table '${dup.unneededIndex.table}' ` +
@@ -149,7 +138,7 @@ export class IndexHealthCalc {
       );
     }
 
-    return result.join("\n");
+    return result.join('\n');
   }
 
   /** Check for bloated indexes that are larger than `minSize` bytes (default 100MB). */
@@ -291,10 +280,10 @@ export class IndexHealthCalc {
     );
 
     if (!bloatedIndexes || bloatedIndexes.length === 0) {
-      return "No bloated indexes found.";
+      return 'No bloated indexes found.';
     }
 
-    const result = ["Bloated indexes found:"];
+    const result = ['Bloated indexes found:'];
     for (const { cells } of bloatedIndexes) {
       const bloatMb = toMb(cells.bloat_bytes);
       const totalMb = toMb(cells.index_bytes);
@@ -303,7 +292,7 @@ export class IndexHealthCalc {
       );
     }
 
-    return result.join("\n");
+    return result.join('\n');
   }
 
   private async indexes(): Promise<IndexInfo[]> {
@@ -346,9 +335,9 @@ export class IndexHealthCalc {
     const indexes = results.map(({ cells }): IndexInfo => {
       // Unquote column names
       const columns = String(cells.columns)
-        .replace(") WHERE (", " WHERE ")
-        .split(", ")
-        .map((col) => col.replaceAll(QUOTES_AT_ENDS, ""));
+        .replace(') WHERE (', ' WHERE ')
+        .split(', ')
+        .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
       return {
         schema: String(cells.schema),
         table: String(cells.table),
@@ -395,10 +384,10 @@ export class IndexHealthCalc {
     );
 
     if (!unused || unused.length === 0) {
-      return "No unused indexes found.";
+      return 'No unused indexes found.';
     }
 
-    const result = ["Rarely used indexes found:"];
+    const result = ['Rarely used indexes found:'];
     for (const { cells } of unused) {
       if (cells.primary) {
         continue;
@@ -409,6 +398,6 @@ export class IndexHealthCalc {
       );
     }
 
-    return result.join("\n");
+    return result.join('\n');
   }
 }

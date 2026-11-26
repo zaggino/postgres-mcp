@@ -1,6 +1,6 @@
-import { vi } from "vitest";
+import { vi } from 'vitest';
 
-import type { PoolLike, QueryResultLike } from "../../src/sql/sql-driver.ts";
+import type { PoolLike, QueryResultLike } from '../../src/sql/sql-driver.ts';
 
 export interface RecordedQuery {
   text: string;

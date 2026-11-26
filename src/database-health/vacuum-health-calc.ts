@@ -1,5 +1,5 @@
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 interface TransactionIdMetrics {
   isHealthy: boolean;
@@ -13,11 +13,7 @@ export class VacuumHealthCalc {
   private readonly sqlDriver: SqlExecutor;
   private readonly threshold: number;
 
-  constructor(
-    sqlDriver: SqlExecutor,
-    threshold = 10_000_000,
-    maxValue = 2_146_483_648
-  ) {
+  constructor(sqlDriver: SqlExecutor, threshold = 10_000_000, maxValue = 2_146_483_648) {
     this.sqlDriver = sqlDriver;
     this.threshold = threshold;
     this.maxValue = maxValue;
@@ -28,27 +24,25 @@ export class VacuumHealthCalc {
     const metrics = await this.getTransactionIdMetrics();
 
     if (metrics.length === 0) {
-      return "No tables found with transaction ID wraparound danger.";
+      return 'No tables found with transaction ID wraparound danger.';
     }
 
     // Sort by transactions left ascending to show most critical first
-    const sorted = metrics.toSorted(
-      (a, b) => a.transactionsLeft - b.transactionsLeft
-    );
+    const sorted = metrics.toSorted((a, b) => a.transactionsLeft - b.transactionsLeft);
 
     const unhealthy = sorted.filter((m) => !m.isHealthy);
     if (unhealthy.length === 0) {
-      return "All tables have healthy transaction ID age.";
+      return 'All tables have healthy transaction ID age.';
     }
 
-    const result = ["Tables approaching transaction ID wraparound:"];
+    const result = ['Tables approaching transaction ID wraparound:'];
     for (const metric of unhealthy) {
       result.push(
-        `Table '${metric.schema}.${metric.table}' has ${metric.transactionsLeft.toLocaleString("en-US")} transactions ` +
-          `remaining before wraparound (threshold: ${this.threshold.toLocaleString("en-US")})`
+        `Table '${metric.schema}.${metric.table}' has ${metric.transactionsLeft.toLocaleString('en-US')} transactions ` +
+          `remaining before wraparound (threshold: ${this.threshold.toLocaleString('en-US')})`
       );
     }
-    return result.join("\n");
+    return result.join('\n');
   }
 
   private async getTransactionIdMetrics(): Promise<TransactionIdMetrics[]> {

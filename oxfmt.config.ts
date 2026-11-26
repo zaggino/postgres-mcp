@@ -1,12 +1,13 @@
-import { defineConfig } from "oxfmt";
-import ultracite from "ultracite/oxfmt";
+import { defineConfig } from 'oxfmt';
+import ultracite from 'ultracite/oxfmt';
 
 export default defineConfig({
   ...ultracite,
-  ignorePatterns: [
-    ...(ultracite.ignorePatterns ?? []),
-    ".claude",
-    "**/*.md",
-    ".github",
-  ],
+  printWidth: 120,
+  // The ultracite preset sets proseWrap: 'never', which would unwrap the
+  // hand-wrapped markdown prose in README/docs into one-line paragraphs.
+  // Keep the existing wrapping.
+  proseWrap: 'preserve',
+  singleQuote: true,
+  ignorePatterns: [...(ultracite.ignorePatterns ?? []), '.claude', '.github'],
 });

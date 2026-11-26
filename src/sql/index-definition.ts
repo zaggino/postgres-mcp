@@ -7,7 +7,7 @@ export class IndexDefinition {
   readonly columns: readonly string[];
   readonly using: string;
 
-  constructor(table: string, columns: readonly string[], using = "btree") {
+  constructor(table: string, columns: readonly string[], using = 'btree') {
     this.table = table;
     this.columns = Object.freeze([...columns]);
     this.using = using;
@@ -20,22 +20,22 @@ export class IndexDefinition {
   }
 
   get definition(): string {
-    return `CREATE INDEX ${this.name} ON ${this.table} USING ${this.using} (${this.columns.join(", ")})`;
+    return `CREATE INDEX ${this.name} ON ${this.table} USING ${this.using} (${this.columns.join(', ')})`;
   }
 
   get name(): string {
     // Functional expressions like LOWER(col) must yield a valid index name
     const cleanedColumns = this.columns.map((col) =>
       col
-        .replaceAll("(", "_")
-        .replaceAll(")", "_")
-        .replaceAll(" ", "_")
-        .replaceAll(",", "_")
-        .replaceAll(CONSECUTIVE_UNDERSCORES, "_")
-        .replace(TRAILING_UNDERSCORES, "")
+        .replaceAll('(', '_')
+        .replaceAll(')', '_')
+        .replaceAll(' ', '_')
+        .replaceAll(',', '_')
+        .replaceAll(CONSECUTIVE_UNDERSCORES, '_')
+        .replace(TRAILING_UNDERSCORES, '')
     );
-    const columnPart = cleanedColumns.join("_");
-    const suffix = this.using === "btree" ? "" : `_${this.using}`;
+    const columnPart = cleanedColumns.join('_');
+    const suffix = this.using === 'btree' ? '' : `_${this.using}`;
     return `postgres_mcp_idx_${this.table}_${columnPart}_${this.columns.length}${suffix}`;
   }
 

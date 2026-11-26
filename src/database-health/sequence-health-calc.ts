@@ -1,6 +1,6 @@
-import { identifier } from "../sql/literal.ts";
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
+import { identifier } from '../sql/literal.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 interface SequenceMetrics {
   column: string;
@@ -19,10 +19,10 @@ const BIGINT_MAX = 9_223_372_036_854_775_807n;
 const NEXTVAL_REFERENCE = /nextval\(\(?'(?<reference>[^']+)'/u;
 
 function toBigInt(value: unknown): bigint {
-  if (typeof value === "bigint") {
+  if (typeof value === 'bigint') {
     return value;
   }
-  if (typeof value === "number" || typeof value === "string") {
+  if (typeof value === 'number' || typeof value === 'string') {
     return BigInt(value);
   }
   throw new TypeError(`Unexpected sequence value: ${String(value)}`);
@@ -30,9 +30,7 @@ function toBigInt(value: unknown): bigint {
 
 /** What percentage of the sequence has been used. */
 function percentUsed(metric: SequenceMetrics): number {
-  return metric.maxValue === 0n
-    ? 0
-    : (Number(metric.lastValue) / Number(metric.maxValue)) * 100;
+  return metric.maxValue === 0n ? 0 : (Number(metric.lastValue) / Number(metric.maxValue)) * 100;
 }
 
 export class SequenceHealthCalc {
@@ -58,14 +56,14 @@ export class SequenceHealthCalc {
     // Extract the sequence reference from inside the single quotes
     const reference = NEXTVAL_REFERENCE.exec(defaultValue)?.groups?.reference;
     if (reference === undefined) {
-      return ["public", ""];
+      return ['public', ''];
     }
 
     // Remove quotes so the identifier can be quoted correctly
-    const parts = reference.replaceAll('"', "").split(".");
-    const [first = "", second = ""] = parts;
+    const parts = reference.replaceAll('"', '').split('.');
+    const [first = '', second = ''] = parts;
     if (parts.length === 1) {
-      return ["public", first]; // Default to public schema
+      return ['public', first]; // Default to public schema
     }
     return [first, second];
   }
@@ -75,12 +73,11 @@ export class SequenceHealthCalc {
     const metrics = await this.getSequenceMetrics();
 
     if (metrics.length === 0) {
-      return "No sequences found in the database.";
+      return 'No sequences found in the database.';
     }
 
     // Sort by remaining values ascending to show most critical first
-    const remainingOf = (m: SequenceMetrics): bigint =>
-      m.maxValue - m.lastValue;
+    const remainingOf = (m: SequenceMetrics): bigint => m.maxValue - m.lastValue;
     const sorted = metrics.toSorted((a, b) => {
       const diff = remainingOf(a) - remainingOf(b);
       if (diff === 0n) {
@@ -91,19 +88,19 @@ export class SequenceHealthCalc {
 
     const unhealthy = sorted.filter((m) => !m.isHealthy);
     if (unhealthy.length === 0) {
-      return "All sequences have healthy usage levels.";
+      return 'All sequences have healthy usage levels.';
     }
 
-    const result = ["Sequences approaching maximum value:"];
+    const result = ['Sequences approaching maximum value:'];
     for (const metric of unhealthy) {
       const remaining = remainingOf(metric);
       result.push(
         `Sequence '${metric.schema}.${metric.sequence}' used for ${metric.table}.${metric.column} ` +
           `has used ${percentUsed(metric).toFixed(1)}% of available values ` +
-          `(${metric.lastValue.toLocaleString("en-US")} of ${metric.maxValue.toLocaleString("en-US")}, ${remaining.toLocaleString("en-US")} remaining)`
+          `(${metric.lastValue.toLocaleString('en-US')} of ${metric.maxValue.toLocaleString('en-US')}, ${remaining.toLocaleString('en-US')} remaining)`
       );
     }
-    return result.join("\n");
+    return result.join('\n');
   }
 
   private async getSequenceMetrics(): Promise<SequenceMetrics[]> {
@@ -137,16 +134,14 @@ export class SequenceHealthCalc {
     const sequenceMetrics: SequenceMetrics[] = [];
     for (const { cells: seq } of sequences) {
       // Parse the sequence name from default value
-      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(
-        String(seq.default_value)
-      );
+      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(String(seq.default_value));
       if (!sequence) {
         continue;
       }
 
       // Determine max value based on column type
       const columnType = String(seq.column_type);
-      const maxValue = columnType === "integer" ? INTEGER_MAX : BIGINT_MAX;
+      const maxValue = columnType === 'integer' ? INTEGER_MAX : BIGINT_MAX;
 
       // Get sequence attributes
       const attrs = await SafeSqlDriver.executeParamQuery(

@@ -1,7 +1,7 @@
-import type { SqlExecutor } from "./safe-sql.ts";
-import { SafeSqlDriver } from "./safe-sql.ts";
+import type { SqlExecutor } from './safe-sql.ts';
+import { SafeSqlDriver } from './safe-sql.ts';
 
-export type MessageType = "plain" | "markdown";
+export type MessageType = 'plain' | 'markdown';
 
 export interface ExtensionStatus {
   defaultVersion: string | null;
@@ -26,24 +26,22 @@ export function resetPostgresVersionCache(): void {
  * Get the major PostgreSQL version as an integer (e.g. 16 for PostgreSQL 16.2).
  * Returns 0 if the version cannot be determined.
  */
-export async function getPostgresVersion(
-  sqlDriver: SqlExecutor
-): Promise<number> {
+export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number> {
   if (postgresVersion !== null) {
     return postgresVersion;
   }
 
   try {
-    const rows = await sqlDriver.executeQuery("SHOW server_version");
+    const rows = await sqlDriver.executeQuery('SHOW server_version');
     const first = rows?.[0];
     if (!first) {
-      process.stderr.write("Could not determine PostgreSQL version\n");
+      process.stderr.write('Could not determine PostgreSQL version\n');
       return 0;
     }
 
     const versionString = String(first.cells.server_version);
     // Extract the major version (before the first dot)
-    const majorVersion = versionString.split(".")[0] ?? "";
+    const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {
       throw new Error(`Invalid PostgreSQL version: ${versionString}`);
     }
@@ -52,7 +50,7 @@ export async function getPostgresVersion(
     postgresVersion = version;
     return version;
   } catch (error) {
-    throw new Error("Error determining PostgreSQL version", { cause: error });
+    throw new Error('Error determining PostgreSQL version', { cause: error });
   }
 }
 
@@ -65,30 +63,23 @@ export async function checkPostgresVersionRequirement(
   const pgVersion = await getPostgresVersion(sqlDriver);
 
   if (pgVersion >= minVersion) {
-    return [
-      true,
-      `PostgreSQL version ${pgVersion} meets the requirement for ${featureName}`,
-    ];
+    return [true, `PostgreSQL version ${pgVersion} meets the requirement for ${featureName}`];
   }
 
   return [
     false,
-    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion || "unknown"}.`,
+    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion || 'unknown'}.`,
   ];
 }
 
-function installedMessage(
-  name: string,
-  version: unknown,
-  messageType: MessageType
-): string {
-  return messageType === "markdown"
+function installedMessage(name: string, version: unknown, messageType: MessageType): string {
+  return messageType === 'markdown'
     ? `The **${name}** extension (version ${String(version)}) is already installed.`
     : `The ${name} extension (version ${String(version)}) is already installed.`;
 }
 
 function availableMessage(name: string, messageType: MessageType): string {
-  return messageType === "markdown"
+  return messageType === 'markdown'
     ? `The **${name}** extension is available but not installed.\n\n` +
         `You can install it by running: \`CREATE EXTENSION ${name};\`.`
     : `The ${name} extension is available but not installed.\n` +
@@ -96,14 +87,14 @@ function availableMessage(name: string, messageType: MessageType): string {
 }
 
 function unavailableMessage(name: string, messageType: MessageType): string {
-  return messageType === "markdown"
+  return messageType === 'markdown'
     ? `The **${name}** extension is not available on this PostgreSQL server.\n\n` +
-        "To install it, you need to:\n" +
-        "1. Install the extension package on the server\n" +
+        'To install it, you need to:\n' +
+        '1. Install the extension package on the server\n' +
         `2. Run: \`CREATE EXTENSION ${name};\``
     : `The ${name} extension is not available on this PostgreSQL server.\n` +
-        "To install it, you need to:\n" +
-        "1. Install the extension package on the server\n" +
+        'To install it, you need to:\n' +
+        '1. Install the extension package on the server\n' +
         `2. Run: CREATE EXTENSION ${name};`;
 }
 
@@ -112,11 +103,11 @@ export async function checkExtension(
   sqlDriver: SqlExecutor,
   extensionName: string,
   includeMessages = true,
-  messageType: MessageType = "plain"
+  messageType: MessageType = 'plain'
 ): Promise<ExtensionStatus> {
   const installedResult = await SafeSqlDriver.executeParamQuery(
     sqlDriver,
-    "SELECT extversion FROM pg_extension WHERE extname = {}",
+    'SELECT extversion FROM pg_extension WHERE extname = {}',
     [extensionName]
   );
 
@@ -124,14 +115,13 @@ export async function checkExtension(
     isInstalled: false,
     isAvailable: false,
     name: extensionName,
-    message: "",
+    message: '',
     defaultVersion: null,
   };
 
   const installed = installedResult?.[0];
   if (installed) {
-    const version =
-      "extversion" in installed.cells ? installed.cells.extversion : "unknown";
+    const version = 'extversion' in installed.cells ? installed.cells.extversion : 'unknown';
     result.isInstalled = true;
     result.isAvailable = true;
 
@@ -143,7 +133,7 @@ export async function checkExtension(
 
   const availableResult = await SafeSqlDriver.executeParamQuery(
     sqlDriver,
-    "SELECT default_version FROM pg_available_extensions WHERE name = {}",
+    'SELECT default_version FROM pg_available_extensions WHERE name = {}',
     [extensionName]
   );
 
@@ -151,10 +141,7 @@ export async function checkExtension(
   if (available) {
     result.isAvailable = true;
     const defaultVersion = available.cells.default_version;
-    result.defaultVersion =
-      defaultVersion === undefined || defaultVersion === null
-        ? null
-        : String(defaultVersion);
+    result.defaultVersion = defaultVersion === undefined || defaultVersion === null ? null : String(defaultVersion);
 
     if (includeMessages) {
       result.message = availableMessage(extensionName, messageType);
@@ -169,61 +156,61 @@ export async function checkExtension(
 /** Returns `[isInstalled, message]` with installation instructions for HypoPG. */
 export async function checkHypopgInstallationStatus(
   sqlDriver: SqlExecutor,
-  messageType: MessageType = "markdown"
+  messageType: MessageType = 'markdown'
 ): Promise<[boolean, string]> {
-  const status = await checkExtension(sqlDriver, "hypopg", false);
+  const status = await checkExtension(sqlDriver, 'hypopg', false);
 
   if (status.isInstalled) {
-    return messageType === "markdown"
-      ? [true, "The **hypopg** extension is already installed."]
-      : [true, "The hypopg extension is already installed."];
+    return messageType === 'markdown'
+      ? [true, 'The **hypopg** extension is already installed.']
+      : [true, 'The hypopg extension is already installed.'];
   }
 
   if (status.isAvailable) {
-    if (messageType === "markdown") {
+    if (messageType === 'markdown') {
       return [
         false,
-        "The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed.\n\n" +
+        'The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed.\n\n' +
           "You can ask me to install 'hypopg' using the 'execute_query' tool.\n\n" +
           "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. " +
-          "It adds a virtual layer that simulates indexes without actually creating them in the database. " +
-          "It requires database privileges (often superuser) to install.\n\n" +
-          "**What does it do?** It allows you to create virtual indexes and test how they would affect query performance " +
-          "without the overhead of actually creating the indexes.\n\n" +
+          'It adds a virtual layer that simulates indexes without actually creating them in the database. ' +
+          'It requires database privileges (often superuser) to install.\n\n' +
+          '**What does it do?** It allows you to create virtual indexes and test how they would affect query performance ' +
+          'without the overhead of actually creating the indexes.\n\n' +
           "**How to undo?** If you later decide to remove it, you can ask me to run 'DROP EXTENSION hypopg;'.",
       ];
     }
     return [
       false,
-      "The hypopg extension is required to test hypothetical indexes, but it is not currently installed.\n" +
+      'The hypopg extension is required to test hypothetical indexes, but it is not currently installed.\n' +
         "You can ask me to install it using the 'execute_query' tool.\n" +
-        "It is generally safe to install and allows testing indexes without creating them.",
+        'It is generally safe to install and allows testing indexes without creating them.',
     ];
   }
 
   const pgVersion = await getPostgresVersion(sqlDriver);
-  const majorVersion = pgVersion > 0 ? `${pgVersion}` : "XX";
+  const majorVersion = pgVersion > 0 ? `${pgVersion}` : 'XX';
   // Extension is not available
-  if (messageType === "markdown") {
+  if (messageType === 'markdown') {
     return [
       false,
-      "The **hypopg** extension is not available on this PostgreSQL server.\n\n" +
-        "To install HypoPG:\n" +
+      'The **hypopg** extension is not available on this PostgreSQL server.\n\n' +
+        'To install HypoPG:\n' +
         `1. For Debian/Ubuntu: \`sudo apt-get install postgresql-${majorVersion}-hypopg\`\n` +
         `2. For RHEL/CentOS: \`sudo yum install postgresql${majorVersion}-hypopg\`\n` +
-        "3. For MacOS with Homebrew: `brew install hypopg`\n" +
-        "4. For other systems, build from source: `git clone https://github.com/HypoPG/hypopg`\n\n" +
-        "After installing the extension packages, connect to your database and run: `CREATE EXTENSION hypopg;`",
+        '3. For MacOS with Homebrew: `brew install hypopg`\n' +
+        '4. For other systems, build from source: `git clone https://github.com/HypoPG/hypopg`\n\n' +
+        'After installing the extension packages, connect to your database and run: `CREATE EXTENSION hypopg;`',
     ];
   }
   return [
     false,
-    "The hypopg extension is not available on this PostgreSQL server.\n" +
-      "To install HypoPG:\n" +
+    'The hypopg extension is not available on this PostgreSQL server.\n' +
+      'To install HypoPG:\n' +
       `1. For Debian/Ubuntu: sudo apt-get install postgresql-${majorVersion}-hypopg\n` +
       `2. For RHEL/CentOS: sudo yum install postgresql${majorVersion}-hypopg\n` +
-      "3. For MacOS with Homebrew: brew install hypopg\n" +
-      "4. For other systems, build from source: git clone https://github.com/HypoPG/hypopg\n" +
-      "After installing the extension packages, connect to your database and run: CREATE EXTENSION hypopg;",
+      '3. For MacOS with Homebrew: brew install hypopg\n' +
+      '4. For other systems, build from source: git clone https://github.com/HypoPG/hypopg\n' +
+      'After installing the extension packages, connect to your database and run: CREATE EXTENSION hypopg;',
   ];
 }

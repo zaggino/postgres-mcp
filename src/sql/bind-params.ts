@@ -1,8 +1,8 @@
-import { pyFloatStr } from "../py-format.ts";
-import { literal } from "./literal.ts";
-import { AstNode, isJsonObject, parseSql, Visitor } from "./pg-ast.ts";
-import type { SqlExecutor } from "./safe-sql.ts";
-import { SafeSqlDriver } from "./safe-sql.ts";
+import { pyFloatStr } from '../py-format.ts';
+import { literal } from './literal.ts';
+import { AstNode, isJsonObject, parseSql, Visitor } from './pg-ast.ts';
+import type { SqlExecutor } from './safe-sql.ts';
+import { SafeSqlDriver } from './safe-sql.ts';
 
 function logWarning(message: string): void {
   process.stderr.write(`${message}\n`);
@@ -21,20 +21,20 @@ export class TableAliasVisitor extends Visitor {
 
   /** Visit table references, including those in FROM clause. */
   visitRangeVar(_ancestors: readonly AstNode[], node: AstNode): void {
-    const relname = node.string("relname");
+    const relname = node.string('relname');
     if (relname !== undefined) {
       this.tables.add(relname);
     }
-    const aliasname = node.node("alias")?.string("aliasname");
+    const aliasname = node.node('alias')?.string('aliasname');
     if (aliasname !== undefined) {
-      this.aliases.set(aliasname, relname ?? "None");
+      this.aliases.set(aliasname, relname ?? 'None');
     }
   }
 
   /** Visit both sides of JOIN expressions. */
   visitJoinExpr(_ancestors: readonly AstNode[], node: AstNode): void {
-    this.visit(node.node("larg"));
-    this.visit(node.node("rarg"));
+    this.visit(node.node('larg'));
+    this.visit(node.node('rarg'));
   }
 }
 
@@ -81,7 +81,7 @@ export class ColumnCollector extends Visitor {
 
     // Collect tables and aliases
     const aliasVisitor = new TableAliasVisitor();
-    for (const fromItem of node.nodes("fromClause")) {
+    for (const fromItem of node.nodes('fromClause')) {
       aliasVisitor.visit(fromItem);
     }
     this.contextStack.push({
@@ -90,14 +90,14 @@ export class ColumnCollector extends Visitor {
     });
 
     // First pass: collect column aliases from targetList
-    const targetList = node.nodes("targetList");
+    const targetList = node.nodes('targetList');
     if (targetList.length > 0) {
       this.targetList = targetList;
       for (const targetEntry of targetList) {
-        const colAlias = targetEntry.string("name");
+        const colAlias = targetEntry.string('name');
         if (colAlias) {
           this.columnAliases.set(colAlias, {
-            node: targetEntry.node("val"),
+            node: targetEntry.node('val'),
             level: queryLevel,
           });
         }
@@ -113,47 +113,47 @@ export class ColumnCollector extends Visitor {
   }
 
   private processQueryClauses(node: AstNode): void {
-    const targetList = node.nodes("targetList");
+    const targetList = node.nodes('targetList');
     if (targetList.length > 0) {
       this.targetList = targetList;
       for (const targetEntry of targetList) {
-        this.visit(targetEntry.node("val"));
+        this.visit(targetEntry.node('val'));
       }
     }
 
-    for (const groupItem of node.nodes("groupClause")) {
-      if (!groupItem.is("SortGroupClause")) {
+    for (const groupItem of node.nodes('groupClause')) {
+      if (!groupItem.is('SortGroupClause')) {
         continue;
       }
-      const refIndex = groupItem.number("tleSortGroupRef") ?? 0;
+      const refIndex = groupItem.number('tleSortGroupRef') ?? 0;
       if (this.targetList && refIndex <= this.targetList.length) {
         // 1-based; `at` keeps negative indexing for a zero ref.
         const targetEntry = this.targetList.at(refIndex - 1);
-        this.visit(targetEntry?.node("val"));
+        this.visit(targetEntry?.node('val'));
       }
     }
 
-    this.visit(node.node("whereClause"));
+    this.visit(node.node('whereClause'));
 
-    for (const fromItem of node.nodes("fromClause")) {
+    for (const fromItem of node.nodes('fromClause')) {
       this.visit(fromItem);
     }
 
-    this.visit(node.node("havingClause"));
+    this.visit(node.node('havingClause'));
 
-    for (const sortItem of node.nodes("sortClause")) {
+    for (const sortItem of node.nodes('sortClause')) {
       this.processSortItem(sortItem);
     }
   }
 
   /** Process a sort item, resolving column aliases if needed. */
   private processSortItem(sortItem: AstNode): void {
-    const sortNode = sortItem.node("node");
-    if (sortNode?.is("ColumnRef")) {
+    const sortNode = sortItem.node('node');
+    if (sortNode?.is('ColumnRef')) {
       const fields = sortNode
-        .nodes("fields")
-        .filter((field) => field.is("String"))
-        .map((field) => field.string("sval") ?? "");
+        .nodes('fields')
+        .filter((field) => field.is('String'))
+        .map((field) => field.string('sval') ?? '');
       const [colName] = fields;
       if (fields.length === 1 && colName !== undefined) {
         const aliasInfo = this.columnAliases.get(colName);
@@ -171,24 +171,18 @@ export class ColumnCollector extends Visitor {
     if (!this.insideSelect) {
       return;
     }
-    const refFields = node.nodes("fields");
+    const refFields = node.nodes('fields');
     if (refFields.length === 0) {
       return;
     }
-    const fields = refFields.map((field) =>
-      field.is("String") ? (field.string("sval") ?? "") : "*"
-    );
+    const fields = refFields.map((field) => (field.is('String') ? (field.string('sval') ?? '') : '*'));
 
     // Skip collecting if this is a reference to a column alias
     const [first, second] = fields;
-    if (
-      fields.length === 1 &&
-      first !== undefined &&
-      (first === "*" || this.columnAliases.has(first))
-    ) {
+    if (fields.length === 1 && first !== undefined && (first === '*' || this.columnAliases.has(first))) {
       return;
     }
-    if (fields.length === 2 && second === "*") {
+    if (fields.length === 2 && second === '*') {
       return;
     }
 
@@ -224,17 +218,17 @@ export class ColumnCollector extends Visitor {
     if (!this.insideSelect) {
       return;
     }
-    const lexpr = node.operand("lexpr");
+    const lexpr = node.operand('lexpr');
     if (lexpr) {
       this.visit(lexpr);
-      if (lexpr instanceof AstNode && lexpr.is("SelectStmt")) {
+      if (lexpr instanceof AstNode && lexpr.is('SelectStmt')) {
         this.visitInScope(lexpr);
       }
     }
 
-    const rexpr = node.operand("rexpr");
+    const rexpr = node.operand('rexpr');
     if (rexpr) {
-      if (rexpr instanceof AstNode && rexpr.is("SelectStmt")) {
+      if (rexpr instanceof AstNode && rexpr.is('SelectStmt')) {
         this.visitInScope(rexpr);
       } else {
         this.visit(rexpr);
@@ -243,11 +237,7 @@ export class ColumnCollector extends Visitor {
 
     // The Python source compares `kind == 0` (its comment says IN), which is
     // AEXPR_OP; the behaviour is kept.
-    if (
-      node.string("kind") === "AEXPR_OP" &&
-      rexpr instanceof AstNode &&
-      rexpr.is("SelectStmt")
-    ) {
+    if (node.string('kind') === 'AEXPR_OP' && rexpr instanceof AstNode && rexpr.is('SelectStmt')) {
       this.visitInScope(rexpr);
     }
   }
@@ -263,15 +253,15 @@ export class ColumnCollector extends Visitor {
     if (!this.insideSelect) {
       return;
     }
-    this.visit(node.node("larg"));
-    this.visit(node.node("rarg"));
-    this.visit(node.node("quals"));
+    this.visit(node.node('larg'));
+    this.visit(node.node('rarg'));
+    this.visit(node.node('quals'));
   }
 
   /** Visit a SortBy node (ORDER BY expression). */
   visitSortBy(_ancestors: readonly AstNode[], node: AstNode): void {
     if (this.insideSelect) {
-      this.visit(node.node("node"));
+      this.visit(node.node('node'));
     }
   }
 }
@@ -308,8 +298,7 @@ const PARAM_PATTERN = /\$\d+/gu;
 const HAS_PARAM_PATTERN = /\$\d+/u;
 const WHITESPACE_PATTERN = /\s+/u;
 const ARRAY_BRACES_PATTERN = /^[{}]+|[{}]+$/gu;
-const BETWEEN_PATTERN =
-  /(?<column>\w+(?:\.\w+)?)\s+between\s+\$(?<first>\d+)\s+and\s+\$(?<second>\d+)/giu;
+const BETWEEN_PATTERN = /(?<column>\w+(?:\.\w+)?)\s+between\s+\$(?<first>\d+)\s+and\s+\$(?<second>\d+)/giu;
 const EQUALS_PARAM_PATTERN = /(?<column>\w+)\s*=\s*\$\d+/gu;
 const LESS_PARAM_PATTERN = /(?<column>\w+)\s*<\s*\$\d+/gu;
 const GREATER_PARAM_PATTERN = /(?<column>\w+)\s*>\s*\$\d+/gu;
@@ -320,7 +309,7 @@ function hasParam(text: string): boolean {
 
 /** Python's `str()` of a parsed array element. */
 function pyStr(value: StatValue): string {
-  return value === null ? "None" : String(value);
+  return value === null ? 'None' : String(value);
 }
 
 /**
@@ -331,10 +320,10 @@ function statSql(value: Bound): string {
   if (value === null) {
     return pyStr(value);
   }
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     return literal(value);
   }
-  if (typeof value === "object" && "sql" in value) {
+  if (typeof value === 'object' && 'sql' in value) {
     return value.sql;
   }
   return pyStr(value);
@@ -344,13 +333,13 @@ function toStatValue(value: unknown): StatValue {
   if (value === null || value === undefined) {
     return null;
   }
-  if (value instanceof PgFloat || typeof value === "string") {
+  if (value instanceof PgFloat || typeof value === 'string') {
     return value;
   }
-  if (typeof value === "number") {
+  if (typeof value === 'number') {
     return Number.isInteger(value) ? value : new PgFloat(value);
   }
-  if (typeof value === "bigint") {
+  if (typeof value === 'bigint') {
     return value;
   }
   return String(value);
@@ -369,19 +358,19 @@ function statNumber(value: StatValue): number {
 
 function dataTypeOf(stats: ColumnStats): string {
   const { data_type: dataType } = stats;
-  return typeof dataType === "string" ? dataType.toLowerCase() : "";
+  return typeof dataType === 'string' ? dataType.toLowerCase() : '';
 }
 
 /** Python's `int(...)`/`float(...)` attempt on a hand-split array element. */
 function parsePgArrayValue(raw: string): StatValue {
   const value = raw.trim();
-  if (value === "null") {
+  if (value === 'null') {
     return null;
   }
   if (value.startsWith('"') && value.endsWith('"')) {
     return value.slice(1, -1);
   }
-  if (value.includes(".")) {
+  if (value.includes('.')) {
     return FLOAT_PATTERN.test(value) ? new PgFloat(Number(value)) : value;
   }
   if (!INT_PATTERN.test(value)) {
@@ -407,7 +396,7 @@ function replaceWithGroups(
     const last = args.at(-1);
     if (isJsonObject(last)) {
       for (const [name, value] of Object.entries(last)) {
-        groups[name] = typeof value === "string" ? value : undefined;
+        groups[name] = typeof value === 'string' ? value : undefined;
       }
     }
     return replacer(groups);
@@ -417,16 +406,16 @@ function replaceWithGroups(
 /** Replace parameters based on column name context. */
 function contextReplace(colName: string, op: string): string {
   const name = colName.toLowerCase();
-  if (name.endsWith("id")) {
+  if (name.endsWith('id')) {
     return `${name} ${op} 46`;
   }
-  if (includesAny(name, ["date", "time", "created", "updated"])) {
+  if (includesAny(name, ['date', 'time', 'created', 'updated'])) {
     return `${name} ${op} '2023-01-01'`;
   }
-  if (includesAny(name, ["amount", "price", "cost", "count", "num", "qty"])) {
+  if (includesAny(name, ['amount', 'price', 'cost', 'count', 'num', 'qty'])) {
     return `${name} ${op} 46.5`;
   }
-  if (includesAny(name, ["status", "type", "state"])) {
+  if (includesAny(name, ['status', 'type', 'state'])) {
     return `${name} ${op} 'active'`;
   }
   return `${name} ${op} 'sample_value'`;
@@ -434,22 +423,18 @@ function contextReplace(colName: string, op: string): string {
 
 /** Fallback generic parameter replacement when catalog lookup fails. */
 function replaceParametersGeneric(query: string): string {
-  const withEquals = replaceWithGroups(
-    query.replaceAll(/like \$\d+/gu, "like '%'"),
-    EQUALS_PARAM_PATTERN,
-    (groups) => contextReplace(groups.column ?? "", "=")
+  const withEquals = replaceWithGroups(query.replaceAll(/like \$\d+/gu, "like '%'"), EQUALS_PARAM_PATTERN, (groups) =>
+    contextReplace(groups.column ?? '', '=')
   );
   const withLess = replaceWithGroups(withEquals, LESS_PARAM_PATTERN, (groups) =>
-    contextReplace(groups.column ?? "", "<")
+    contextReplace(groups.column ?? '', '<')
   );
-  return replaceWithGroups(withLess, GREATER_PARAM_PATTERN, (groups) =>
-    contextReplace(groups.column ?? "", ">")
-  )
-    .replaceAll(/(?<num>\d+) and \$\d+/gu, "$<num> and 100")
-    .replaceAll(/\$\d+ and (?<num>\d+)/gu, "1 and $<num>")
-    .replaceAll(/>\s*\$\d+/gu, "> 1")
-    .replaceAll(/<\s*\$\d+/gu, "< 100")
-    .replaceAll(/[=]\s*\$\d+\b/gu, "= 45")
+  return replaceWithGroups(withLess, GREATER_PARAM_PATTERN, (groups) => contextReplace(groups.column ?? '', '>'))
+    .replaceAll(/(?<num>\d+) and \$\d+/gu, '$<num> and 100')
+    .replaceAll(/\$\d+ and (?<num>\d+)/gu, '1 and $<num>')
+    .replaceAll(/>\s*\$\d+/gu, '> 1')
+    .replaceAll(/<\s*\$\d+/gu, '< 100')
+    .replaceAll(/[=]\s*\$\d+\b/gu, '= 45')
     .replaceAll(/\$\d+/gu, "'sample_value'");
 }
 
@@ -458,16 +443,13 @@ function replaceStaticPatterns(query: string): string {
   return (
     query
       // LIMIT clauses are always replaced with integers
-      .replaceAll(/limit\s+\$\d+/giu, "limit 100")
+      .replaceAll(/limit\s+\$\d+/giu, 'limit 100')
       // Static INTERVAL expressions
-      .replaceAll(
-        /interval\s+'\d+\s+(?<unit>[a-z]+)'/giu,
-        "interval '2 $<unit>'"
-      )
+      .replaceAll(/interval\s+'\d+\s+(?<unit>[a-z]+)'/giu, "interval '2 $<unit>'")
       // Parameterized INTERVAL expressions (INTERVAL $1)
       .replaceAll(/interval\s+\$\d+/giu, "interval '2 days'")
       // OFFSET clauses
-      .replaceAll(/offset\s+\$\d+/giu, "offset 0")
+      .replaceAll(/offset\s+\$\d+/giu, 'offset 0')
   );
 }
 
@@ -482,10 +464,10 @@ function commonValueBound(mostCommon: StatValue, isLower: boolean): StatValue {
     return new PgFloat(adjustBound(mostCommon.value, isLower));
   }
   // `int(float)` prints the exact value of the double, hence BigInt.
-  if (typeof mostCommon === "number" || typeof mostCommon === "bigint") {
+  if (typeof mostCommon === 'number' || typeof mostCommon === 'bigint') {
     return BigInt(Math.trunc(adjustBound(Number(mostCommon), isLower)));
   }
-  if (typeof mostCommon === "string" && DIGITS_PATTERN.test(mostCommon)) {
+  if (typeof mostCommon === 'string' && DIGITS_PATTERN.test(mostCommon)) {
     return String(BigInt(Math.trunc(adjustBound(Number(mostCommon), isLower))));
   }
   return mostCommon;
@@ -495,32 +477,23 @@ function commonValueBound(mostCommon: StatValue, isLower: boolean): StatValue {
 function histogramBound(bounds: StatValue[], isLower: boolean): StatValue {
   const medianIdx = Math.floor(bounds.length / 2);
   const idxOffset = Math.max(1, Math.floor(bounds.length / 10));
-  const boundIdx = isLower
-    ? Math.max(0, medianIdx - idxOffset)
-    : Math.min(bounds.length - 1, medianIdx + idxOffset);
+  const boundIdx = isLower ? Math.max(0, medianIdx - idxOffset) : Math.min(bounds.length - 1, medianIdx + idxOffset);
   return bounds[boundIdx] ?? null;
 }
 
 /** Very conservative defaults as a last resort. */
 function defaultBound(dataType: string, isLower: boolean): Bound {
-  if (
-    dataType.includes("int") ||
-    ["smallint", "integer", "bigint"].includes(dataType)
-  ) {
+  if (dataType.includes('int') || ['smallint', 'integer', 'bigint'].includes(dataType)) {
     return isLower ? 10 : 20;
   }
-  if (
-    ["numeric", "decimal", "real", "double precision", "float"].includes(
-      dataType
-    )
-  ) {
+  if (['numeric', 'decimal', 'real', 'double precision', 'float'].includes(dataType)) {
     return new PgFloat(isLower ? 10 : 20);
   }
-  if (dataType.includes("date") || dataType.includes("time")) {
+  if (dataType.includes('date') || dataType.includes('time')) {
     return { sql: isLower ? "'2023-01-01'" : "'2023-01-31'" };
   }
-  if (dataType === "boolean") {
-    return { sql: "true" };
+  if (dataType === 'boolean') {
+    return { sql: 'true' };
   }
   return { sql: isLower ? "'m'" : "'n'" };
 }
@@ -530,12 +503,7 @@ function boundValues(stats: ColumnStats, isLower: boolean): Bound {
   // Most common values are statistically the most relevant
   const commonVals = statList(stats.common_vals);
   const commonFreqs = statList(stats.common_freqs);
-  if (
-    commonVals &&
-    commonFreqs &&
-    commonVals.length > 0 &&
-    commonVals.length === commonFreqs.length
-  ) {
+  if (commonVals && commonFreqs && commonVals.length > 0 && commonVals.length === commonFreqs.length) {
     const freqs = commonFreqs.map(statNumber);
     const mostCommon = commonVals[freqs.indexOf(Math.max(...freqs))] ?? null;
     return commonValueBound(mostCommon, isLower);
@@ -557,10 +525,7 @@ function boundValues(stats: ColumnStats, isLower: boolean): Bound {
 }
 
 /** Aliases (including the table name itself) of a table in the query. */
-async function getTableAliases(
-  query: string,
-  tableName: string
-): Promise<string[]> {
+async function getTableAliases(query: string, tableName: string): Promise<string[]> {
   try {
     const { stmts } = await parseSql(query);
     const [first] = stmts;
@@ -586,7 +551,7 @@ async function getTableAliases(
 /** Column names are embedded unescaped; an invalid pattern is a non-match. */
 function safeRegexTest(pattern: string, text: string): boolean {
   try {
-    return new RegExp(pattern, "iu").test(text);
+    return new RegExp(pattern, 'iu').test(text);
   } catch {
     return false;
   }
@@ -596,11 +561,11 @@ function safeRegexTest(pattern: string, text: string): boolean {
 function precedingContext(query: string, paramPosition: number): string {
   const before = query.slice(0, paramPosition);
   let clauseStart = Math.max(
-    before.lastIndexOf(" where "),
-    before.lastIndexOf(" and "),
-    before.lastIndexOf(" or "),
-    before.lastIndexOf(","),
-    before.lastIndexOf("("),
+    before.lastIndexOf(' where '),
+    before.lastIndexOf(' and '),
+    before.lastIndexOf(' or '),
+    before.lastIndexOf(','),
+    before.lastIndexOf('('),
     -1
   );
   if (clauseStart === -1) {
@@ -609,10 +574,7 @@ function precedingContext(query: string, paramPosition: number): string {
   return query.slice(clauseStart, paramPosition + 2);
 }
 
-function stringReplacement(
-  commonVals: StatValue[] | undefined,
-  isLike: boolean
-): string {
+function stringReplacement(commonVals: StatValue[] | undefined, isLike: boolean): string {
   if (isLike) {
     return "'%test%'";
   }
@@ -641,7 +603,7 @@ function numericReplacement(
   } else if (histogramBounds.length > 0) {
     return first(histogramBounds);
   }
-  return dataType.includes("int") ? "41" : "41.5";
+  return dataType.includes('int') ? '41' : '41.5';
 }
 
 const STATS_QUERY = `
@@ -679,7 +641,7 @@ export class SqlBindParams {
     try {
       return await this.replaceParametersUnchecked(query);
     } catch (error) {
-      throw new Error("Error replacing parameters", { cause: error });
+      throw new Error('Error replacing parameters', { cause: error });
     }
   }
 
@@ -693,10 +655,7 @@ export class SqlBindParams {
       return staticallyReplaced;
     }
 
-    const modifiedQuery = await this.bindBetweenParams(
-      query,
-      staticallyReplaced
-    );
+    const modifiedQuery = await this.bindBetweenParams(query, staticallyReplaced);
 
     // Now handle remaining parameters normally
     const paramMatches = [...modifiedQuery.matchAll(PARAM_PATTERN)];
@@ -708,28 +667,18 @@ export class SqlBindParams {
     if (tableColumns.size === 0) {
       return replaceParametersGeneric(modifiedQuery);
     }
-    return await this.bindRemainingParams(
-      modifiedQuery,
-      paramMatches,
-      tableColumns
-    );
+    return await this.bindRemainingParams(modifiedQuery, paramMatches, tableColumns);
   }
 
   /** BETWEEN clauses are special cases: both bounds come from statistics. */
-  private async bindBetweenParams(
-    query: string,
-    modifiedQuery: string
-  ): Promise<string> {
+  private async bindBetweenParams(query: string, modifiedQuery: string): Promise<string> {
     let result = modifiedQuery;
     for (const match of query.matchAll(BETWEEN_PATTERN)) {
       const { column, first, second } = match.groups ?? {};
       if (!(column && first && second)) {
         continue;
       }
-      const { tableName, colName } = await this.findBetweenColumn(
-        query,
-        column
-      );
+      const { tableName, colName } = await this.findBetweenColumn(query, column);
 
       // Default numeric bounds if statistics not available
       let lowerBound: Bound = 10;
@@ -746,8 +695,8 @@ export class SqlBindParams {
       const lower = statSql(lowerBound);
       const upper = statSql(upperBound);
       result = result
-        .replaceAll(new RegExp(String.raw`\$${first}`, "gu"), () => lower)
-        .replaceAll(new RegExp(String.raw`\$${second}`, "gu"), () => upper);
+        .replaceAll(new RegExp(String.raw`\$${first}`, 'gu'), () => lower)
+        .replaceAll(new RegExp(String.raw`\$${second}`, 'gu'), () => upper);
     }
     return result;
   }
@@ -758,12 +707,10 @@ export class SqlBindParams {
     columnRef: string
   ): Promise<{ colName: string; tableName: string | undefined }> {
     const tableColumns = await this.extractColumns(query);
-    if (columnRef.includes(".")) {
-      const [alias = "", colName = ""] = columnRef.split(".");
+    if (columnRef.includes('.')) {
+      const [alias = '', colName = ''] = columnRef.split('.');
       const aliasLists = await Promise.all(
-        [...tableColumns.keys()].map(
-          async (tbl) => [tbl, await getTableAliases(query, tbl)] as const
-        )
+        [...tableColumns.keys()].map(async (tbl) => [tbl, await getTableAliases(query, tbl)] as const)
       );
       const found = aliasLists.find(([, aliases]) => aliases.includes(alias));
       return { tableName: found?.[0], colName };
@@ -788,10 +735,7 @@ export class SqlBindParams {
 
       // Try to identify which column this parameter belongs to
       let replacement: string;
-      const columnInfo = this.identifyParameterColumn(
-        precedingText,
-        tableColumns
-      );
+      const columnInfo = this.identifyParameterColumn(precedingText, tableColumns);
       if (columnInfo) {
         const [tableName, columnName] = columnInfo;
         const stats = await this.getColumnStatistics(tableName, columnName);
@@ -803,18 +747,13 @@ export class SqlBindParams {
       }
 
       modifiedQuery =
-        modifiedQuery.slice(0, match.index) +
-        replacement +
-        modifiedQuery.slice(match.index + match[0].length);
+        modifiedQuery.slice(0, match.index) + replacement + modifiedQuery.slice(match.index + match[0].length);
     }
     return modifiedQuery;
   }
 
   /** Identify which column a parameter likely belongs to based on context. */
-  identifyParameterColumn(
-    context: string,
-    tableColumns: TableColumns
-  ): [string, string] | undefined {
+  identifyParameterColumn(context: string, tableColumns: TableColumns): [string, string] | undefined {
     for (const [table, columns] of tableColumns) {
       for (const column of columns) {
         const patterns = [
@@ -835,10 +774,7 @@ export class SqlBindParams {
   }
 
   /** Statistics for a column from pg_stats (cached, including misses). */
-  async getColumnStatistics(
-    tableName: string,
-    columnName: string
-  ): Promise<ColumnStats | null> {
+  async getColumnStatistics(tableName: string, columnName: string): Promise<ColumnStats | null> {
     const cacheKey = `${tableName}.${columnName}`;
     const cached = this.columnStatsCache.get(cacheKey);
     if (cached !== undefined) {
@@ -846,11 +782,7 @@ export class SqlBindParams {
     }
 
     try {
-      const result = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        STATS_QUERY,
-        [tableName, columnName]
-      );
+      const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, STATS_QUERY, [tableName, columnName]);
       const row = result?.[0];
       if (!row) {
         this.columnStatsCache.set(cacheKey, null);
@@ -860,22 +792,18 @@ export class SqlBindParams {
       const stats: ColumnStats = { ...row.cells };
 
       // Convert PostgreSQL array literals like '{val1,val2}' to lists
-      for (const key of ["common_vals", "common_freqs", "histogram_bounds"]) {
+      for (const key of ['common_vals', 'common_freqs', 'histogram_bounds']) {
         const value = stats[key];
-        if (typeof value === "string") {
-          const arrayStr = value.replaceAll(ARRAY_BRACES_PATTERN, "");
-          stats[key] = arrayStr
-            ? arrayStr.split(",").map(parsePgArrayValue)
-            : [];
+        if (typeof value === 'string') {
+          const arrayStr = value.replaceAll(ARRAY_BRACES_PATTERN, '');
+          stats[key] = arrayStr ? arrayStr.split(',').map(parsePgArrayValue) : [];
         }
       }
 
       this.columnStatsCache.set(cacheKey, stats);
       return stats;
     } catch (error) {
-      logWarning(
-        `Error getting column statistics for ${tableName}.${columnName}: ${String(error)}`
-      );
+      logWarning(`Error getting column statistics for ${tableName}.${columnName}: ${String(error)}`);
       this.columnStatsCache.set(cacheKey, null);
       return null;
     }
@@ -888,34 +816,23 @@ export class SqlBindParams {
     const histogramBounds = statList(stats.histogram_bounds);
 
     // Detect query operator context
-    const isEquality =
-      context.includes("=") &&
-      !context.includes("!=") &&
-      !context.includes("<>");
-    const isRange = includesAny(context, [">", "<", ">=", "<=", "between"]);
+    const isEquality = context.includes('=') && !context.includes('!=') && !context.includes('<>');
+    const isRange = includesAny(context, ['>', '<', '>=', '<=', 'between']);
 
-    if (dataType.includes("char") || dataType === "text") {
-      return stringReplacement(commonVals, context.includes("like"));
+    if (dataType.includes('char') || dataType === 'text') {
+      return stringReplacement(commonVals, context.includes('like'));
     }
-    if (
-      dataType.includes("int") ||
-      ["numeric", "decimal", "real", "double"].includes(dataType)
-    ) {
-      return numericReplacement(
-        dataType,
-        commonVals ?? [],
-        histogramBounds ?? [],
-        {
-          isEquality,
-          isRange,
-        }
-      );
+    if (dataType.includes('int') || ['numeric', 'decimal', 'real', 'double'].includes(dataType)) {
+      return numericReplacement(dataType, commonVals ?? [], histogramBounds ?? [], {
+        isEquality,
+        isRange,
+      });
     }
-    if (dataType.includes("date") || dataType.includes("time")) {
+    if (dataType.includes('date') || dataType.includes('time')) {
       return isRange ? "'2023-01-15'" : "'2023-01-01'";
     }
-    if (dataType === "boolean") {
-      return "true";
+    if (dataType === 'boolean') {
+      return 'true';
     }
     return "'sample_value'";
   }
@@ -924,24 +841,20 @@ export class SqlBindParams {
   getGenericReplacement(context: string): string {
     const lowered = context.toLowerCase();
 
-    if (
-      lowered
-        .split(WHITESPACE_PATTERN)
-        .some((word) => ["date", "timestamp", "time"].includes(word))
-    ) {
+    if (lowered.split(WHITESPACE_PATTERN).some((word) => ['date', 'timestamp', 'time'].includes(word))) {
       return "'2023-01-01'";
     }
-    if (includesAny(lowered, ["id", "key", "code", "num"])) {
-      return "43";
+    if (includesAny(lowered, ['id', 'key', 'code', 'num'])) {
+      return '43';
     }
-    if (lowered.includes("like")) {
+    if (lowered.includes('like')) {
       return "'%sample%'";
     }
-    if (includesAny(lowered, ["amount", "price", "cost", "fee"])) {
-      return "99.99";
+    if (includesAny(lowered, ['amount', 'price', 'cost', 'fee'])) {
+      return '99.99';
     }
-    if (includesAny(lowered, ["=", ">", "<", ">=", "<="])) {
-      return "44";
+    if (includesAny(lowered, ['=', '>', '<', '>=', '<='])) {
+      return '44';
     }
     return "'sample_value'";
   }
@@ -951,7 +864,7 @@ export class SqlBindParams {
     try {
       const { stmts } = await parseSql(query);
       const stmt = AstNode.from(stmts[0]?.stmt);
-      if (!stmt?.is("SelectStmt")) {
+      if (!stmt?.is('SelectStmt')) {
         return new Map();
       }
       return this.extractStmtColumns(stmt);

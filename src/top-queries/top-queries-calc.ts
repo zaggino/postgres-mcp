@@ -1,22 +1,22 @@
-import { checkExtension, getPostgresVersion } from "../sql/extension-utils.ts";
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
+import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
-export const PG_STAT_STATEMENTS = "pg_stat_statements";
+export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
 const INSTALL_PG_STAT_STATEMENTS_MESSAGE =
-  "The pg_stat_statements extension is required to " +
-  "report slow queries, but it is not currently " +
-  "installed.\n\n" +
-  "You can install it by running: " +
-  "`CREATE EXTENSION pg_stat_statements;`\n\n" +
-  "**What does it do?** It records statistics (like " +
-  "execution time, number of calls, rows returned) for " +
-  "every query executed against the database.\n\n" +
+  'The pg_stat_statements extension is required to ' +
+  'report slow queries, but it is not currently ' +
+  'installed.\n\n' +
+  'You can install it by running: ' +
+  '`CREATE EXTENSION pg_stat_statements;`\n\n' +
+  '**What does it do?** It records statistics (like ' +
+  'execution time, number of calls, rows returned) for ' +
+  'every query executed against the database.\n\n' +
   "**Is it safe?** Installing 'pg_stat_statements' is " +
-  "generally safe and a standard practice for performance " +
-  "monitoring. It adds overhead by tracking statistics, " +
-  "but this is usually negligible unless under extreme load.";
+  'generally safe and a standard practice for performance ' +
+  'monitoring. It adds overhead by tracking statistics, ' +
+  'but this is usually negligible unless under extreme load.';
 
 /** Column names for the pg_stat_statements view, which vary by PostgreSQL version. */
 export interface PgStatStatementsColumns {
@@ -36,28 +36,25 @@ export interface PgStatStatementsColumns {
  * renamed (`total_time` to `total_exec_time`, etc.) and `wal_bytes` was added.
  * See https://www.postgresql.org/docs/13/release-13.html#id-1.11.6.11.4
  */
-function getPgStatStatementsColumns(
-  pgVersion: number
-): PgStatStatementsColumns {
+function getPgStatStatementsColumns(pgVersion: number): PgStatStatementsColumns {
   if (pgVersion >= 13) {
     // PostgreSQL 13+ with pg_stat_statements v2.0
     return {
-      totalTime: "total_exec_time",
-      meanTime: "mean_exec_time",
-      stddevTime: "stddev_exec_time",
-      walBytesSelect: "wal_bytes",
-      walBytesFrac:
-        "wal_bytes / NULLIF(SUM(wal_bytes) OVER (), 0) AS total_wal_bytes_frac",
+      totalTime: 'total_exec_time',
+      meanTime: 'mean_exec_time',
+      stddevTime: 'stddev_exec_time',
+      walBytesSelect: 'wal_bytes',
+      walBytesFrac: 'wal_bytes / NULLIF(SUM(wal_bytes) OVER (), 0) AS total_wal_bytes_frac',
     };
   }
 
   // PostgreSQL 12 and older with pg_stat_statements v1.x
   return {
-    totalTime: "total_time",
-    meanTime: "mean_time",
-    stddevTime: "stddev_time",
-    walBytesSelect: "0 AS wal_bytes", // Column doesn't exist in PG12
-    walBytesFrac: "0 AS total_wal_bytes_frac",
+    totalTime: 'total_time',
+    meanTime: 'mean_time',
+    stddevTime: 'stddev_time',
+    walBytesSelect: '0 AS wal_bytes', // Column doesn't exist in PG12
+    walBytesFrac: '0 AS total_wal_bytes_frac',
   };
 }
 
@@ -66,9 +63,7 @@ function errorMessage(error: unknown): string {
 }
 
 function rowsToJson(rows: readonly Record<string, unknown>[]): string {
-  return JSON.stringify(rows, (_key, value: unknown) =>
-    typeof value === "bigint" ? value.toString() : value
-  );
+  return JSON.stringify(rows, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
 }
 
 /** Tool for retrieving the slowest SQL queries. */
@@ -83,21 +78,12 @@ export class TopQueriesCalc {
    * Reports the slowest SQL queries based on execution time: by `"total"`
    * execution time or by `"mean"` execution time per call (default).
    */
-  async getTopQueriesByTime(
-    limit = 10,
-    sortBy: "total" | "mean" = "mean"
-  ): Promise<string> {
+  async getTopQueriesByTime(limit = 10, sortBy: 'total' | 'mean' = 'mean'): Promise<string> {
     try {
-      const extensionStatus = await checkExtension(
-        this.sqlDriver,
-        PG_STAT_STATEMENTS,
-        false
-      );
+      const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
 
       if (!extensionStatus.isInstalled) {
-        process.stderr.write(
-          `Extension ${PG_STAT_STATEMENTS} is not installed\n`
-        );
+        process.stderr.write(`Extension ${PG_STAT_STATEMENTS} is not installed\n`);
         // Return installation instructions if the extension is not installed
         return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
       }
@@ -107,7 +93,7 @@ export class TopQueriesCalc {
       const cols = getPgStatStatementsColumns(pgVersion);
 
       // Determine which column to sort by based on the sortBy parameter
-      const orderByColumn = sortBy === "total" ? cols.totalTime : cols.meanTime;
+      const orderByColumn = sortBy === 'total' ? cols.totalTime : cols.meanTime;
 
       const query = `
                 SELECT
@@ -120,20 +106,11 @@ export class TopQueriesCalc {
                 ORDER BY ${orderByColumn} DESC
                 LIMIT {};
             `;
-      const slowQueryRows = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        query,
-        [limit]
-      );
-      const slowQueries = slowQueryRows
-        ? slowQueryRows.map((row) => row.cells)
-        : [];
+      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [limit]);
+      const slowQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
 
       // Create result description based on sort criteria
-      const criteria =
-        sortBy === "total"
-          ? "total execution time"
-          : "mean execution time per call";
+      const criteria = sortBy === 'total' ? 'total execution time' : 'mean execution time per call';
 
       return `Top ${slowQueries.length} slowest queries by ${criteria}:\n${rowsToJson(slowQueries)}`;
     } catch (error) {
@@ -149,16 +126,10 @@ export class TopQueriesCalc {
    */
   async getTopResourceQueries(fracThreshold = 0.05): Promise<string> {
     try {
-      const extensionStatus = await checkExtension(
-        this.sqlDriver,
-        PG_STAT_STATEMENTS,
-        false
-      );
+      const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
 
       if (!extensionStatus.isInstalled) {
-        process.stderr.write(
-          `Extension ${PG_STAT_STATEMENTS} is not installed\n`
-        );
+        process.stderr.write(`Extension ${PG_STAT_STATEMENTS} is not installed\n`);
         // Return installation instructions if the extension is not installed
         return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
       }
@@ -218,20 +189,13 @@ export class TopQueriesCalc {
                 ORDER BY total_exec_time DESC
             `;
 
-      const slowQueryRows = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        query
-      );
-      const resourceQueries = slowQueryRows
-        ? slowQueryRows.map((row) => row.cells)
-        : [];
+      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query);
+      const resourceQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
 
       return rowsToJson(resourceQueries);
     } catch (error) {
       const message = errorMessage(error);
-      process.stderr.write(
-        `Error getting resource-intensive queries: ${message}\n`
-      );
+      process.stderr.write(`Error getting resource-intensive queries: ${message}\n`);
       return `Error resource-intensive queries: ${message}`;
     }
   }

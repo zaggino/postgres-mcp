@@ -1,45 +1,42 @@
-import { randomUUID } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createServer as createHttpServer } from "node:http";
-import { constants as osConstants } from "node:os";
-import { parseArgs } from "node:util";
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createServer as createHttpServer } from 'node:http';
+import { constants as osConstants } from 'node:os';
+import { parseArgs } from 'node:util';
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
-import { ErrorResult, ExplainPlanArtifact } from "./artifacts.ts";
-import {
-  DatabaseHealthTool,
-  HEALTH_TYPES,
-} from "./database-health/database-health.ts";
-import { ExplainPlanTool } from "./explain/explain-plan.ts";
-import { DatabaseTuningAdvisor } from "./index/dta-calc.ts";
-import { MAX_NUM_INDEX_TUNING_QUERIES } from "./index/index-opt-base.ts";
-import { TextPresentation } from "./index/presentation.ts";
-import { checkHypopgInstallationStatus } from "./sql/extension-utils.ts";
-import type { SqlExecutor } from "./sql/safe-sql.ts";
-import { SafeSqlDriver } from "./sql/safe-sql.ts";
-import { DbConnPool, obfuscatePassword, SqlDriver } from "./sql/sql-driver.ts";
-import { TopQueriesCalc } from "./top-queries/top-queries-calc.ts";
+import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
+import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
+import { ExplainPlanTool } from './explain/explain-plan.ts';
+import { DatabaseTuningAdvisor } from './index/dta-calc.ts';
+import { MAX_NUM_INDEX_TUNING_QUERIES } from './index/index-opt-base.ts';
+import { TextPresentation } from './index/presentation.ts';
+import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
+import type { SqlExecutor } from './sql/safe-sql.ts';
+import { SafeSqlDriver } from './sql/safe-sql.ts';
+import { DbConnPool, obfuscatePassword, SqlDriver } from './sql/sql-driver.ts';
+import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 
-const SERVER_NAME = "postgres-mcp";
-const SERVER_VERSION = "0.4.0";
-const PG_STAT_STATEMENTS = "pg_stat_statements";
+const SERVER_NAME = 'postgres-mcp';
+const SERVER_VERSION = '0.4.0';
+const PG_STAT_STATEMENTS = 'pg_stat_statements';
 const RESTRICTED_TIMEOUT_SECONDS = 30;
 
-const ACCESS_MODES = ["unrestricted", "restricted"] as const;
+const ACCESS_MODES = ['unrestricted', 'restricted'] as const;
 export type AccessMode = (typeof ACCESS_MODES)[number];
 export const AccessMode = {
-  UNRESTRICTED: "unrestricted",
-  RESTRICTED: "restricted",
+  UNRESTRICTED: 'unrestricted',
+  RESTRICTED: 'restricted',
 } as const satisfies Record<string, AccessMode>;
 
-const TRANSPORTS = ["stdio", "sse", "streamable-http"] as const;
+const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
 
 function log(level: string, message: string): void {
@@ -53,10 +50,7 @@ function errorMessage(error: unknown): string {
 export const dbConnection = new DbConnPool();
 
 /** Get the appropriate SQL driver for the access mode. */
-export function getSqlDriver(
-  accessMode: AccessMode,
-  conn: DbConnPool = dbConnection
-): SqlExecutor {
+export function getSqlDriver(accessMode: AccessMode, conn: DbConnPool = dbConnection): SqlExecutor {
   const baseDriver = new SqlDriver({ conn });
 
   if (accessMode === AccessMode.RESTRICTED) {
@@ -69,13 +63,11 @@ export function getSqlDriver(
 export const deps = { getSqlDriver };
 
 function toJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) =>
-    typeof item === "bigint" ? item.toString() : item
-  );
+  return JSON.stringify(value, (_key, item: unknown) => (typeof item === 'bigint' ? item.toString() : item));
 }
 
 function formatTextResponse(text: string): CallToolResult {
-  return { content: [{ type: "text", text }] };
+  return { content: [{ type: 'text', text }] };
 }
 
 function formatError(error: string): CallToolResult {
@@ -98,32 +90,25 @@ Examples: [
 If there is no hypothetical index, you can pass an empty list.`;
 
 const HEALTH_DESCRIPTION =
-  "Analyzes database health. Here are the available health checks:\n" +
-  "- index - checks for invalid, duplicate, and bloated indexes\n" +
-  "- connection - checks the number of connection and their utilization\n" +
-  "- vacuum - checks vacuum health for transaction id wraparound\n" +
-  "- sequence - checks sequences at risk of exceeding their maximum value\n" +
-  "- replication - checks replication health including lag and slots\n" +
-  "- buffer - checks for buffer cache hit rates for indexes and tables\n" +
-  "- constraint - checks for invalid constraints\n" +
-  "- all - runs all checks\n" +
+  'Analyzes database health. Here are the available health checks:\n' +
+  '- index - checks for invalid, duplicate, and bloated indexes\n' +
+  '- connection - checks the number of connection and their utilization\n' +
+  '- vacuum - checks vacuum health for transaction id wraparound\n' +
+  '- sequence - checks sequences at risk of exceeding their maximum value\n' +
+  '- replication - checks replication health including lag and slots\n' +
+  '- buffer - checks for buffer cache hit rates for indexes and tables\n' +
+  '- constraint - checks for invalid constraints\n' +
+  '- all - runs all checks\n' +
   "You can optionally specify a single health check or a comma-separated list of health checks. The default is 'all' checks.";
 
 const objectTypeSchema = z
   .string()
-  .default("table")
+  .default('table')
   .describe("Object type: 'table', 'view', 'sequence', or 'extension'");
 
-const methodSchema = z
-  .enum(["dta"])
-  .default("dta")
-  .describe("Method to use for analysis");
+const methodSchema = z.enum(['dta']).default('dta').describe('Method to use for analysis');
 
-const maxIndexSizeSchema = z
-  .number()
-  .int()
-  .default(10_000)
-  .describe("Max index size in MB");
+const maxIndexSizeSchema = z.number().int().default(10_000).describe('Max index size in MB');
 
 async function listSchemas(accessMode: AccessMode): Promise<CallToolResult> {
   try {
@@ -145,22 +130,18 @@ async function listSchemas(accessMode: AccessMode): Promise<CallToolResult> {
     const schemas = rows ? rows.map((row) => row.cells) : [];
     return formatTextResponse(toJson(schemas));
   } catch (error) {
-    log("ERROR", `Error listing schemas: ${errorMessage(error)}`);
+    log('ERROR', `Error listing schemas: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
 
-async function listObjects(
-  accessMode: AccessMode,
-  schemaName: string,
-  objectType: string
-): Promise<CallToolResult> {
+async function listObjects(accessMode: AccessMode, schemaName: string, objectType: string): Promise<CallToolResult> {
   try {
     const sqlDriver = deps.getSqlDriver(accessMode);
     let objects: unknown[];
 
-    if (objectType === "table" || objectType === "view") {
-      const tableType = objectType === "table" ? "BASE TABLE" : "VIEW";
+    if (objectType === 'table' || objectType === 'view') {
+      const tableType = objectType === 'table' ? 'BASE TABLE' : 'VIEW';
       const rows = await SafeSqlDriver.executeParamQuery(
         sqlDriver,
         `
@@ -173,12 +154,12 @@ async function listObjects(
       );
       objects = rows
         ? rows.map((row) => ({
-            schema: cell(row, "table_schema"),
-            name: cell(row, "table_name"),
-            type: cell(row, "table_type"),
+            schema: cell(row, 'table_schema'),
+            name: cell(row, 'table_name'),
+            type: cell(row, 'table_type'),
           }))
         : [];
-    } else if (objectType === "sequence") {
+    } else if (objectType === 'sequence') {
       const rows = await SafeSqlDriver.executeParamQuery(
         sqlDriver,
         `
@@ -191,12 +172,12 @@ async function listObjects(
       );
       objects = rows
         ? rows.map((row) => ({
-            schema: cell(row, "sequence_schema"),
-            name: cell(row, "sequence_name"),
-            data_type: cell(row, "data_type"),
+            schema: cell(row, 'sequence_schema'),
+            name: cell(row, 'sequence_name'),
+            data_type: cell(row, 'data_type'),
           }))
         : [];
-    } else if (objectType === "extension") {
+    } else if (objectType === 'extension') {
       // Extensions are not schema-specific
       const rows = await sqlDriver.executeQuery(
         `
@@ -207,9 +188,9 @@ async function listObjects(
       );
       objects = rows
         ? rows.map((row) => ({
-            name: cell(row, "extname"),
-            version: cell(row, "extversion"),
-            relocatable: cell(row, "extrelocatable"),
+            name: cell(row, 'extname'),
+            version: cell(row, 'extversion'),
+            relocatable: cell(row, 'extrelocatable'),
           }))
         : [];
     } else {
@@ -218,7 +199,7 @@ async function listObjects(
 
     return formatTextResponse(toJson(objects));
   } catch (error) {
-    log("ERROR", `Error listing objects: ${errorMessage(error)}`);
+    log('ERROR', `Error listing objects: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
@@ -241,10 +222,10 @@ async function tableDetails(
   );
   const columns = colRows
     ? colRows.map((r) => ({
-        column: cell(r, "column_name"),
-        data_type: cell(r, "data_type"),
-        is_nullable: cell(r, "is_nullable"),
-        default: cell(r, "column_default"),
+        column: cell(r, 'column_name'),
+        data_type: cell(r, 'data_type'),
+        is_nullable: cell(r, 'is_nullable'),
+        default: cell(r, 'column_default'),
       }))
     : [];
 
@@ -261,16 +242,13 @@ async function tableDetails(
     [schemaName, objectName]
   );
 
-  const constraints = new Map<
-    unknown,
-    { name: unknown; type: unknown; columns: unknown[] }
-  >();
+  const constraints = new Map<unknown, { name: unknown; type: unknown; columns: unknown[] }>();
   for (const row of conRows ?? []) {
-    const name = cell(row, "constraint_name");
-    const col = cell(row, "column_name");
+    const name = cell(row, 'constraint_name');
+    const col = cell(row, 'column_name');
     let constraint = constraints.get(name);
     if (!constraint) {
-      constraint = { name, type: cell(row, "constraint_type"), columns: [] };
+      constraint = { name, type: cell(row, 'constraint_type'), columns: [] };
       constraints.set(name, constraint);
     }
     if (col) {
@@ -289,8 +267,8 @@ async function tableDetails(
   );
   const indexes = idxRows
     ? idxRows.map((r) => ({
-        name: cell(r, "indexname"),
-        definition: cell(r, "indexdef"),
+        name: cell(r, 'indexname'),
+        definition: cell(r, 'indexdef'),
       }))
     : [];
 
@@ -312,14 +290,9 @@ async function getObjectDetails(
     const sqlDriver = deps.getSqlDriver(accessMode);
     let result: unknown;
 
-    if (objectType === "table" || objectType === "view") {
-      result = await tableDetails(
-        sqlDriver,
-        schemaName,
-        objectName,
-        objectType
-      );
-    } else if (objectType === "sequence") {
+    if (objectType === 'table' || objectType === 'view') {
+      result = await tableDetails(sqlDriver, schemaName, objectName, objectType);
+    } else if (objectType === 'sequence') {
       const rows = await SafeSqlDriver.executeParamQuery(
         sqlDriver,
         `
@@ -332,14 +305,14 @@ async function getObjectDetails(
       const row = rows?.[0];
       result = row
         ? {
-            schema: cell(row, "sequence_schema"),
-            name: cell(row, "sequence_name"),
-            data_type: cell(row, "data_type"),
-            start_value: cell(row, "start_value"),
-            increment: cell(row, "increment"),
+            schema: cell(row, 'sequence_schema'),
+            name: cell(row, 'sequence_name'),
+            data_type: cell(row, 'data_type'),
+            start_value: cell(row, 'start_value'),
+            increment: cell(row, 'increment'),
           }
         : {};
-    } else if (objectType === "extension") {
+    } else if (objectType === 'extension') {
       const rows = await SafeSqlDriver.executeParamQuery(
         sqlDriver,
         `
@@ -352,9 +325,9 @@ async function getObjectDetails(
       const row = rows?.[0];
       result = row
         ? {
-            name: cell(row, "extname"),
-            version: cell(row, "extversion"),
-            relocatable: cell(row, "extrelocatable"),
+            name: cell(row, 'extname'),
+            version: cell(row, 'extversion'),
+            relocatable: cell(row, 'extrelocatable'),
           }
         : {};
     } else {
@@ -363,7 +336,7 @@ async function getObjectDetails(
 
     return formatTextResponse(toJson(result));
   } catch (error) {
-    log("ERROR", `Error getting object details: ${errorMessage(error)}`);
+    log('ERROR', `Error getting object details: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
@@ -382,22 +355,16 @@ async function explainQuery(
     // If hypothetical indexes are specified, check for HypoPG extension
     if (hypotheticalIndexes.length > 0) {
       if (analyze) {
-        return formatError(
-          "Cannot use analyze and hypothetical indexes together"
-        );
+        return formatError('Cannot use analyze and hypothetical indexes together');
       }
-      const [isHypopgInstalled, hypopgMessage] =
-        await checkHypopgInstallationStatus(sqlDriver);
+      const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(sqlDriver);
 
       // If hypopg is not installed, return the message
       if (!isHypopgInstalled) {
         return formatTextResponse(hypopgMessage);
       }
 
-      result = await explainTool.explainWithHypotheticalIndexes(
-        sql,
-        hypotheticalIndexes
-      );
+      result = await explainTool.explainWithHypotheticalIndexes(sql, hypotheticalIndexes);
     } else if (analyze) {
       result = await explainTool.explainAnalyze(sql);
     } else {
@@ -407,38 +374,28 @@ async function explainQuery(
     if (result instanceof ExplainPlanArtifact) {
       return formatTextResponse(result.toText());
     }
-    return formatError(
-      result instanceof ErrorResult
-        ? result.toText()
-        : "Error processing explain plan"
-    );
+    return formatError(result instanceof ErrorResult ? result.toText() : 'Error processing explain plan');
   } catch (error) {
-    log("ERROR", `Error explaining query: ${errorMessage(error)}`);
+    log('ERROR', `Error explaining query: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
 
-async function executeSql(
-  accessMode: AccessMode,
-  sql: string
-): Promise<CallToolResult> {
+async function executeSql(accessMode: AccessMode, sql: string): Promise<CallToolResult> {
   try {
     const sqlDriver = deps.getSqlDriver(accessMode);
     const rows = await sqlDriver.executeQuery(sql);
     if (rows === null) {
-      return formatTextResponse("No results");
+      return formatTextResponse('No results');
     }
     return formatTextResponse(toJson(rows.map((r) => r.cells)));
   } catch (error) {
-    log("ERROR", `Error executing query: ${errorMessage(error)}`);
+    log('ERROR', `Error executing query: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
 
-async function analyzeWorkloadIndexes(
-  accessMode: AccessMode,
-  maxIndexSizeMb: number
-): Promise<CallToolResult> {
+async function analyzeWorkloadIndexes(accessMode: AccessMode, maxIndexSizeMb: number): Promise<CallToolResult> {
   try {
     const sqlDriver = deps.getSqlDriver(accessMode);
     const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
@@ -446,7 +403,7 @@ async function analyzeWorkloadIndexes(
     const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
     return formatTextResponse(toJson(result));
   } catch (error) {
-    log("ERROR", `Error analyzing workload: ${errorMessage(error)}`);
+    log('ERROR', `Error analyzing workload: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
@@ -457,14 +414,10 @@ async function analyzeQueryIndexes(
   maxIndexSizeMb: number
 ): Promise<CallToolResult> {
   if (queries.length === 0) {
-    return formatError(
-      "Please provide a non-empty list of queries to analyze."
-    );
+    return formatError('Please provide a non-empty list of queries to analyze.');
   }
   if (queries.length > MAX_NUM_INDEX_TUNING_QUERIES) {
-    return formatError(
-      `Please provide a list of up to ${MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.`
-    );
+    return formatError(`Please provide a list of up to ${MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.`);
   }
 
   try {
@@ -474,44 +427,32 @@ async function analyzeQueryIndexes(
     const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
     return formatTextResponse(toJson(result));
   } catch (error) {
-    log("ERROR", `Error analyzing queries: ${errorMessage(error)}`);
+    log('ERROR', `Error analyzing queries: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
 
-async function analyzeDbHealth(
-  accessMode: AccessMode,
-  healthType: string
-): Promise<CallToolResult> {
+async function analyzeDbHealth(accessMode: AccessMode, healthType: string): Promise<CallToolResult> {
   const healthTool = new DatabaseHealthTool(deps.getSqlDriver(accessMode));
   return formatTextResponse(await healthTool.health(healthType));
 }
 
-async function getTopQueries(
-  accessMode: AccessMode,
-  sortBy: string,
-  limit: number
-): Promise<CallToolResult> {
+async function getTopQueries(accessMode: AccessMode, sortBy: string, limit: number): Promise<CallToolResult> {
   try {
     const sqlDriver = deps.getSqlDriver(accessMode);
     const topQueriesTool = new TopQueriesCalc(sqlDriver);
 
-    if (sortBy === "resources") {
+    if (sortBy === 'resources') {
       return formatTextResponse(await topQueriesTool.getTopResourceQueries());
     }
-    if (sortBy === "mean_time" || sortBy === "total_time") {
+    if (sortBy === 'mean_time' || sortBy === 'total_time') {
       return formatTextResponse(
-        await topQueriesTool.getTopQueriesByTime(
-          limit,
-          sortBy === "mean_time" ? "mean" : "total"
-        )
+        await topQueriesTool.getTopQueriesByTime(limit, sortBy === 'mean_time' ? 'mean' : 'total')
       );
     }
-    return formatError(
-      "Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'."
-    );
+    return formatError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.");
   } catch (error) {
-    log("ERROR", `Error getting slow queries: ${errorMessage(error)}`);
+    log('ERROR', `Error getting slow queries: ${errorMessage(error)}`);
     return formatError(errorMessage(error));
   }
 }
@@ -521,140 +462,127 @@ export function createServer(accessMode: AccessMode): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
   server.registerTool(
-    "list_schemas",
+    'list_schemas',
     {
-      description: "List all schemas in the database",
+      description: 'List all schemas in the database',
       inputSchema: {},
-      annotations: { title: "List Schemas", readOnlyHint: true },
+      annotations: { title: 'List Schemas', readOnlyHint: true },
     },
     () => listSchemas(accessMode)
   );
 
   server.registerTool(
-    "list_objects",
+    'list_objects',
     {
-      description: "List objects in a schema",
+      description: 'List objects in a schema',
       inputSchema: {
-        schema_name: z.string().describe("Schema name"),
+        schema_name: z.string().describe('Schema name'),
         object_type: objectTypeSchema,
       },
-      annotations: { title: "List Objects", readOnlyHint: true },
+      annotations: { title: 'List Objects', readOnlyHint: true },
     },
-    ({ schema_name, object_type }) =>
-      listObjects(accessMode, schema_name, object_type)
+    ({ schema_name, object_type }) => listObjects(accessMode, schema_name, object_type)
   );
 
   server.registerTool(
-    "get_object_details",
+    'get_object_details',
     {
-      description: "Show detailed information about a database object",
+      description: 'Show detailed information about a database object',
       inputSchema: {
-        schema_name: z.string().describe("Schema name"),
-        object_name: z.string().describe("Object name"),
+        schema_name: z.string().describe('Schema name'),
+        object_name: z.string().describe('Object name'),
         object_type: objectTypeSchema,
       },
-      annotations: { title: "Get Object Details", readOnlyHint: true },
+      annotations: { title: 'Get Object Details', readOnlyHint: true },
     },
-    ({ schema_name, object_name, object_type }) =>
-      getObjectDetails(accessMode, schema_name, object_name, object_type)
+    ({ schema_name, object_name, object_type }) => getObjectDetails(accessMode, schema_name, object_name, object_type)
   );
 
   server.registerTool(
-    "explain_query",
+    'explain_query',
     {
       description:
-        "Explains the execution plan for a SQL query, showing how the database will execute it and provides detailed cost estimates.",
+        'Explains the execution plan for a SQL query, showing how the database will execute it and provides detailed cost estimates.',
       inputSchema: {
-        sql: z.string().describe("SQL query to explain"),
+        sql: z.string().describe('SQL query to explain'),
         analyze: z
           .boolean()
           .default(false)
           .describe(
-            "When True, actually runs the query to show real execution statistics instead of estimates. " +
-              "Takes longer but provides more accurate information."
+            'When True, actually runs the query to show real execution statistics instead of estimates. ' +
+              'Takes longer but provides more accurate information.'
           ),
         hypothetical_indexes: z
           .array(z.record(z.string(), z.unknown()))
           .default([])
           .describe(HYPOTHETICAL_INDEXES_DESCRIPTION),
       },
-      annotations: { title: "Explain Query", readOnlyHint: true },
+      annotations: { title: 'Explain Query', readOnlyHint: true },
     },
-    ({ sql, analyze, hypothetical_indexes }) =>
-      explainQuery(accessMode, sql, analyze, hypothetical_indexes)
+    ({ sql, analyze, hypothetical_indexes }) => explainQuery(accessMode, sql, analyze, hypothetical_indexes)
   );
 
   server.registerTool(
-    "analyze_workload_indexes",
+    'analyze_workload_indexes',
     {
-      description:
-        "Analyze frequently executed queries in the database and recommend optimal indexes",
+      description: 'Analyze frequently executed queries in the database and recommend optimal indexes',
       inputSchema: {
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
-      annotations: { title: "Analyze Workload Indexes", readOnlyHint: true },
+      annotations: { title: 'Analyze Workload Indexes', readOnlyHint: true },
     },
-    ({ max_index_size_mb }) =>
-      analyzeWorkloadIndexes(accessMode, max_index_size_mb)
+    ({ max_index_size_mb }) => analyzeWorkloadIndexes(accessMode, max_index_size_mb)
   );
 
   server.registerTool(
-    "analyze_query_indexes",
+    'analyze_query_indexes',
     {
-      description:
-        "Analyze a list of (up to 10) SQL queries and recommend optimal indexes",
+      description: 'Analyze a list of (up to 10) SQL queries and recommend optimal indexes',
       inputSchema: {
-        queries: z
-          .array(z.string())
-          .describe("List of Query strings to analyze"),
+        queries: z.array(z.string()).describe('List of Query strings to analyze'),
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
-      annotations: { title: "Analyze Query Indexes", readOnlyHint: true },
+      annotations: { title: 'Analyze Query Indexes', readOnlyHint: true },
     },
-    ({ queries, max_index_size_mb }) =>
-      analyzeQueryIndexes(accessMode, queries, max_index_size_mb)
+    ({ queries, max_index_size_mb }) => analyzeQueryIndexes(accessMode, queries, max_index_size_mb)
   );
 
   server.registerTool(
-    "analyze_db_health",
+    'analyze_db_health',
     {
       description: HEALTH_DESCRIPTION,
       inputSchema: {
         health_type: z
           .string()
-          .default("all")
-          .describe(
-            `Optional. Valid values are: ${HEALTH_TYPES.toSorted().join(", ")}.`
-          ),
+          .default('all')
+          .describe(`Optional. Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}.`),
       },
-      annotations: { title: "Analyze Database Health", readOnlyHint: true },
+      annotations: { title: 'Analyze Database Health', readOnlyHint: true },
     },
     ({ health_type }) => analyzeDbHealth(accessMode, health_type)
   );
 
   server.registerTool(
-    "get_top_queries",
+    'get_top_queries',
     {
       description: `Reports the slowest or most resource-intensive queries using data from the '${PG_STAT_STATEMENTS}' extension.`,
       inputSchema: {
         sort_by: z
           .string()
-          .default("resources")
+          .default('resources')
           .describe(
             "Ranking criteria: 'total_time' for total execution time or 'mean_time' for mean execution time per call, or 'resources' " +
-              "for resource-intensive queries"
+              'for resource-intensive queries'
           ),
         limit: z
           .number()
           .int()
           .default(10)
-          .describe(
-            "Number of queries to return when ranking based on mean_time or total_time"
-          ),
+          .describe('Number of queries to return when ranking based on mean_time or total_time'),
       },
-      annotations: { title: "Get Top Queries", readOnlyHint: true },
+      annotations: { title: 'Get Top Queries', readOnlyHint: true },
     },
     ({ sort_by, limit }) => getTopQueries(accessMode, sort_by, limit)
   );
@@ -663,22 +591,22 @@ export function createServer(accessMode: AccessMode): McpServer {
   const executeSqlConfig =
     accessMode === AccessMode.UNRESTRICTED
       ? {
-          description: "Execute any SQL query",
-          annotations: { title: "Execute SQL", destructiveHint: true },
+          description: 'Execute any SQL query',
+          annotations: { title: 'Execute SQL', destructiveHint: true },
         }
       : {
-          description: "Execute a read-only SQL query",
+          description: 'Execute a read-only SQL query',
           annotations: {
-            title: "Execute SQL (Read-Only)",
+            title: 'Execute SQL (Read-Only)',
             readOnlyHint: true,
           },
         };
   server.registerTool(
-    "execute_sql",
+    'execute_sql',
     {
       ...executeSqlConfig,
       inputSchema: {
-        sql: z.string().default("all").describe("SQL to run"),
+        sql: z.string().default('all').describe('SQL to run'),
       },
     },
     ({ sql }) => executeSql(accessMode, sql)
@@ -690,7 +618,7 @@ export function createServer(accessMode: AccessMode): McpServer {
 type ServerFactory = () => McpServer;
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 interface HostGuard {
   allowedHosts?: string[];
@@ -732,7 +660,7 @@ function hostViolation(guard: HostGuard, req: IncomingMessage): string | null {
 function warnIfExposed(host: string, accessMode: string): void {
   if (!LOOPBACK_HOSTS.has(host)) {
     log(
-      "WARNING",
+      'WARNING',
       `Listening on ${host}: the server is reachable from the network with no authentication and no Host or Origin checks. Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
     );
   }
@@ -743,7 +671,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
     const chunks: Buffer[] = [];
     let size = 0;
     let overflowed = false;
-    req.on("data", (chunk: Buffer) => {
+    req.on('data', (chunk: Buffer) => {
       if (overflowed) {
         return;
       }
@@ -752,17 +680,17 @@ function readBody(req: IncomingMessage): Promise<unknown> {
         // Keep the socket open so the client can read the 413.
         overflowed = true;
         chunks.length = 0;
-        reject(new RangeError("Request body too large"));
+        reject(new RangeError('Request body too large'));
         return;
       }
       chunks.push(chunk);
     });
-    req.on("error", reject);
-    req.on("end", () => {
+    req.on('error', reject);
+    req.on('end', () => {
       if (overflowed) {
         return;
       }
-      const text = Buffer.concat(chunks).toString("utf-8");
+      const text = Buffer.concat(chunks).toString('utf-8');
       if (!text) {
         resolve(undefined);
         return;
@@ -770,54 +698,41 @@ function readBody(req: IncomingMessage): Promise<unknown> {
       try {
         resolve(JSON.parse(text));
       } catch {
-        reject(new SyntaxError("Parse error: Invalid JSON"));
+        reject(new SyntaxError('Parse error: Invalid JSON'));
       }
     });
   });
 }
 
-function sendJsonRpcError(
-  res: ServerResponse,
-  status: number,
-  code: number,
-  message: string
-): void {
+function sendJsonRpcError(res: ServerResponse, status: number, code: number, message: string): void {
   if (res.headersSent) {
     return;
   }
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(
-    JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null })
-  );
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }));
 }
 
 function sendBodyTooLarge(req: IncomingMessage, res: ServerResponse): void {
-  res.setHeader("Connection", "close");
-  sendJsonRpcError(res, 413, -32_600, "Request body too large");
-  res.once("finish", () => {
+  res.setHeader('Connection', 'close');
+  sendJsonRpcError(res, 413, -32_600, 'Request body too large');
+  res.once('finish', () => {
     req.destroy();
   });
 }
 
 /** Starts listening and resolves with the port the OS actually bound. */
-function listen(
-  httpServer: ReturnType<typeof createHttpServer>,
-  host: string,
-  port: number
-): Promise<number> {
+function listen(httpServer: ReturnType<typeof createHttpServer>, host: string, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    httpServer.once("error", reject);
+    httpServer.once('error', reject);
     httpServer.listen(port, host, () => {
-      httpServer.off("error", reject);
+      httpServer.off('error', reject);
       const address = httpServer.address();
-      resolve(typeof address === "object" && address ? address.port : port);
+      resolve(typeof address === 'object' && address ? address.port : port);
     });
   });
 }
 
-function closeHttpServer(
-  httpServer: ReturnType<typeof createHttpServer>
-): Promise<void> {
+function closeHttpServer(httpServer: ReturnType<typeof createHttpServer>): Promise<void> {
   return new Promise((resolve) => {
     httpServer.close(() => {
       resolve();
@@ -828,7 +743,7 @@ function closeHttpServer(
 
 function parseRequestUrl(req: IncomingMessage): URL | null {
   try {
-    return new URL(req.url ?? "/", "http://localhost");
+    return new URL(req.url ?? '/', 'http://localhost');
   } catch {
     return null;
   }
@@ -851,12 +766,12 @@ async function runStdio(createMcpServer: ServerFactory): Promise<void> {
   };
   // StdioServerTransport does not report stdin EOF through onclose.
   server.server.onclose = onClientGone;
-  process.stdin.once("end", onClientGone);
-  process.stdin.once("close", onClientGone);
+  process.stdin.once('end', onClientGone);
+  process.stdin.once('close', onClientGone);
   await server.connect(new StdioServerTransport());
 }
 
-const SSE_SESSION_PARAM = "sessionId";
+const SSE_SESSION_PARAM = 'sessionId';
 
 async function handleSseRequest(
   createMcpServer: ServerFactory,
@@ -867,37 +782,37 @@ async function handleSseRequest(
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (!url) {
-    res.writeHead(400).end("Bad Request");
+    res.writeHead(400).end('Bad Request');
     return;
   }
   const path = url.pathname;
-  if (req.method === "GET" && path === "/sse") {
+  if (req.method === 'GET' && path === '/sse') {
     const violation = hostViolation(guard, req);
     if (violation) {
       res.writeHead(403).end(violation);
       return;
     }
-    const transport = new SSEServerTransport("/messages", res, guard);
+    const transport = new SSEServerTransport('/messages', res, guard);
     sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
-    res.on("close", () => {
+    res.on('close', () => {
       sessions.delete(transport.sessionId);
       void mcpServer.close();
     });
     await mcpServer.connect(transport);
     return;
   }
-  if (req.method === "POST" && path === "/messages") {
+  if (req.method === 'POST' && path === '/messages') {
     const sessionId = url.searchParams.get(SSE_SESSION_PARAM);
     const transport = sessionId ? sessions.get(sessionId) : undefined;
     if (!transport) {
-      res.writeHead(sessionId ? 404 : 400).end("Could not find session");
+      res.writeHead(sessionId ? 404 : 400).end('Could not find session');
       return;
     }
     await transport.handlePostMessage(req, res);
     return;
   }
-  res.writeHead(404).end("Not Found");
+  res.writeHead(404).end('Not Found');
 }
 
 /** Serve MCP over SSE and resolve once listening. */
@@ -910,19 +825,17 @@ export async function startSseServer(
   const state: { guard: HostGuard } = { guard: {} };
 
   const httpServer = createHttpServer((req, res) => {
-    handleSseRequest(createMcpServer, sessions, state.guard, req, res).catch(
-      (error: unknown) => {
-        log("ERROR", `SSE request failed: ${errorMessage(error)}`);
-        if (!res.headersSent) {
-          res.writeHead(500).end("Internal Server Error");
-        }
+    handleSseRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+      log('ERROR', `SSE request failed: ${errorMessage(error)}`);
+      if (!res.headersSent) {
+        res.writeHead(500).end('Internal Server Error');
       }
-    );
+    });
   });
 
   const boundPort = await listen(httpServer, host, port);
   state.guard = hostGuard(host, boundPort);
-  log("INFO", `SSE server listening on http://${host}:${boundPort}/sse`);
+  log('INFO', `SSE server listening on http://${host}:${boundPort}/sse`);
   return { port: boundPort, close: () => closeHttpServer(httpServer) };
 }
 
@@ -959,10 +872,10 @@ async function handleMcpRequest(
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
-  const sessionId = headerValue(req, "mcp-session-id");
+  const sessionId = headerValue(req, 'mcp-session-id');
   const existing = sessionId ? sessions.get(sessionId) : undefined;
 
-  if (req.method === "POST") {
+  if (req.method === 'POST') {
     const body = await readBody(req);
     if (existing) {
       await existing.handleRequest(req, res, body);
@@ -974,7 +887,7 @@ async function handleMcpRequest(
     return;
   }
 
-  if (req.method === "GET" || req.method === "DELETE") {
+  if (req.method === 'GET' || req.method === 'DELETE') {
     if (existing) {
       await existing.handleRequest(req, res);
     } else {
@@ -983,22 +896,14 @@ async function handleMcpRequest(
     return;
   }
 
-  res.writeHead(405, { Allow: "GET, POST, DELETE" }).end();
+  res.writeHead(405, { Allow: 'GET, POST, DELETE' }).end();
 }
 
-function sendMissingSession(
-  res: ServerResponse,
-  sessionId: string | undefined
-): void {
+function sendMissingSession(res: ServerResponse, sessionId: string | undefined): void {
   if (sessionId) {
-    sendJsonRpcError(res, 404, -32_000, "Session not found");
+    sendJsonRpcError(res, 404, -32_000, 'Session not found');
   } else {
-    sendJsonRpcError(
-      res,
-      400,
-      -32_000,
-      "Bad Request: No valid session ID provided"
-    );
+    sendJsonRpcError(res, 400, -32_000, 'Bad Request: No valid session ID provided');
   }
 }
 
@@ -1014,61 +919,46 @@ export async function startStreamableHttpServer(
   const httpServer = createHttpServer((req, res) => {
     const path = parseRequestUrl(req)?.pathname;
     if (path === undefined) {
-      res.writeHead(400).end("Bad Request");
+      res.writeHead(400).end('Bad Request');
       return;
     }
-    if (path !== "/mcp") {
-      res.writeHead(404).end("Not Found");
+    if (path !== '/mcp') {
+      res.writeHead(404).end('Not Found');
       return;
     }
-    handleMcpRequest(createMcpServer, sessions, state.guard, req, res).catch(
-      (error: unknown) => {
-        log("ERROR", `Streamable HTTP request failed: ${errorMessage(error)}`);
-        if (error instanceof RangeError) {
-          sendBodyTooLarge(req, res);
-          return;
-        }
-        const badJson = error instanceof SyntaxError;
-        sendJsonRpcError(
-          res,
-          badJson ? 400 : 500,
-          badJson ? -32_700 : -32_603,
-          badJson ? "Parse error" : "Internal server error"
-        );
+    handleMcpRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+      log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
+      if (error instanceof RangeError) {
+        sendBodyTooLarge(req, res);
+        return;
       }
-    );
+      const badJson = error instanceof SyntaxError;
+      sendJsonRpcError(
+        res,
+        badJson ? 400 : 500,
+        badJson ? -32_700 : -32_603,
+        badJson ? 'Parse error' : 'Internal server error'
+      );
+    });
   });
 
   const boundPort = await listen(httpServer, host, port);
   state.guard = hostGuard(host, boundPort);
-  log(
-    "INFO",
-    `Streamable HTTP server listening on http://${host}:${boundPort}/mcp`
-  );
+  log('INFO', `Streamable HTTP server listening on http://${host}:${boundPort}/mcp`);
   return {
     port: boundPort,
     close: async () => {
-      await Promise.all(
-        [...sessions.values()].map((transport) => transport.close())
-      );
+      await Promise.all([...sessions.values()].map((transport) => transport.close()));
       await closeHttpServer(httpServer);
     },
   };
 }
 
-async function runSse(
-  createMcpServer: ServerFactory,
-  host: string,
-  port: number
-): Promise<void> {
+async function runSse(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
   await startSseServer(createMcpServer, host, port);
 }
 
-async function runStreamableHttp(
-  createMcpServer: ServerFactory,
-  host: string,
-  port: number
-): Promise<void> {
+async function runStreamableHttp(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
   await startStreamableHttpServer(createMcpServer, host, port);
 }
 
@@ -1087,9 +977,9 @@ export interface CliOptions {
 
 export class CliError extends Error {}
 
-const PROG = "postgres-mcp";
-const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(",")}}]
-                    [--transport {${TRANSPORTS.join(",")}}]
+const PROG = 'postgres-mcp';
+const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
+                    [--transport {${TRANSPORTS.join(',')}}]
                     [--sse-host SSE_HOST] [--sse-port SSE_PORT]
                     [--streamable-http-host STREAMABLE_HTTP_HOST]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
@@ -1104,10 +994,10 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --access-mode {${ACCESS_MODES.join(",")}}
+  --access-mode {${ACCESS_MODES.join(',')}}
                         Set SQL access mode: unrestricted (unrestricted) or
                         restricted (read-only with protections)
-  --transport {${TRANSPORTS.join(",")}}
+  --transport {${TRANSPORTS.join(',')}}
                         Select MCP transport: stdio (default), sse, or
                         streamable-http
   --sse-host SSE_HOST   Host to bind SSE server to (default: localhost)
@@ -1119,19 +1009,14 @@ options:
                         Port for streamable HTTP server (default: 8000)
 `;
 
-function choice<T extends string>(
-  flag: string,
-  value: string | undefined,
-  choices: readonly T[],
-  fallback: T
-): T {
+function choice<T extends string>(flag: string, value: string | undefined, choices: readonly T[], fallback: T): T {
   if (value === undefined) {
     return fallback;
   }
   const match = choices.find((item) => item === value);
   if (!match) {
     throw new CliError(
-      `argument ${flag}: invalid choice: '${value}' (choose from ${choices.map((c) => `'${c}'`).join(", ")})`
+      `argument ${flag}: invalid choice: '${value}' (choose from ${choices.map((c) => `'${c}'`).join(', ')})`
     );
   }
   return match;
@@ -1155,13 +1040,13 @@ function parseRaw(argv: string[]) {
       args: argv,
       allowPositionals: true,
       options: {
-        help: { type: "boolean", short: "h" },
-        "access-mode": { type: "string" },
-        transport: { type: "string" },
-        "sse-host": { type: "string" },
-        "sse-port": { type: "string" },
-        "streamable-http-host": { type: "string" },
-        "streamable-http-port": { type: "string" },
+        help: { type: 'boolean', short: 'h' },
+        'access-mode': { type: 'string' },
+        transport: { type: 'string' },
+        'sse-host': { type: 'string' },
+        'sse-port': { type: 'string' },
+        'streamable-http-host': { type: 'string' },
+        'streamable-http-port': { type: 'string' },
       },
     });
   } catch (error) {
@@ -1176,27 +1061,17 @@ export function parseCli(argv: string[]): CliOptions | null {
     return null;
   }
   if (positionals.length > 1) {
-    throw new CliError(
-      `unrecognized arguments: ${positionals.slice(1).join(" ")}`
-    );
+    throw new CliError(`unrecognized arguments: ${positionals.slice(1).join(' ')}`);
   }
 
   return {
     databaseUrl: positionals[0],
-    accessMode: choice(
-      "--access-mode",
-      values["access-mode"],
-      ACCESS_MODES,
-      AccessMode.UNRESTRICTED
-    ),
-    transport: choice("--transport", values.transport, TRANSPORTS, "stdio"),
-    sseHost: values["sse-host"] ?? "localhost",
-    ssePort: parsePort("--sse-port", values["sse-port"]),
-    streamableHttpHost: values["streamable-http-host"] ?? "localhost",
-    streamableHttpPort: parsePort(
-      "--streamable-http-port",
-      values["streamable-http-port"]
-    ),
+    accessMode: choice('--access-mode', values['access-mode'], ACCESS_MODES, AccessMode.UNRESTRICTED),
+    transport: choice('--transport', values.transport, TRANSPORTS, 'stdio'),
+    sseHost: values['sse-host'] ?? 'localhost',
+    ssePort: parsePort('--sse-port', values['sse-port']),
+    streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
+    streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
   };
 }
 
@@ -1205,20 +1080,20 @@ let shutdownInProgress = false;
 /** Clean shutdown of the server. */
 export async function shutdown(signal?: NodeJS.Signals): Promise<void> {
   if (shutdownInProgress) {
-    log("WARNING", "Forcing immediate exit");
+    log('WARNING', 'Forcing immediate exit');
     process.exit(1);
   }
   shutdownInProgress = true;
 
   if (signal) {
-    log("INFO", `Received exit signal ${signal}`);
+    log('INFO', `Received exit signal ${signal}`);
   }
 
   try {
     await dbConnection.close();
-    log("INFO", "Closed database connections");
+    log('INFO', 'Closed database connections');
   } catch (error) {
-    log("ERROR", `Error closing database connections: ${errorMessage(error)}`);
+    log('ERROR', `Error closing database connections: ${errorMessage(error)}`);
   }
 
   process.exit(signal ? 128 + (osConstants.signals[signal] ?? 0) : 0);
@@ -1231,7 +1106,7 @@ function installSignalHandlers(): void {
     return;
   }
   signalHandlersInstalled = true;
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => {
       void shutdown(signal);
     });
@@ -1255,10 +1130,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   const { accessMode } = options;
-  log(
-    "INFO",
-    `Starting PostgreSQL MCP Server in ${accessMode.toUpperCase()} mode`
-  );
+  log('INFO', `Starting PostgreSQL MCP Server in ${accessMode.toUpperCase()} mode`);
 
   // Get database URL from environment variable or command line
   const databaseUrl = process.env.DATABASE_URI ?? options.databaseUrl;
@@ -1271,45 +1143,35 @@ export async function main(argv: string[]): Promise<void> {
   // Initialize database connection pool
   try {
     await dbConnection.poolConnect(databaseUrl);
-    log(
-      "INFO",
-      "Successfully connected to database and initialized connection pool"
-    );
+    log('INFO', 'Successfully connected to database and initialized connection pool');
   } catch (error) {
+    log('WARNING', `Could not connect to database: ${obfuscatePassword(errorMessage(error))}`);
     log(
-      "WARNING",
-      `Could not connect to database: ${obfuscatePassword(errorMessage(error))}`
-    );
-    log(
-      "WARNING",
-      "The MCP server will start but database operations will fail until a valid connection is established."
+      'WARNING',
+      'The MCP server will start but database operations will fail until a valid connection is established.'
     );
   }
 
   installSignalHandlers();
 
-  if (options.transport === "sse") {
+  if (options.transport === 'sse') {
     warnIfExposed(options.sseHost, accessMode);
-  } else if (options.transport === "streamable-http") {
+  } else if (options.transport === 'streamable-http') {
     warnIfExposed(options.streamableHttpHost, accessMode);
   }
 
   const factory = () => createServer(accessMode);
   switch (options.transport) {
-    case "stdio": {
+    case 'stdio': {
       await runners.runStdio(factory);
       break;
     }
-    case "sse": {
+    case 'sse': {
       await runners.runSse(factory, options.sseHost, options.ssePort);
       break;
     }
-    case "streamable-http": {
-      await runners.runStreamableHttp(
-        factory,
-        options.streamableHttpHost,
-        options.streamableHttpPort
-      );
+    case 'streamable-http': {
+      await runners.runStreamableHttp(factory, options.streamableHttpHost, options.streamableHttpPort);
       break;
     }
     default: {

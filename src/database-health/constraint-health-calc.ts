@@ -1,4 +1,4 @@
-import type { SqlExecutor } from "../sql/safe-sql.ts";
+import type { SqlExecutor } from '../sql/safe-sql.ts';
 
 interface ConstraintMetrics {
   name: string;
@@ -24,10 +24,10 @@ export class ConstraintHealthCalc {
     const metrics = await this.getInvalidConstraints();
 
     if (metrics.length === 0) {
-      return "No invalid constraints found.";
+      return 'No invalid constraints found.';
     }
 
-    const result = ["Invalid constraints found:"];
+    const result = ['Invalid constraints found:'];
     for (const metric of metrics) {
       if (metric.referencedTable) {
         result.push(
@@ -35,12 +35,10 @@ export class ConstraintHealthCalc {
             `referencing '${metric.referencedSchema}.${metric.referencedTable}' is invalid`
         );
       } else {
-        result.push(
-          `Constraint '${metric.name}' on table '${metric.schema}.${metric.table}' is invalid`
-        );
+        result.push(`Constraint '${metric.name}' on table '${metric.schema}.${metric.table}' is invalid`);
       }
     }
-    return result.join("\n");
+    return result.join('\n');
   }
 
   private async getInvalidConstraints(): Promise<ConstraintMetrics[]> {

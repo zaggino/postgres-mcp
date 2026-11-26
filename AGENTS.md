@@ -10,13 +10,13 @@ This file provides guidance to agents when working with code in this repository.
 
 Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 
-| Command | Purpose |
-| --- | --- |
-| `pnpm check` / `pnpm fix` | Ultracite on oxlint + oxfmt (not Biome) |
-| `pnpm typecheck` | `tsc --noEmit` |
-| `pnpm build` | tsdown to `dist/` |
-| `pnpm test:unit` | Vitest project `unit` |
-| `pnpm test:integration` | Vitest project `integration`; needs Docker |
+| Command                   | Purpose                                    |
+| ------------------------- | ------------------------------------------ |
+| `pnpm check` / `pnpm fix` | Ultracite on oxlint + oxfmt (not Biome)    |
+| `pnpm typecheck`          | `tsc --noEmit`                             |
+| `pnpm build`              | tsdown to `dist/`                          |
+| `pnpm test:unit`          | Vitest project `unit`                      |
+| `pnpm test:integration`   | Vitest project `integration`; needs Docker |
 
 - One file: `pnpm vitest run --project unit tests/unit/sql/safe-sql.test.ts`. One test: add `-t "<name>"`.
 - Integration tests build `tests/Dockerfile.postgres-hypopg` and run every file against Postgres 12, 15 and 16 through testcontainers (`tests/support/postgres.ts`). `PG_VERSIONS=16` limits the versions. Without Docker the tests skip, unless `REQUIRE_DOCKER=1` (set in CI). They are slow and run files serially: run them alone.

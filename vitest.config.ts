@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -6,14 +6,14 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: "unit",
-          include: ["tests/unit/**/*.test.ts"],
+          name: 'unit',
+          include: ['tests/unit/**/*.test.ts'],
         },
       },
       {
         test: {
-          name: "integration",
-          include: ["tests/integration/**/*.test.ts"],
+          name: 'integration',
+          include: ['tests/integration/**/*.test.ts'],
           testTimeout: 300_000,
           hookTimeout: 600_000,
           fileParallelism: false,

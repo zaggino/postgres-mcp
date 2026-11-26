@@ -1,23 +1,15 @@
-import {
-  calculateImprovementMultiple,
-  ExplainPlanArtifact,
-} from "../artifacts.ts";
-import { IndexDefinition } from "../sql/index-definition.ts";
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import type { IndexTuningResult } from "./index-opt-base.ts";
-import {
-  errorMessage,
-  formatFixed,
-  IndexTuningBase,
-  naturalSize,
-} from "./index-opt-base.ts";
+import { calculateImprovementMultiple, ExplainPlanArtifact } from '../artifacts.ts';
+import { IndexDefinition } from '../sql/index-definition.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import type { IndexTuningResult } from './index-opt-base.ts';
+import { errorMessage, formatFixed, IndexTuningBase, naturalSize } from './index-opt-base.ts';
 
 type JsonRecord = Record<string, unknown>;
 
 const LONG_TEXT_WARNING =
-  "This index is potentially problematic because it includes a long text column. " +
-  "You might not be able to create this index if the index row size becomes too large " +
-  "(i.e., more than 8191 bytes).";
+  'This index is potentially problematic because it includes a long text column. ' +
+  'You might not be able to create this index if the index row size becomes too large ' +
+  '(i.e., more than 8191 bytes).';
 
 interface ExecuteAnalysisOptions {
   limit?: number;
@@ -51,12 +43,9 @@ export class TextPresentation {
   }
 
   /** Analyze a list of SQL queries and recommend indexes. */
-  analyzeQueries(
-    queries: string[],
-    maxIndexSizeMb = 10_000
-  ): Promise<JsonRecord> {
+  analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<JsonRecord> {
     if (queries.length === 0) {
-      return Promise.resolve({ error: "No queries provided for analysis" });
+      return Promise.resolve({ error: 'No queries provided for analysis' });
     }
 
     return this.executeAnalysis({
@@ -70,10 +59,7 @@ export class TextPresentation {
   }
 
   /** Analyze a single SQL query and recommend indexes. */
-  analyzeSingleQuery(
-    query: string,
-    maxIndexSizeMb = 10_000
-  ): Promise<JsonRecord> {
+  analyzeSingleQuery(query: string, maxIndexSizeMb = 10_000): Promise<JsonRecord> {
     return this.executeAnalysis({
       queryList: [query],
       minCalls: 0,
@@ -95,13 +81,8 @@ export class TextPresentation {
       });
 
       // Prepare the response to send back to the caller
-      const includeLangfuseTrace =
-        (
-          process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE ?? "true"
-        ).toLowerCase() === "true";
-      const langfuseTrace: JsonRecord = includeLangfuseTrace
-        ? { _langfuse_trace: session.dtaTraces }
-        : {};
+      const includeLangfuseTrace = (process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE ?? 'true').toLowerCase() === 'true';
+      const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};
 
       if (session.error) {
         return { error: session.error, ...langfuseTrace };
@@ -112,23 +93,17 @@ export class TextPresentation {
       const lastRecommendation = analyses.at(-1);
       if (!(firstRecommendation && lastRecommendation)) {
         return {
-          recommendations: "No index recommendations found.",
+          recommendations: 'No index recommendations found.',
           ...langfuseTrace,
         };
       }
 
-      const totalSizeBytes = analyses.reduce(
-        (total, rec) => total + rec.estimatedSizeBytes,
-        0
-      );
+      const totalSizeBytes = analyses.reduce((total, rec) => total + rec.estimatedSizeBytes, 0);
 
       // Overall performance improvement
       const initialCost = firstRecommendation.progressiveBaseCost;
       const newCost = lastRecommendation.progressiveRecommendationCost;
-      const improvementMultiple = calculateImprovementMultiple(
-        initialCost,
-        newCost
-      );
+      const improvementMultiple = calculateImprovementMultiple(initialCost, newCost);
 
       const recommendations = this.buildRecommendationsList(session);
       const queryImpact = await this.generateQueryImpact(session);
@@ -158,18 +133,12 @@ export class TextPresentation {
         index_target_table: rec.table,
         index_target_columns: [...rec.columns],
         benefit_of_this_index_only: {
-          improvement_multiple: formatFixed(
-            rec.individualImprovementMultiple,
-            1
-          ),
+          improvement_multiple: formatFixed(rec.individualImprovementMultiple, 1),
           base_cost: formatFixed(rec.individualBaseCost, 1),
           new_cost: formatFixed(rec.individualRecommendationCost, 1),
         },
         benefit_after_previous_indexes: {
-          improvement_multiple: formatFixed(
-            rec.progressiveImprovementMultiple,
-            1
-          ),
+          improvement_multiple: formatFixed(rec.progressiveImprovementMultiple, 1),
           base_cost: formatFixed(rec.progressiveBaseCost, 1),
           new_cost: formatFixed(rec.progressiveRecommendationCost, 1),
         },
@@ -177,7 +146,7 @@ export class TextPresentation {
         index_definition: rec.definition,
       };
       const reason = rec.potentialProblematicReason;
-      if (reason === "long_text_column") {
+      if (reason === 'long_text_column') {
         recDict.warning = LONG_TEXT_WARNING;
       } else if (reason) {
         recDict.warning = `This index is potentially problematic because it includes a ${reason} column.`;
@@ -199,41 +168,27 @@ export class TextPresentation {
     // Remove duplicates while preserving order
     const uniqueQueries = [...new Set(firstRecommendation.queries)];
 
-    const indexConfigs = session.recommendations.map(
-      (rec) => new IndexDefinition(rec.table, rec.columns, rec.using)
-    );
+    const indexConfigs = session.recommendations.map((rec) => new IndexDefinition(rec.table, rec.columns, rec.using));
 
     for (const query of uniqueQueries) {
       // Plan with no indexes
-      const beforePlan = await this.indexTuning.getExplainPlanWithIndexes(
-        query,
-        []
-      );
+      const beforePlan = await this.indexTuning.getExplainPlanWithIndexes(query, []);
 
       // Plan with all recommended indexes
-      const afterPlan = await this.indexTuning.getExplainPlanWithIndexes(
-        query,
-        indexConfigs
-      );
+      const afterPlan = await this.indexTuning.getExplainPlanWithIndexes(query, indexConfigs);
 
       const baseCost = IndexTuningBase.extractCostFromJsonPlan(beforePlan);
       const newCost = IndexTuningBase.extractCostFromJsonPlan(afterPlan);
 
       // Shown when the new cost is zero
-      let improvementMultiple = "∞";
+      let improvementMultiple = '∞';
       if (newCost > 0 && baseCost > 0) {
-        improvementMultiple = formatFixed(
-          calculateImprovementMultiple(baseCost, newCost),
-          1
-        );
+        improvementMultiple = formatFixed(calculateImprovementMultiple(baseCost, newCost), 1);
       }
 
       const beforePlanText = ExplainPlanArtifact.formatPlanSummary(beforePlan);
       const afterPlanText = ExplainPlanArtifact.formatPlanSummary(afterPlan);
-      const diffText = ExplainPlanArtifact.createPlanDiff(
-        beforePlan,
-        afterPlan
-      );
+      const diffText = ExplainPlanArtifact.createPlanDiff(beforePlan, afterPlan);
 
       queryImpact.push({
         query,

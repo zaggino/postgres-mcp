@@ -9,7 +9,7 @@ import type { Identifier } from './literal.ts';
 import { paramSqlToQuery } from './literal.ts';
 import type { JsonObject, RawStmtJson } from './pg-ast.ts';
 import { asWrappedNode, isJsonObject, parseSql, SqlParseError } from './pg-ast.ts';
-import type { RowResult } from './sql-driver.ts';
+import type { DbConnPool, RowResult } from './sql-driver.ts';
 
 const PG_CATALOG_PATTERN = /^pg_catalog\.(?<name>.+)$/u;
 const STMT_NOT_ALLOWED =
@@ -18,6 +18,8 @@ const SQL_COMMENT_PREFIX = '/* postgres-mcp */';
 
 /** What SafeSqlDriver wraps; a SqlDriver satisfies it. */
 export interface SqlExecutor {
+  /** The connection pool behind the executor, when it has one; keys per-connection caches. */
+  readonly pool?: DbConnPool;
   executeQuery: (
     query: string,
     params?: readonly unknown[] | null,
@@ -181,6 +183,10 @@ async function validateQuery(query: string): Promise<void> {
 export class SafeSqlDriver implements SqlExecutor {
   readonly sqlDriver: SqlExecutor;
   readonly timeout: number | null;
+
+  get pool(): DbConnPool | undefined {
+    return this.sqlDriver.pool;
+  }
 
   /** `timeout` is in seconds; a falsy value disables it. */
   constructor(sqlDriver: SqlExecutor, timeout: number | null = null) {

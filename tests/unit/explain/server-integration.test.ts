@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it as test, vi } from 'vitest';
 
 import { ExplainPlanArtifact } from '../../../src/artifacts.ts';
-import { AccessMode, createServer, deps } from '../../../src/server.ts';
+import { createServer, deps } from '../../../src/server.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
+import { createTestRegistry } from '../../support/registry.ts';
 
 const explainTool = vi.hoisted(() => ({
   explain: vi.fn(),
@@ -39,8 +40,8 @@ function useDriver(executeQuery: ExecuteQuery = vi.fn<ExecuteQuery>()) {
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
-  const client = await connectClient(createServer(AccessMode.UNRESTRICTED));
-  return await callToolText(client, 'explain_query', args);
+  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+  return await callToolText(client, 'explain_query', { database: 'app', ...args });
 }
 
 beforeEach(() => {

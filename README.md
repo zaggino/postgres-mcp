@@ -19,6 +19,7 @@ Differences from upstream:
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - HTTP transports bound to a loopback address reject requests with a foreign `Host` header, and request bodies are limited to 4 MB.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
+- One server serves many databases. Every tool takes a required `database` argument and there is a new `list_databases` tool, so the tool schemas differ from upstream. Databases are named with `--database` flags or a `--config` file, which can also discover the databases of a server; pools open lazily and close when idle (`--idle-minutes`). `DATABASE_URI` and the positional `database_url` are removed. See [Multiple databases](#multiple-databases).
 
 ## Overview
 
@@ -43,10 +44,11 @@ The server supports the [stdio](https://modelcontextprotocol.io/docs/concepts/tr
 
 ### Run the server
 
-The server takes a [Postgres connection URI](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS) either as a positional argument or in the `DATABASE_URI` environment variable. If both are set, `DATABASE_URI` wins.
+Name each database with a `--database` flag. Its [Postgres connection URI](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS) is read from the environment variable `MCP_<NAME>_DATABASE_URI` (name uppercased, `-` replaced by `_`), so `--database=app` reads `MCP_APP_DATABASE_URI`.
 
 ```bash
-npx -y @zaggino/postgres-mcp "postgresql://user:pass@host:5432/db" --access-mode=restricted
+MCP_APP_DATABASE_URI="postgresql://user:pass@host:5432/db" \
+  npx -y @zaggino/postgres-mcp --database=app --access-mode=restricted
 ```
 
 To run from source instead:
@@ -55,22 +57,27 @@ To run from source instead:
 git clone https://github.com/zaggino/postgres-mcp.git
 cd postgres-mcp
 pnpm install && pnpm build
-node dist/index.js "postgresql://user:pass@host:5432/db" --access-mode=restricted
+MCP_APP_DATABASE_URI="postgresql://user:pass@host:5432/db" \
+  node dist/index.js --database=app --access-mode=restricted
 ```
+
+Or pass `--config=/path/to/postgres-mcp.config.json` to use a [config file](#multiple-databases) instead. `--database` and `--config` are mutually exclusive, and one of them is required.
 
 ### Configure your AI assistant
 
-**Claude Code.** Copy [.mcp.example.json](.mcp.example.json) to `.mcp.json` in your project root and replace `/path/to/postgres-mcp` with the path of your clone, built as shown in [Run the server](#run-the-server). It runs the server from source in restricted mode and reads the connection URI from the `DATABASE_URI` environment variable of the shell that starts Claude Code, so no credentials are stored in the file.
+A single `mcpServers` entry serves every database, so the client carries one tool list in its context however many databases you use; the agent picks the database with the `database` argument of each tool.
+
+**Claude Code.** Copy [.mcp.example.json](.mcp.example.json) to `.mcp.json` in your project root and replace `/path/to/postgres-mcp` with the path of your clone, built as shown in [Run the server](#run-the-server). It runs the server from source in restricted mode for the databases `app` and `analytics` and reads their URIs from the `MCP_APP_DATABASE_URI` and `MCP_ANALYTICS_DATABASE_URI` environment variables of the shell that starts Claude Code, so no credentials are stored in the file. To use a config file instead, copy [.mcp.config-example.json](.mcp.config-example.json) and point `--config` at your file (see [Multiple databases](#multiple-databases)).
 
 **Codex.** Add the server to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.postgres]
 command = "node"
-args = ["/path/to/postgres-mcp/dist/index.js", "--access-mode=restricted"]
+args = ["/path/to/postgres-mcp/dist/index.js", "--access-mode=restricted", "--database=app"]
 
 [mcp_servers.postgres.env]
-DATABASE_URI = "postgresql://username:password@localhost:5432/dbname"
+MCP_APP_DATABASE_URI = "postgresql://username:password@localhost:5432/dbname"
 ```
 
 To run the published package instead of a clone, use `npx` as the command and `"-y", "@zaggino/postgres-mcp"` in place of the path.
@@ -81,6 +88,45 @@ To run the published package instead of a clone, use `npx` as the command and `"
 - **Restricted**: SQL is parsed and checked against allowlists of statements, node types and functions, executed in a read-only transaction, and limited to 30 seconds of execution time. Suitable for production.
 
 Select the mode with `--access-mode=restricted` or `--access-mode=unrestricted` (the default).
+
+## Multiple databases
+
+One server process serves every database you name. Every tool except `list_databases` takes a required `database` argument, and the server's instructions tell the client so. `list_databases` returns:
+
+```
+{ databases: [{ database, source, state, idle_seconds_left, error? }], servers: [{ server, prefix, error? }] }
+```
+
+- `source` is `cli`, `config` or `server` (discovered); `state` is `open`, `closed` or `error`; `idle_seconds_left` is the time until an open pool closes, or `null`.
+- `servers[].server` is the server's `host:port` only (no user name, password or query parameters); `error` reports a failed discovery.
+
+### Config file
+
+`--config FILE` reads a JSON file; see [postgres-mcp.config.example.json](postgres-mcp.config.example.json). Unknown keys are rejected, every key is optional, but at least one database or server is required.
+
+| Key                 | Default        | Description                                                                                                                                     |
+| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accessMode`        | `unrestricted` | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
+| `idleMinutes`       | `10`           | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
+| `databases`         | none           | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
+| `servers[].uri`     | required       | A `postgres://` or `postgresql://` URL of a server whose databases are discovered.                                                              |
+| `servers[].prefix`  | `""`           | Prepended to each discovered database name.                                                                                                     |
+| `servers[].include` | `["*"]`        | Globs of database names to keep.                                                                                                                |
+| `servers[].exclude` | `[]`           | Globs of database names to drop.                                                                                                                |
+
+Globs support `*` and `?` only and are matched against the whole database name (before the prefix). Discovery lists `pg_database` entries that allow connections and are not templates. A discovered database is reached with the server URI whose path is replaced by the database name, so discovery needs a URL-form server URI: key/value DSNs and a `dbname=` query parameter are not supported.
+
+If the same name is found on more than one server, calls to it fail until you set distinct `prefix` values. An explicitly named database wins over a discovered one with the same name.
+
+### URIs and environment variables
+
+A `uri` is either a literal URI or contains `${VAR}` references that are expanded from the environment. The config file lives outside the repository, so literal URIs with passwords are fine there; use `${VAR}` when the file is shared. An unset or empty variable counts as unset. It does not stop the server: the entry reports `environment variable VAR is not set` when called and in `list_databases`. A literal server `uri` that is not a postgres URL fails at startup (`invalid config: servers.N.uri: ...`); one that comes from a `${VAR}` fails at discovery time and shows in `servers[].error`.
+
+The server reads variables from its own environment. Claude Code passes its environment to the server. Clients that do not pass their environment need an `env` block in their config; alternatively load a file with Node: `node --env-file=/path/.env dist/index.js ...`.
+
+### Lifecycle
+
+Pools open on the first call to a database, and the server makes no connection at startup. A pool closes after `idleMinutes` with no call in flight, and reopens on the next call. A name that rediscovery moves to another server gets a new pool; the old one closes once its calls finish. Discovery runs lazily, on the first call to a name that is not known yet and again on every `list_databases` call or call to an unknown name; a failed run keeps the previous result.
 
 ## Transports
 
@@ -93,8 +139,8 @@ Select the mode with `--access-mode=restricted` or `--access-mode=unrestricted` 
 The SSE and streamable HTTP transports let several MCP clients share one server. For example:
 
 ```bash
-DATABASE_URI=postgresql://username:password@localhost:5432/dbname \
-  npx -y @zaggino/postgres-mcp --access-mode=unrestricted --transport=streamable-http
+MCP_APP_DATABASE_URI=postgresql://username:password@localhost:5432/dbname \
+  npx -y @zaggino/postgres-mcp --database=app --access-mode=unrestricted --transport=streamable-http
 ```
 
 Then point the client at it. In Claude Code's `.mcp.json`:
@@ -124,25 +170,27 @@ When the server is bound to a loopback host (`localhost`, `127.0.0.1`, `::1`), i
 ## CLI reference
 
 ```
-postgres-mcp [options] [database_url]
+postgres-mcp [options] (--database NAME ... | --config FILE)
 ```
 
-| Option                   | Default        | Description                                 |
-| ------------------------ | -------------- | ------------------------------------------- |
-| `database_url`           | none           | Database connection URL (positional).       |
-| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.             |
-| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.        |
-| `--sse-host`             | `localhost`    | Host to bind the SSE server to.             |
-| `--sse-port`             | `8000`         | Port of the SSE server.                     |
-| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to. |
-| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.         |
-| `-h`, `--help`           |                | Show help.                                  |
+| Option                   | Default        | Description                                                                                   |
+| ------------------------ | -------------- | --------------------------------------------------------------------------------------------- |
+| `--database`             | none           | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`. |
+| `--config`               | none           | JSON [config file](#config-file). Exclusive with `--database`.                                |
+| `--idle-minutes`         | `10`           | Close a database's pool after this many idle minutes; `0` never closes; max 35791.            |
+| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.                                                               |
+| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.                                                          |
+| `--sse-host`             | `localhost`    | Host to bind the SSE server to.                                                               |
+| `--sse-port`             | `8000`         | Port of the SSE server.                                                                       |
+| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to.                                                   |
+| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.                                                           |
+| `-h`, `--help`           |                | Show help.                                                                                    |
 
 Environment variables:
 
 | Variable                              | Description                                                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URI`                        | Database connection URL. Takes precedence over the positional argument.                                      |
+| `MCP_<NAME>_DATABASE_URI`             | Connection URL of the database given with `--database=<name>` (name uppercased, `-` becomes `_`).            |
 | `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` | Set to `false` to leave the `_langfuse_trace` field out of index recommendation results. Defaults to `true`. |
 
 ## Postgres extension installation (optional)
@@ -191,8 +239,11 @@ Optimize a specific query:
 
 The server provides its functionality through [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools) only, because tool support is widespread across the [MCP client ecosystem](https://modelcontextprotocol.io/clients). Some other Postgres MCP servers, such as the [reference Postgres MCP server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), expose schema information as [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources).
 
+Every tool except `list_databases` takes a required `database` argument, the name of the database to run against.
+
 | Tool name                  | Description                                                                                                                               |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_databases`           | Lists the databases the server can reach with their connection state, and the servers it discovers databases on.                          |
 | `list_schemas`             | Lists all schemas in the database.                                                                                                        |
 | `list_objects`             | Lists objects (tables, views, sequences, extensions) in a schema.                                                                         |
 | `get_object_details`       | Shows details of one object, for example a table's columns, constraints and indexes.                                                      |

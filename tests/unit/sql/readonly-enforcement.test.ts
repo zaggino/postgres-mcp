@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { AccessMode, getSqlDriver } from '../../../src/server.ts';
+import { AccessMode, getSqlDriver } from '../../../src/sql/driver-factory.ts';
 import { DbConnPool } from '../../../src/sql/sql-driver.ts';
 import { createFakePool, rowsResult } from '../../support/fake-pool.ts';
 

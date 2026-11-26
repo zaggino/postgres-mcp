@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { dbConnection, main, runners } from '../../src/server.ts';
+import { main, runners } from '../../src/server.ts';
 
 function spyOnTransports() {
   return {
@@ -10,14 +10,10 @@ function spyOnTransports() {
   };
 }
 
-const URL_ARG = 'postgresql://user:password@localhost/db';
+const DATABASE_ARG = '--database=app';
 
 beforeEach(() => {
-  vi.stubEnv('DATABASE_URI', undefined);
-  vi.spyOn(dbConnection, 'poolConnect').mockResolvedValue({
-    connect: vi.fn(),
-    end: vi.fn(),
-  });
+  vi.stubEnv('MCP_APP_DATABASE_URI', 'postgresql://user:password@localhost/db');
 });
 
 afterEach(() => {
@@ -29,7 +25,7 @@ describe('transport selection', () => {
   it('--transport=stdio runs only the stdio transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG, '--transport=stdio']);
+    await main([DATABASE_ARG, '--transport=stdio']);
 
     expect(spies.stdio).toHaveBeenCalledOnce();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -39,7 +35,7 @@ describe('transport selection', () => {
   it('--transport=sse runs only the SSE transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG, '--transport=sse']);
+    await main([DATABASE_ARG, '--transport=sse']);
 
     expect(spies.stdio).not.toHaveBeenCalled();
     expect(spies.sse).toHaveBeenCalledOnce();
@@ -49,7 +45,7 @@ describe('transport selection', () => {
   it('--transport=streamable-http runs only the streamable HTTP transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG, '--transport=streamable-http']);
+    await main([DATABASE_ARG, '--transport=streamable-http']);
 
     expect(spies.stdio).not.toHaveBeenCalled();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -59,7 +55,7 @@ describe('transport selection', () => {
   it('defaults to the stdio transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG]);
+    await main([DATABASE_ARG]);
 
     expect(spies.stdio).toHaveBeenCalledOnce();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -69,7 +65,7 @@ describe('transport selection', () => {
   it('accepts a separate value for --transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG, '--transport', 'sse']);
+    await main([DATABASE_ARG, '--transport', 'sse']);
 
     expect(spies.sse).toHaveBeenCalledOnce();
   });
@@ -80,7 +76,7 @@ describe('transport host and port', () => {
     const spies = spyOnTransports();
 
     await main([
-      URL_ARG,
+      DATABASE_ARG,
       '--transport=streamable-http',
       '--streamable-http-host=0.0.0.0',
       '--streamable-http-port=9000',
@@ -92,8 +88,27 @@ describe('transport host and port', () => {
   it('passes the SSE host and port to the transport', async () => {
     const spies = spyOnTransports();
 
-    await main([URL_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080']);
+    await main([DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080']);
 
     expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), '0.0.0.0', 8080);
+  });
+});
+
+describe('usage errors', () => {
+  it('main prints the usage and the error to stderr and exits with code 2 when no database is configured', async () => {
+    const written: string[] = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process, 'exit').mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+
+    await expect(main([])).rejects.toThrow('exit 2');
+
+    const output = written.join('');
+    expect(output).toContain('usage:');
+    expect(output).toContain('postgres-mcp: error: no databases configured');
   });
 });

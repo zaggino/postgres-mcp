@@ -1,9 +1,3 @@
-<div align="center">
-
-<img src="assets/postgres-mcp-pro.png" alt="Postgres MCP Pro Logo" width="600"/>
-
-</div>
-
 # postgres-mcp
 
 [![npm version](https://img.shields.io/npm/v/@zaggino/postgres-mcp)](https://www.npmjs.com/package/@zaggino/postgres-mcp)

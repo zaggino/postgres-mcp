@@ -42,7 +42,6 @@ export default defineConfig({
     "**/*.md",
     ".github",
     "examples",
-    "assets",
   ],
   rules: {
     // Database calls on one connection are sequential by design.

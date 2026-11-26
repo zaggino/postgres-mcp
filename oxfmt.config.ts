@@ -9,6 +9,5 @@ export default defineConfig({
     "**/*.md",
     ".github",
     "examples",
-    "assets",
   ],
 });

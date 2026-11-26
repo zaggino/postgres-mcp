@@ -1,14 +1,14 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from 'vitest';
 
-import { ErrorResult, ExplainPlanArtifact } from "../../src/artifacts.ts";
-import { ExplainPlanTool } from "../../src/explain/explain-plan.ts";
-import { SqlDriver } from "../../src/sql/sql-driver.ts";
-import { describeWithPostgres } from "../support/postgres.ts";
+import { ErrorResult, ExplainPlanArtifact } from '../../src/artifacts.ts';
+import { ExplainPlanTool } from '../../src/explain/explain-plan.ts';
+import { SqlDriver } from '../../src/sql/sql-driver.ts';
+import { describeWithPostgres } from '../support/postgres.ts';
 
 async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   // Drop existing tables if they exist
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_orders");
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_customers");
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
 
   // Create tables with various features for testing explain plan
   await sqlDriver.executeQuery(
@@ -73,34 +73,34 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   );
 
   // Run ANALYZE to update statistics
-  await sqlDriver.executeQuery("ANALYZE test_customers");
-  await sqlDriver.executeQuery("ANALYZE test_orders");
+  await sqlDriver.executeQuery('ANALYZE test_customers');
+  await sqlDriver.executeQuery('ANALYZE test_orders');
 }
 
 async function cleanupTestTables(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_orders");
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_customers");
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
 }
 
 const RELATION_NOT_EXIST = /relation.*not exist/u;
 
 function parsePlan(result: ExplainPlanArtifact): Record<string, unknown> {
   const parsed: unknown = JSON.parse(result.value);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("Expected the plan to be a JSON object");
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Expected the plan to be a JSON object');
   }
   return Object.fromEntries(Object.entries(parsed));
 }
 
 function planOf(planData: Record<string, unknown>): Record<string, unknown> {
   const plan = planData.Plan;
-  if (typeof plan !== "object" || plan === null || Array.isArray(plan)) {
-    throw new Error("Expected a Plan object");
+  if (typeof plan !== 'object' || plan === null || Array.isArray(plan)) {
+    throw new Error('Expected a Plan object');
   }
   return Object.fromEntries(Object.entries(plan));
 }
 
-describeWithPostgres("explain plan with a real database", (postgres) => {
+describeWithPostgres('explain plan with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(async () => {
@@ -116,47 +116,41 @@ describeWithPostgres("explain plan with a real database", (postgres) => {
     }
   });
 
-  test("explains a query with a real database connection", async () => {
+  test('explains a query with a real database connection', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explain(
-      "SELECT * FROM test_customers WHERE id = 1"
-    );
+    const result = await tool.explain('SELECT * FROM test_customers WHERE id = 1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
     const planData = parsePlan(result);
-    expect(planData).toHaveProperty("Plan");
-    expect(planOf(planData)).toHaveProperty("Node Type");
+    expect(planData).toHaveProperty('Plan');
+    expect(planOf(planData)).toHaveProperty('Node Type');
     // PostgreSQL may choose different scan types depending on statistics;
     // for small tables, a sequential scan may win over an index scan.
-    expect(["Index Scan", "Index Only Scan", "Seq Scan"]).toContain(
-      planOf(planData)["Node Type"]
-    );
+    expect(['Index Scan', 'Index Only Scan', 'Seq Scan']).toContain(planOf(planData)['Node Type']);
   });
 
-  test("explains a query with analyze against a real database", async () => {
+  test('explains a query with analyze against a real database', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explainAnalyze(
-      "SELECT * FROM test_customers WHERE id = 1"
-    );
+    const result = await tool.explainAnalyze('SELECT * FROM test_customers WHERE id = 1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
     const planData = parsePlan(result);
-    expect(planData).toHaveProperty("Plan");
+    expect(planData).toHaveProperty('Plan');
     // Check for analyze-specific fields
-    expect(planData).toHaveProperty("Execution Time");
-    expect(planOf(planData)).toHaveProperty("Actual Rows");
-    expect(planOf(planData)).toHaveProperty("Actual Total Time");
+    expect(planData).toHaveProperty('Execution Time');
+    expect(planOf(planData)).toHaveProperty('Actual Rows');
+    expect(planOf(planData)).toHaveProperty('Actual Total Time');
   });
 
-  test("explains a join query", async () => {
+  test('explains a join query', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
     const result = await tool.explain(`
@@ -171,60 +165,54 @@ describeWithPostgres("explain plan with a real database", (postgres) => {
       return;
     }
     const planData = parsePlan(result);
-    expect(planData).toHaveProperty("Plan");
+    expect(planData).toHaveProperty('Plan');
     // Verify this is a join plan
-    expect(planOf(planData)).toHaveProperty("Plans");
+    expect(planOf(planData)).toHaveProperty('Plans');
   });
 
-  test("explains a query with bind variables", async () => {
+  test('explains a query with bind variables', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explain(
-      "SELECT * FROM test_customers WHERE id = $1"
-    );
+    const result = await tool.explain('SELECT * FROM test_customers WHERE id = $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
-    expect(parsePlan(result)).toBeTypeOf("object");
+    expect(parsePlan(result)).toBeTypeOf('object');
   });
 
-  test("explains a query with LIKE expressions", async () => {
+  test('explains a query with LIKE expressions', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explain(
-      "SELECT * FROM test_customers WHERE name LIKE 'Customer%'"
-    );
+    const result = await tool.explain("SELECT * FROM test_customers WHERE name LIKE 'Customer%'");
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
     const planData = parsePlan(result);
-    expect(planData).toHaveProperty("Plan");
+    expect(planData).toHaveProperty('Plan');
     // This should be a sequential scan since there's no index on name
-    expect(planOf(planData)["Node Type"]).toBe("Seq Scan");
+    expect(planOf(planData)['Node Type']).toBe('Seq Scan');
   });
 
-  test("explains a query with both LIKE and bind variables", async () => {
+  test('explains a query with both LIKE and bind variables', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explain(
-      "SELECT * FROM test_customers WHERE name LIKE $1"
-    );
+    const result = await tool.explain('SELECT * FROM test_customers WHERE name LIKE $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     if (!(result instanceof ExplainPlanArtifact)) {
       return;
     }
-    expect(parsePlan(result)).toBeTypeOf("object");
+    expect(parsePlan(result)).toBeTypeOf('object');
   });
 
-  test("returns an error result for an invalid query", async () => {
+  test('returns an error result for an invalid query', async () => {
     const tool = new ExplainPlanTool(sqlDriver);
 
-    const result = await tool.explain("SELECT * FROM nonexistent_table");
+    const result = await tool.explain('SELECT * FROM nonexistent_table');
 
     expect(result).toBeInstanceOf(ErrorResult);
     expect(result.value.toLowerCase()).toMatch(RELATION_NOT_EXIST);

@@ -1,18 +1,18 @@
-import { readFileSync } from "node:fs";
+import { readFileSync } from 'node:fs';
 
-import { calculateImprovementMultiple } from "../artifacts.ts";
-import type { DtaTracer } from "../explain/explain-plan.ts";
-import { ExplainPlanTool } from "../explain/explain-plan.ts";
-import { SqlBindParams, TableAliasVisitor } from "../sql/bind-params.ts";
-import { checkHypopgInstallationStatus } from "../sql/extension-utils.ts";
-import { IndexDefinition } from "../sql/index-definition.ts";
-import { AstNode, isJsonObject, parseSql } from "../sql/pg-ast.ts";
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
+import { calculateImprovementMultiple } from '../artifacts.ts';
+import type { DtaTracer } from '../explain/explain-plan.ts';
+import { ExplainPlanTool } from '../explain/explain-plan.ts';
+import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
+import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
+import { IndexDefinition } from '../sql/index-definition.ts';
+import { AstNode, isJsonObject, parseSql } from '../sql/pg-ast.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
-const NATURAL_SIZE_SUFFIXES = ["kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+const NATURAL_SIZE_SUFFIXES = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
 const BYTES_BASE = 1000;
 const MEGABYTE = 1024 * 1024;
 const DEFAULT_TABLE_SIZE_BYTES = 10 * MEGABYTE;
@@ -21,17 +21,10 @@ const DEFAULT_TABLE_SIZE_BYTES = 10 * MEGABYTE;
 export type WorkloadEntry = Record<string, unknown>;
 
 /** A validated workload query: its (lowercased) text, parsed statement and weight. */
-export type QueryWeight = readonly [
-  query: string,
-  stmt: AstNode,
-  weight: number,
-];
+export type QueryWeight = readonly [query: string, stmt: AstNode, weight: number];
 
 /** The chosen indexes and the cost of the workload with them. */
-export type IndexConfiguration = [
-  indexes: Set<IndexRecommendation>,
-  cost: number,
-];
+export type IndexConfiguration = [indexes: Set<IndexRecommendation>, cost: number];
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -40,10 +33,10 @@ export function errorMessage(error: unknown): string {
 /** Python's `f"{value:.{digits}f}"`, including its spelling of non-finite values. */
 export function formatFixed(value: number, digits: number): string {
   if (Number.isNaN(value)) {
-    return "nan";
+    return 'nan';
   }
   if (!Number.isFinite(value)) {
-    return value > 0 ? "inf" : "-inf";
+    return value > 0 ? 'inf' : '-inf';
   }
   return value.toFixed(digits);
 }
@@ -56,7 +49,7 @@ export function formatPercent(value: number): string {
 /** `humanize.naturalsize` (decimal units): "1 Byte", "999 Bytes", "1.0 kB", "10.5 MB". */
 export function naturalSize(value: number): string {
   const absolute = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
+  const sign = value < 0 ? '-' : '';
   if (absolute === 1) {
     return `${sign}1 Byte`;
   }
@@ -65,23 +58,17 @@ export function naturalSize(value: number): string {
   }
   let exponent = 1;
   let unit = BYTES_BASE;
-  while (
-    exponent < NATURAL_SIZE_SUFFIXES.length &&
-    absolute >= unit * BYTES_BASE
-  ) {
+  while (exponent < NATURAL_SIZE_SUFFIXES.length && absolute >= unit * BYTES_BASE) {
     unit *= BYTES_BASE;
     exponent += 1;
   }
-  const suffix = NATURAL_SIZE_SUFFIXES[exponent - 1] ?? "";
+  const suffix = NATURAL_SIZE_SUFFIXES[exponent - 1] ?? '';
   return `${sign}${(absolute / unit).toFixed(1)} ${suffix}`;
 }
 
 /** Pretty print a list for debugging. */
 export function ppList(items: readonly unknown[]): string {
-  return (
-    (items.length > 0 ? "\n  - " : "") +
-    items.map((item) => String(item)).join("\n  - ")
-  );
+  return (items.length > 0 ? '\n  - ' : '') + items.map((item) => String(item)).join('\n  - ');
 }
 
 /** Stable identity of a set of indexes, independent of order and duplicates. */
@@ -103,10 +90,11 @@ function isEmptyPlan(plan: unknown): boolean {
 /** Python's `int(value)` for a database cell. */
 function toInt(value: unknown): number {
   if (value === null || value === undefined) {
-    throw new TypeError("Expected a number");
+    throw new TypeError('Expected a number');
   }
   const parsed = Number(value);
   if (Number.isNaN(parsed)) {
+    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
     throw new TypeError(`Invalid number: ${String(value)}`);
   }
   return Math.trunc(parsed);
@@ -129,7 +117,7 @@ export class IndexRecommendation {
   constructor(
     table: string,
     columns: readonly string[],
-    using = "btree",
+    using = 'btree',
     estimatedSizeBytes = 0,
     potentialProblematicReason: string | null = null
   ) {
@@ -211,10 +199,7 @@ export class IndexRecommendationAnalysis {
 
   /** The progressive improvement from this recommendation. */
   get progressiveImprovementMultiple(): number {
-    return calculateImprovementMultiple(
-      this.progressiveBaseCost,
-      this.progressiveRecommendationCost
-    );
+    return calculateImprovementMultiple(this.progressiveBaseCost, this.progressiveRecommendationCost);
   }
 
   get potentialProblematicReason(): string | null {
@@ -227,10 +212,7 @@ export class IndexRecommendationAnalysis {
 
   /** The individual improvement from this recommendation. */
   get individualImprovementMultiple(): number {
-    return calculateImprovementMultiple(
-      this.individualBaseCost,
-      this.individualRecommendationCost
-    );
+    return calculateImprovementMultiple(this.individualBaseCost, this.individualRecommendationCost);
   }
 
   toIndex(): IndexRecommendation {
@@ -245,7 +227,7 @@ export class IndexTuningResult {
   /** Tuning budget in MB. */
   budgetMb: number;
   /** 'args', 'query_list', 'query_store', 'sql_file' */
-  workloadSource = "n/a";
+  workloadSource = 'n/a';
   workload: WorkloadEntry[] | null = null;
   recommendations: IndexRecommendationAnalysis[] = [];
   error: string | null = null;
@@ -264,9 +246,7 @@ interface IndexLike {
 
 export function candidateStr(indexes: Iterable<IndexLike>): string {
   const items = [...indexes];
-  return items.length > 0
-    ? items.map((idx) => `${idx.table}(${idx.columns.join(",")})`).join(", ")
-    : "(no indexes)";
+  return items.length > 0 ? items.map((idx) => `${idx.table}(${idx.columns.join(',')})`).join(', ') : '(no indexes)';
 }
 
 export interface AnalyzeWorkloadOptions {
@@ -312,9 +292,7 @@ export abstract class IndexTuningBase implements DtaTracer {
    * priority order: the explicit workload, the query list, the SQL file, or
    * the pg_stat_statements query statistics.
    */
-  async analyzeWorkload(
-    options: AnalyzeWorkloadOptions = {}
-  ): Promise<IndexTuningResult> {
+  async analyzeWorkload(options: AnalyzeWorkloadOptions = {}): Promise<IndexTuningResult> {
     const {
       workload,
       sqlFile,
@@ -344,28 +322,24 @@ export abstract class IndexTuningBase implements DtaTracer {
       }
 
       if (workload && workload.length > 0) {
-        session.workloadSource = "args";
+        session.workloadSource = 'args';
         session.workload = workload;
       } else if (queryList && queryList.length > 0) {
-        session.workloadSource = "query_list";
+        session.workloadSource = 'query_list';
         session.workload = queryList.map((query, i) => ({
           query,
           queryid: `direct-${i}`,
         }));
       } else if (sqlFile) {
-        session.workloadSource = "sql_file";
+        session.workloadSource = 'sql_file';
         session.workload = this.getWorkloadFromFile(sqlFile);
       } else {
-        session.workloadSource = "query_store";
-        session.workload = await this.getQueryStats(
-          minCalls,
-          minAvgTimeMs,
-          limit
-        );
+        session.workloadSource = 'query_store';
+        session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
       }
 
       if (session.workload.length === 0) {
-        logWarning("No workload to analyze");
+        logWarning('No workload to analyze');
         return session;
       }
 
@@ -374,24 +348,18 @@ export abstract class IndexTuningBase implements DtaTracer {
       const queryWeights = this.convertWorkloadToQueryWeights(session.workload);
 
       if (queryWeights.length === 0) {
-        this.dtaTrace("No query provided");
+        this.dtaTrace('No query provided');
         session.recommendations = [];
       } else {
         const workloadQueries = queryWeights.map(([query]) => query);
 
-        this.dtaTrace(
-          `Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`
-        );
+        this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
 
-        const recommendations =
-          await this.generateRecommendations(queryWeights);
-        session.recommendations = await this.formatRecommendations(
-          queryWeights,
-          recommendations
-        );
+        const recommendations = await this.generateRecommendations(queryWeights);
+        session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
 
         // Reset HypoPG only once at the end
-        await this.sqlDriver.executeQuery("SELECT hypopg_reset();");
+        await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
       }
     } catch (error) {
       logError(`Error in workload analysis: ${errorMessage(error)}`);
@@ -403,12 +371,9 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Returns the session with an error when a pre-check fails, otherwise undefined. */
-  async runPrechecks(
-    session: IndexTuningResult
-  ): Promise<IndexTuningResult | undefined> {
+  async runPrechecks(session: IndexTuningResult): Promise<IndexTuningResult | undefined> {
     // Pre-check 1: HypoPG
-    const [isHypopgInstalled, hypopgMessage] =
-      await checkHypopgInstallationStatus(this.sqlDriver);
+    const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(this.sqlDriver);
 
     if (!isHypopgInstalled) {
       session.error = hypopgMessage;
@@ -417,19 +382,13 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     // Pre-check 2: ANALYZE has been run at least once
     const result = await this.sqlDriver.executeQuery(
-      "SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;"
+      'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (
-      !result?.some(
-        (row) =>
-          row.cells.last_analyze !== null &&
-          row.cells.last_analyze !== undefined
-      )
-    ) {
+    if (!result?.some((row) => row.cells.last_analyze !== null && row.cells.last_analyze !== undefined)) {
       const message =
-        "Statistics are not up-to-date. The database needs to be analyzed first. " +
+        'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
-        "Without up-to-date statistics, the index recommendations may be inaccurate.";
+        'Without up-to-date statistics, the index recommendations may be inaccurate.';
       session.error = message;
       logError(message);
       return session;
@@ -439,21 +398,18 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Validate the workload to ensure it is analyzable. */
-  async validateAndParseWorkload(
-    workload: readonly WorkloadEntry[]
-  ): Promise<WorkloadEntry[]> {
+  async validateAndParseWorkload(workload: readonly WorkloadEntry[]): Promise<WorkloadEntry[]> {
     const validated: WorkloadEntry[] = [];
     for (const entry of workload) {
       const rawQuery = entry.query;
-      if (typeof rawQuery !== "string" || rawQuery === "") {
+      if (typeof rawQuery !== 'string' || rawQuery === '') {
         continue;
       }
       // The whole workload SQL is lowercased
       const loweredQuery = rawQuery.trim().toLowerCase();
 
       // Replace parameter placeholders with dummy values
-      const queryText =
-        await this.sqlBindParams.replaceParameters(loweredQuery);
+      const queryText = await this.sqlBindParams.replaceParameters(loweredQuery);
 
       const { stmts } = await parseSql(queryText);
       const stmt = AstNode.from(stmts[0]?.stmt);
@@ -466,13 +422,11 @@ export abstract class IndexTuningBase implements DtaTracer {
     return validated;
   }
 
-  convertWorkloadToQueryWeights(
-    workload: readonly WorkloadEntry[]
-  ): QueryWeight[] {
+  convertWorkloadToQueryWeights(workload: readonly WorkloadEntry[]): QueryWeight[] {
     const weights: QueryWeight[] = [];
     for (const entry of workload) {
       const { query, stmt } = entry;
-      if (typeof query === "string" && stmt instanceof AstNode) {
+      if (typeof query === 'string' && stmt instanceof AstNode) {
         weights.push([query, stmt, this.convertQueryInfoToWeight(entry)]);
       }
     }
@@ -500,13 +454,12 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
 
     const explainPlanTool = new ExplainPlanTool(this.sqlDriver);
-    const plan =
-      await explainPlanTool.generateExplainPlanWithHypotheticalIndexes(
-        queryText,
-        uniqueIndexes(indexes),
-        false,
-        this
-      );
+    const plan = await explainPlanTool.generateExplainPlanWithHypotheticalIndexes(
+      queryText,
+      uniqueIndexes(indexes),
+      false,
+      this
+    );
 
     const result = isJsonObject(plan) ? { ...plan } : {};
     this.explainPlansCache.set(cacheKey, result);
@@ -516,11 +469,11 @@ export abstract class IndexTuningBase implements DtaTracer {
   /** Load queries from an SQL file, split on semicolons. */
   getWorkloadFromFile(filePath: string): WorkloadEntry[] {
     try {
-      const content = readFileSync(filePath, "utf-8");
+      const content = readFileSync(filePath, 'utf-8');
       return content
-        .split(";")
+        .split(';')
         .map((text) => text.trim())
-        .filter((text) => text !== "")
+        .filter((text) => text !== '')
         .map((query, i) => ({ queryid: i, query }));
     } catch (error) {
       throw new Error(`Error loading queries from file ${filePath}`, {
@@ -530,19 +483,11 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Get query statistics from pg_stat_statements. */
-  getQueryStats(
-    minCalls: number,
-    minAvgTimeMs: number,
-    limit: number
-  ): Promise<WorkloadEntry[]> {
+  getQueryStats(minCalls: number, minAvgTimeMs: number, limit: number): Promise<WorkloadEntry[]> {
     return this.getQueryStatsDirect(minCalls, minAvgTimeMs, limit);
   }
 
-  async getQueryStatsDirect(
-    minCalls = 50,
-    minAvgTimeMs = 5,
-    limit = 100
-  ): Promise<WorkloadEntry[]> {
+  async getQueryStatsDirect(minCalls = 50, minAvgTimeMs = 5, limit = 100): Promise<WorkloadEntry[]> {
     const query = `
         SELECT queryid, query, calls, total_exec_time/calls as avg_exec_time
         FROM pg_stat_statements
@@ -551,17 +496,13 @@ export abstract class IndexTuningBase implements DtaTracer {
         ORDER BY total_exec_time DESC
         LIMIT {}
         `;
-    const result = await SafeSqlDriver.executeParamQuery(
-      this.sqlDriver,
-      query,
-      [minCalls, minAvgTimeMs, limit]
-    );
+    const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [minCalls, minAvgTimeMs, limit]);
     return result ? result.map((row) => ({ ...row.cells })) : [];
   }
 
   /** Check if a statement can be analyzed for index recommendations. */
   isAnalyzableStmt(stmt: AstNode): boolean {
-    if (!stmt.is("SelectStmt")) {
+    if (!stmt.is('SelectStmt')) {
       return false;
     }
 
@@ -569,9 +510,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     visitor.visit(stmt);
 
     // Skip queries that only access system tables
-    return ![...visitor.tables].every(
-      (table) => table.startsWith("pg_") || table.startsWith("aurora_")
-    );
+    return ![...visitor.tables].every((table) => table.startsWith('pg_') || table.startsWith('aurora_'));
   }
 
   /** Record a step of the DTA thinking process. */
@@ -588,15 +527,11 @@ export abstract class IndexTuningBase implements DtaTracer {
     const cacheKey = configurationKey(unique);
     const cached = this.costCache.get(cacheKey);
     if (cached !== undefined) {
-      this.dtaTrace(
-        `  - Using cached cost for configuration: ${candidateStr(unique)}`
-      );
+      this.dtaTrace(`  - Using cached cost for configuration: ${candidateStr(unique)}`);
       return cached;
     }
 
-    this.dtaTrace(
-      `  - Evaluating cost for configuration: ${candidateStr(unique)}`
-    );
+    this.dtaTrace(`  - Evaluating cost for configuration: ${candidateStr(unique)}`);
 
     let totalCost = 0;
     let validQueries = 0;
@@ -604,10 +539,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     try {
       for (const [queryText, , weight] of weightedWorkload) {
         try {
-          const planData = await this.getExplainPlanWithIndexes(
-            queryText,
-            unique
-          );
+          const planData = await this.getExplainPlanWithIndexes(queryText, unique);
           const cost = IndexTuningBase.extractCostFromJsonPlan(planData);
           totalCost += cost * weight;
           validQueries += 1;
@@ -619,28 +551,21 @@ export abstract class IndexTuningBase implements DtaTracer {
       }
 
       if (validQueries === 0) {
-        this.dtaTrace("    + no valid queries found for cost evaluation");
+        this.dtaTrace('    + no valid queries found for cost evaluation');
         return Number.POSITIVE_INFINITY;
       }
 
       const avgCost = totalCost / validQueries;
       this.costCache.set(cacheKey, avgCost);
-      this.dtaTrace(
-        `    + config cost: ${formatFixed(avgCost, 2)} (from ${validQueries} queries)`
-      );
+      this.dtaTrace(`    + config cost: ${formatFixed(avgCost, 2)} (from ${validQueries} queries)`);
       return avgCost;
     } catch (error) {
-      this.dtaTrace(
-        `    + error evaluating configuration: ${errorMessage(error)}`
-      );
-      throw new Error("Error evaluating configuration", { cause: error });
+      this.dtaTrace(`    + error evaluating configuration: ${errorMessage(error)}`);
+      throw new Error('Error evaluating configuration', { cause: error });
     }
   }
 
-  async estimateIndexSize(
-    table: string,
-    columns: readonly string[]
-  ): Promise<number> {
+  async estimateIndexSize(table: string, columns: readonly string[]): Promise<number> {
     const cacheKey = JSON.stringify([table, [...new Set(columns)].sort()]);
 
     const cached = this.sizeEstimateCache.get(cacheKey);
@@ -655,11 +580,7 @@ export abstract class IndexTuningBase implements DtaTracer {
             FROM pg_stats
             WHERE tablename = {} AND attname = ANY({})
             `;
-      const result = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        statsQuery,
-        [table, columns]
-      );
+      const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
       const first = result?.[0];
       if (first && Object.keys(first.cells).length > 0) {
         const sizeEstimate = this.estimateIndexSizeInternal(first.cells);
@@ -668,7 +589,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       }
       return 0;
     } catch (error) {
-      throw new Error("Error estimating index size", { cause: error });
+      throw new Error('Error estimating index size', { cause: error });
     }
   }
 
@@ -689,8 +610,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     const recommendations: IndexRecommendationAnalysis[] = [];
     let totalSize = 0;
     const budgetBytes = this.budgetMb * MEGABYTE;
-    const individualBaseCost =
-      (await this.evaluateConfigurationCost(queryWeights, [])) || 1;
+    const individualBaseCost = (await this.evaluateConfigurationCost(queryWeights, [])) || 1;
     let progressiveBaseCost = individualBaseCost;
     const indexesSoFar: IndexRecommendation[] = [];
     for (const indexConfig of bestConfig[0]) {
@@ -699,15 +619,9 @@ export abstract class IndexTuningBase implements DtaTracer {
         queryWeights,
         indexesSoFar.map((idx) => idx.indexDefinition)
       );
-      const individualCost = await this.evaluateConfigurationCost(
-        queryWeights,
-        [indexConfig.indexDefinition]
-      );
+      const individualCost = await this.evaluateConfigurationCost(queryWeights, [indexConfig.indexDefinition]);
 
-      const size = await this.estimateIndexSize(
-        indexConfig.table,
-        indexConfig.columns
-      );
+      const size = await this.estimateIndexSize(indexConfig.table, indexConfig.columns);
       if (budgetBytes < 0 || totalSize + size <= budgetBytes) {
         this.dtaTrace(`Adding index: ${candidateStr([indexConfig])}`);
         recommendations.push(
@@ -730,9 +644,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         progressiveBaseCost = progressiveCost;
         totalSize += size;
       } else {
-        this.dtaTrace(
-          `Skipping index: ${candidateStr([indexConfig])} because it exceeds budget`
-        );
+        this.dtaTrace(`Skipping index: ${candidateStr([indexConfig])} because it exceeds budget`);
       }
     }
 
@@ -751,7 +663,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       return Number.POSITIVE_INFINITY;
     }
 
-    const totalCost = topPlan["Total Cost"];
+    const totalCost = topPlan['Total Cost'];
     if (totalCost === null || totalCost === undefined) {
       logError(`Total Cost not found in top plan: ${JSON.stringify(topPlan)}`);
       return Number.POSITIVE_INFINITY;
@@ -759,7 +671,7 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     const cost = Number(totalCost);
     if (Number.isNaN(cost)) {
-      throw new Error("Error extracting cost from plan");
+      throw new Error('Error extracting cost from plan');
     }
     return cost;
   }
@@ -776,13 +688,8 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     let size: number;
     try {
-      const query =
-        "SELECT pg_total_relation_size(quote_ident({})) as rel_size";
-      const result = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        query,
-        [table]
-      );
+      const query = 'SELECT pg_total_relation_size(quote_ident({})) as rel_size';
+      const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [table]);
 
       const first = result?.[0];
       if (first && Object.keys(first.cells).length > 0) {
@@ -792,9 +699,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         size = await this.estimateTableSize(table);
       }
     } catch (error) {
-      logWarning(
-        `Error getting table size for ${table}: ${errorMessage(error)}`
-      );
+      logWarning(`Error getting table size for ${table}: ${errorMessage(error)}`);
       size = await this.estimateTableSize(table);
     }
     this.tableSizeCache.set(table, size);
@@ -806,11 +711,9 @@ export abstract class IndexTuningBase implements DtaTracer {
     try {
       // The table name becomes a string literal here, which is not valid SQL
       // after FROM; the resulting error leads to the default size.
-      const result = await SafeSqlDriver.executeParamQuery(
-        this.sqlDriver,
-        "SELECT count(*) as row_count FROM {}",
-        [table]
-      );
+      const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, 'SELECT count(*) as row_count FROM {}', [
+        table,
+      ]);
       const first = result?.[0];
       if (first && Object.keys(first.cells).length > 0) {
         const rowCount = toInt(first.cells.row_count);
@@ -818,16 +721,12 @@ export abstract class IndexTuningBase implements DtaTracer {
         return rowCount * 1024;
       }
     } catch (error) {
-      logWarning(
-        `Error estimating table size for ${table}: ${errorMessage(error)}`
-      );
+      logWarning(`Error estimating table size for ${table}: ${errorMessage(error)}`);
     }
 
     return DEFAULT_TABLE_SIZE_BYTES;
   }
 
   /** Generate index recommendations and the workload cost with them. */
-  protected abstract generateRecommendations(
-    queryWeights: readonly QueryWeight[]
-  ): Promise<IndexConfiguration>;
+  protected abstract generateRecommendations(queryWeights: readonly QueryWeight[]): Promise<IndexConfiguration>;
 }

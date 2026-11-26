@@ -1,6 +1,6 @@
 /** Artifacts for the Database Tuning Advisor. */
 
-import { structuredPatch } from "diff";
+import { structuredPatch } from 'diff';
 
 // If the recommendation cost is 0.0, we can't calculate the improvement multiple.
 // Return 1000000.0 to indicate infinite improvement.
@@ -11,7 +11,7 @@ const MAX_FILTER_LENGTH = 100;
 type JsonObject = Record<string, unknown>;
 
 function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(error: unknown): string {
@@ -32,10 +32,7 @@ export class ErrorResult {
 }
 
 /** Calculate the improvement multiple from this recommendation. */
-export function calculateImprovementMultiple(
-  baseCost: number,
-  recCost: number
-): number {
+export function calculateImprovementMultiple(baseCost: number, recCost: number): number {
   if (baseCost <= 0) {
     // base_cost or rec_cost might be zero, but as they are floats, they might be
     // represented as -0.0. That's why we compare to <= 0.0.
@@ -56,7 +53,7 @@ function requireField(node: JsonObject, key: string): unknown {
 
 function requireNumber(node: JsonObject, key: string): number {
   const value = requireField(node, key);
-  if (typeof value !== "number") {
+  if (typeof value !== 'number') {
     throw new TypeError(`Expected a number for '${key}'`);
   }
   return value;
@@ -64,11 +61,11 @@ function requireNumber(node: JsonObject, key: string): number {
 
 function optionalNumber(node: JsonObject, key: string): number | null {
   const value = requireField(node, key);
-  return typeof value === "number" ? value : null;
+  return typeof value === 'number' ? value : null;
 }
 
 function optionalString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+  return typeof value === 'string' ? value : null;
 }
 
 export class PlanNode {
@@ -94,13 +91,7 @@ export class PlanNode {
   filter: string | null = null;
   children: PlanNode[] = [];
 
-  constructor(
-    nodeType: string,
-    totalCost: number,
-    startupCost: number,
-    planRows: number,
-    planWidth: number
-  ) {
+  constructor(nodeType: string, totalCost: number, startupCost: number, planRows: number, planWidth: number) {
     this.nodeType = nodeType;
     this.totalCost = totalCost;
     this.startupCost = startupCost;
@@ -110,56 +101,51 @@ export class PlanNode {
 
   static fromJsonData(jsonNode: unknown): PlanNode {
     if (!isJsonObject(jsonNode)) {
-      throw new TypeError("Plan node must be an object");
+      throw new TypeError('Plan node must be an object');
     }
 
-    const nodeType = requireField(jsonNode, "Node Type");
-    if (typeof nodeType !== "string") {
+    const nodeType = requireField(jsonNode, 'Node Type');
+    if (typeof nodeType !== 'string') {
       throw new TypeError("Expected a string for 'Node Type'");
     }
     const node = new PlanNode(
       nodeType,
-      requireNumber(jsonNode, "Total Cost"),
-      requireNumber(jsonNode, "Startup Cost"),
-      requireNumber(jsonNode, "Plan Rows"),
-      requireNumber(jsonNode, "Plan Width")
+      requireNumber(jsonNode, 'Total Cost'),
+      requireNumber(jsonNode, 'Startup Cost'),
+      requireNumber(jsonNode, 'Plan Rows'),
+      requireNumber(jsonNode, 'Plan Width')
     );
 
     // Optional ANALYZE fields
-    if ("Actual Total Time" in jsonNode) {
-      node.actualTotalTime = optionalNumber(jsonNode, "Actual Total Time");
-      node.actualStartupTime = optionalNumber(jsonNode, "Actual Startup Time");
-      node.actualRows = optionalNumber(jsonNode, "Actual Rows");
-      node.actualLoops = optionalNumber(jsonNode, "Actual Loops");
+    if ('Actual Total Time' in jsonNode) {
+      node.actualTotalTime = optionalNumber(jsonNode, 'Actual Total Time');
+      node.actualStartupTime = optionalNumber(jsonNode, 'Actual Startup Time');
+      node.actualRows = optionalNumber(jsonNode, 'Actual Rows');
+      node.actualLoops = optionalNumber(jsonNode, 'Actual Loops');
     }
 
     // Optional BUFFERS fields
-    if ("Shared Hit Blocks" in jsonNode) {
-      node.sharedHitBlocks = optionalNumber(jsonNode, "Shared Hit Blocks");
-      node.sharedReadBlocks = optionalNumber(jsonNode, "Shared Read Blocks");
-      node.sharedWrittenBlocks = optionalNumber(
-        jsonNode,
-        "Shared Written Blocks"
-      );
+    if ('Shared Hit Blocks' in jsonNode) {
+      node.sharedHitBlocks = optionalNumber(jsonNode, 'Shared Hit Blocks');
+      node.sharedReadBlocks = optionalNumber(jsonNode, 'Shared Read Blocks');
+      node.sharedWrittenBlocks = optionalNumber(jsonNode, 'Shared Written Blocks');
     }
 
     // Common optional fields
-    if ("Relation Name" in jsonNode) {
-      node.relationName = optionalString(jsonNode["Relation Name"]);
+    if ('Relation Name' in jsonNode) {
+      node.relationName = optionalString(jsonNode['Relation Name']);
     }
-    if ("Filter" in jsonNode) {
+    if ('Filter' in jsonNode) {
       node.filter = optionalString(jsonNode.Filter);
     }
 
     // Recursively process child plans
-    if ("Plans" in jsonNode) {
+    if ('Plans' in jsonNode) {
       const plans = jsonNode.Plans;
       if (!Array.isArray(plans)) {
         throw new TypeError("'Plans' must be a list");
       }
-      node.children = plans.map((child: unknown) =>
-        PlanNode.fromJsonData(child)
-      );
+      node.children = plans.map((child: unknown) => PlanNode.fromJsonData(child));
     }
 
     return node;
@@ -167,7 +153,7 @@ export class PlanNode {
 }
 
 function formatPlanNode(node: PlanNode, level = 0): string {
-  const indent = "  ".repeat(level);
+  const indent = '  '.repeat(level);
   let output = `${indent}→ ${node.nodeType} (Cost: ${node.startupCost.toFixed(2)}..${node.totalCost.toFixed(2)})`;
 
   // Add table name if present
@@ -186,11 +172,10 @@ function formatPlanNode(node: PlanNode, level = 0): string {
   // Add filter if present
   if (node.filter) {
     // Truncate long filters for readability (by code point)
+    // oxlint-disable-next-line typescript/no-misused-spread -- truncation is by code point on purpose
     const chars = [...node.filter];
     const filterText =
-      chars.length > MAX_FILTER_LENGTH
-        ? `${chars.slice(0, MAX_FILTER_LENGTH - 3).join("")}...`
-        : node.filter;
+      chars.length > MAX_FILTER_LENGTH ? `${chars.slice(0, MAX_FILTER_LENGTH - 3).join('')}...` : node.filter;
     output += `\n${indent}  Filter: ${filterText}`;
   }
 
@@ -207,12 +192,8 @@ function formatPlanNode(node: PlanNode, level = 0): string {
   return output;
 }
 
-function extractNodeTypes(
-  node: PlanNode,
-  level = 0,
-  result: string[] = []
-): string[] {
-  const indent = "  ".repeat(level);
+function extractNodeTypes(node: PlanNode, level = 0, result: string[] = []): string[] {
+  const indent = '  '.repeat(level);
   let nodeInfo = `${indent}→ ${node.nodeType}`;
   if (node.relationName) {
     nodeInfo += ` on ${node.relationName}`;
@@ -233,32 +214,21 @@ function formatRange(start: number, length: number): string {
 }
 
 /** Equivalent of `difflib.unified_diff(a, b, n=1, lineterm="")`. */
-function unifiedDiff(
-  before: readonly string[],
-  after: readonly string[]
-): string[] {
+function unifiedDiff(before: readonly string[], after: readonly string[]): string[] {
   const joinLines = (items: readonly string[]): string =>
     items
       .map(
         (line) => `${line}
 `
       )
-      .join("");
-  const patch = structuredPatch(
-    "",
-    "",
-    joinLines(before),
-    joinLines(after),
-    "",
-    "",
-    {
-      context: 1,
-    }
-  );
+      .join('');
+  const patch = structuredPatch('', '', joinLines(before), joinLines(after), '', '', {
+    context: 1,
+  });
   if (patch.hunks.length === 0) {
     return [];
   }
-  const lines = ["--- ", "+++ "];
+  const lines = ['--- ', '+++ '];
   for (const hunk of patch.hunks) {
     lines.push(
       `@@ -${formatRange(hunk.oldStart, hunk.oldLines)} +${formatRange(hunk.newStart, hunk.newLines)} @@`,
@@ -301,11 +271,11 @@ export class ExplainPlanArtifact {
     // Add plan tree representation
     result.push(formatPlanNode(this.planTree));
 
-    return result.join("\n");
+    return result.join('\n');
   }
 
   static fromJsonData(planData: unknown): ExplainPlanArtifact {
-    if (!(isJsonObject(planData) && "Plan" in planData)) {
+    if (!(isJsonObject(planData) && 'Plan' in planData)) {
       throw new Error("Missing 'Plan' field in explain plan data");
     }
 
@@ -313,30 +283,28 @@ export class ExplainPlanArtifact {
     const planTree = PlanNode.fromJsonData(planData.Plan);
 
     // Extract optional timing information
-    const planningTime = planData["Planning Time"];
-    const executionTime = planData["Execution Time"];
+    const planningTime = planData['Planning Time'];
+    const executionTime = planData['Execution Time'];
 
     return new ExplainPlanArtifact(
       JSON.stringify(planData, null, 2),
       planTree,
-      typeof planningTime === "number" ? planningTime : null,
-      typeof executionTime === "number" ? executionTime : null
+      typeof planningTime === 'number' ? planningTime : null,
+      typeof executionTime === 'number' ? executionTime : null
     );
   }
 
   /** Extract and format key information from raw plan data. */
-  static formatPlanSummary(
-    planData: Record<string, unknown> | null | undefined
-  ): string {
+  static formatPlanSummary(planData: Record<string, unknown> | null | undefined): string {
     if (!planData || Object.keys(planData).length === 0) {
-      return "No plan data available";
+      return 'No plan data available';
     }
 
     try {
-      if ("Plan" in planData) {
+      if ('Plan' in planData) {
         return formatPlanNode(PlanNode.fromJsonData(planData.Plan), 0);
       }
-      return "Invalid plan data (missing Plan field)";
+      return 'Invalid plan data (missing Plan field)';
     } catch (error) {
       return `Error summarizing plan: ${errorMessage(error)}`;
     }
@@ -347,29 +315,22 @@ export class ExplainPlanArtifact {
     beforePlan: Record<string, unknown> | null | undefined,
     afterPlan: Record<string, unknown> | null | undefined
   ): string {
-    if (
-      !beforePlan ||
-      Object.keys(beforePlan).length === 0 ||
-      !afterPlan ||
-      Object.keys(afterPlan).length === 0
-    ) {
-      return "Cannot generate diff: Missing plan data";
+    if (!beforePlan || Object.keys(beforePlan).length === 0 || !afterPlan || Object.keys(afterPlan).length === 0) {
+      return 'Cannot generate diff: Missing plan data';
     }
 
     try {
-      const beforeTree =
-        "Plan" in beforePlan ? PlanNode.fromJsonData(beforePlan.Plan) : null;
-      const afterTree =
-        "Plan" in afterPlan ? PlanNode.fromJsonData(afterPlan.Plan) : null;
+      const beforeTree = 'Plan' in beforePlan ? PlanNode.fromJsonData(beforePlan.Plan) : null;
+      const afterTree = 'Plan' in afterPlan ? PlanNode.fromJsonData(afterPlan.Plan) : null;
 
       if (!(beforeTree && afterTree)) {
-        return "Cannot generate diff: Invalid plan structure";
+        return 'Cannot generate diff: Invalid plan structure';
       }
 
-      const beforeLines = formatPlanNode(beforeTree).split("\n");
-      const afterLines = formatPlanNode(afterTree).split("\n");
+      const beforeLines = formatPlanNode(beforeTree).split('\n');
+      const afterLines = formatPlanNode(afterTree).split('\n');
 
-      const diffLines: string[] = ["PLAN CHANGES:", "------------"];
+      const diffLines: string[] = ['PLAN CHANGES:', '------------'];
 
       const beforeCost = beforeTree.totalCost;
       const afterCost = afterTree.totalCost;
@@ -377,49 +338,40 @@ export class ExplainPlanArtifact {
 
       diffLines.push(
         `Cost: ${beforeCost.toFixed(2)} → ${afterCost.toFixed(2)} (${improvement.toFixed(1)}x improvement)`,
-        "",
-        "Operation Changes:"
+        '',
+        'Operation Changes:'
       );
 
-      const structureDiff = unifiedDiff(
-        extractNodeTypes(beforeTree),
-        extractNodeTypes(afterTree)
-      );
+      const structureDiff = unifiedDiff(extractNodeTypes(beforeTree), extractNodeTypes(afterTree));
       if (structureDiff.length > 0) {
         diffLines.push(...structureDiff);
       } else {
-        diffLines.push("No structural changes detected");
+        diffLines.push('No structural changes detected');
       }
 
-      diffLines.push("", "Major Changes:");
+      diffLines.push('', 'Major Changes:');
 
       if (beforeTree.nodeType !== afterTree.nodeType) {
-        diffLines.push(
-          `- Root operation changed: ${beforeTree.nodeType} → ${afterTree.nodeType}`
-        );
+        diffLines.push(`- Root operation changed: ${beforeTree.nodeType} → ${afterTree.nodeType}`);
       }
 
       // Compare scan methods used
       const countMatching = (lines: string[], needle: string): number =>
         lines.filter((line) => line.includes(needle)).length;
-      const beforeScans = countMatching(beforeLines, "Seq Scan");
-      const afterScans = countMatching(afterLines, "Seq Scan");
+      const beforeScans = countMatching(beforeLines, 'Seq Scan');
+      const afterScans = countMatching(afterLines, 'Seq Scan');
       if (beforeScans > afterScans) {
-        diffLines.push(
-          `- ${beforeScans - afterScans} sequential scans replaced with more efficient access methods`
-        );
+        diffLines.push(`- ${beforeScans - afterScans} sequential scans replaced with more efficient access methods`);
       }
 
       // Look for new index scans
-      const beforeIdxScans = countMatching(beforeLines, "Index Scan");
-      const afterIdxScans = countMatching(afterLines, "Index Scan");
+      const beforeIdxScans = countMatching(beforeLines, 'Index Scan');
+      const afterIdxScans = countMatching(afterLines, 'Index Scan');
       if (afterIdxScans > beforeIdxScans) {
-        diffLines.push(
-          `- ${afterIdxScans - beforeIdxScans} new index scans used`
-        );
+        diffLines.push(`- ${afterIdxScans - beforeIdxScans} new index scans used`);
       }
 
-      return diffLines.join("\n");
+      return diffLines.join('\n');
     } catch (error) {
       return `Error generating plan diff: ${errorMessage(error)}`;
     }

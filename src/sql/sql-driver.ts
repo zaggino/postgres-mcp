@@ -1,11 +1,9 @@
-import type { CustomTypesConfig } from "pg";
-import pg from "pg";
+import type { CustomTypesConfig } from 'pg';
+import pg from 'pg';
 
 const INT8_OID = 20;
-const URL_PREFIX =
-  /^(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?<netloc>[^/?#]*)/u;
-const EMBEDDED_URL =
-  /(?<head>postgres(?:ql)?:\/\/[^:]+:)(?<password>[^@]+)(?<tail>@[^/\s]+)/gu;
+const URL_PREFIX = /^(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?<netloc>[^/?#]*)/u;
+const EMBEDDED_URL = /(?<head>postgres(?:ql)?:\/\/[^:]+:)(?<password>[^@]+)(?<tail>@[^/\s]+)/gu;
 const PASSWORD_PARAM = /(?<key>password=)(?<value>[^\s&;"']+)/giu;
 const DSN_SINGLE_QUOTE = /(?<key>password\s*=\s*')(?<value>[^']+)(?<end>')/giu;
 const DSN_DOUBLE_QUOTE = /(?<key>password\s*=\s*")(?<value>[^"]+)(?<end>")/giu;
@@ -21,10 +19,7 @@ export interface QueryResultLike {
 
 export interface ClientLike {
   /** One result per statement; a single statement yields a one-element array. */
-  query: (
-    text: string,
-    values?: readonly unknown[]
-  ) => Promise<QueryResultLike[]>;
+  query: (text: string, values?: readonly unknown[]) => Promise<QueryResultLike[]>;
   release: (destroy?: boolean) => void;
 }
 
@@ -43,9 +38,7 @@ function logError(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
-export function obfuscatePassword(
-  text: string | null | undefined
-): string | null | undefined {
+export function obfuscatePassword(text: string | null | undefined): string | null | undefined {
   if (text === null || text === undefined) {
     return text;
   }
@@ -56,28 +49,28 @@ export function obfuscatePassword(
   // Proper URL: scheme://[user[:password]@]host...
   const urlMatch = URL_PREFIX.exec(text);
   if (urlMatch) {
-    const netloc = urlMatch.groups?.netloc ?? "";
-    const at = netloc.lastIndexOf("@");
+    const netloc = urlMatch.groups?.netloc ?? '';
+    const at = netloc.lastIndexOf('@');
     if (at !== -1) {
       const userinfo = netloc.slice(0, at);
-      const colon = userinfo.indexOf(":");
-      const password = colon === -1 ? "" : userinfo.slice(colon + 1);
+      const colon = userinfo.indexOf(':');
+      const password = colon === -1 ? '' : userinfo.slice(colon + 1);
       if (password) {
-        const obfuscatedNetloc = netloc.replaceAll(password, "****");
-        const prefix = `${urlMatch.groups?.scheme ?? ""}://`;
+        const obfuscatedNetloc = netloc.replaceAll(password, '****');
+        const prefix = `${urlMatch.groups?.scheme ?? ''}://`;
         return `${prefix}${obfuscatedNetloc}${text.slice(prefix.length + netloc.length)}`;
       }
     }
   }
 
   // Connection strings embedded in other text: postgres://user:password@host
-  let result = text.replaceAll(EMBEDDED_URL, "$<head>****$<tail>");
+  let result = text.replaceAll(EMBEDDED_URL, '$<head>****$<tail>');
   // password=xxx
-  result = result.replaceAll(PASSWORD_PARAM, "$<key>****");
+  result = result.replaceAll(PASSWORD_PARAM, '$<key>****');
   // DSN with single quotes
-  result = result.replaceAll(DSN_SINGLE_QUOTE, "$<key>****$<end>");
+  result = result.replaceAll(DSN_SINGLE_QUOTE, '$<key>****$<end>');
   // DSN with double quotes
-  result = result.replaceAll(DSN_DOUBLE_QUOTE, "$<key>****$<end>");
+  result = result.replaceAll(DSN_DOUBLE_QUOTE, '$<key>****$<end>');
   return result;
 }
 
@@ -87,12 +80,13 @@ function parseInt8(value: string): number | bigint {
 }
 
 const customTypes: CustomTypesConfig = {
-  getTypeParser: ((oid: number, format?: "text" | "binary") => {
-    if (oid === INT8_OID && (format ?? "text") === "text") {
+  getTypeParser: ((oid: number, format?: 'text' | 'binary') => {
+    if (oid === INT8_OID && (format ?? 'text') === 'text') {
       return parseInt8;
     }
+    // oxlint-disable-next-line typescript/no-unsafe-return, typescript/no-unsafe-enum-assignment -- pg types the OID as an enum and the parser as any
     return pg.types.getTypeParser(oid, format);
-  }) as CustomTypesConfig["getTypeParser"],
+  }) as CustomTypesConfig['getTypeParser'],
 };
 
 export const defaultPoolFactory: PoolFactory = (connectionString) => {
@@ -102,7 +96,7 @@ export const defaultPoolFactory: PoolFactory = (connectionString) => {
     connectionTimeoutMillis: 30_000,
     types: customTypes,
   });
-  pool.on("error", (error) => {
+  pool.on('error', (error) => {
     logError(`Idle connection pool error: ${error.message}`);
   });
   return {
@@ -134,28 +128,24 @@ async function executeWithClient(
   // for every query to keep the closing COMMIT/ROLLBACK meaningful.
   let transactionStarted = false;
   try {
-    await client.query(forceReadonly ? "BEGIN TRANSACTION READ ONLY" : "BEGIN");
+    await client.query(forceReadonly ? 'BEGIN TRANSACTION READ ONLY' : 'BEGIN');
     transactionStarted = true;
 
-    const results = await (params && params.length > 0
-      ? client.query(query, params)
-      : client.query(query));
+    const results = await (params && params.length > 0 ? client.query(query, params) : client.query(query));
     const last = results.at(-1);
 
     const rows = last && last.fields.length > 0 ? last.rows : null;
 
-    await client.query(forceReadonly ? "ROLLBACK" : "COMMIT");
+    await client.query(forceReadonly ? 'ROLLBACK' : 'COMMIT');
     transactionStarted = false;
 
     return rows ? rows.map((row) => ({ cells: { ...row } })) : null;
   } catch (error) {
     if (transactionStarted) {
       try {
-        await client.query("ROLLBACK");
+        await client.query('ROLLBACK');
       } catch (rollbackError) {
-        logError(
-          `Error rolling back transaction: ${errorMessage(rollbackError)}`
-        );
+        logError(`Error rolling back transaction: ${errorMessage(rollbackError)}`);
       }
     }
     logError(`Error executing query (${query}): ${errorMessage(error)}`);
@@ -172,10 +162,7 @@ export class DbConnPool {
   readonly #poolFactory: PoolFactory;
   #connecting: Promise<PoolLike> | null = null;
 
-  constructor(
-    connectionUrl?: string,
-    poolFactory: PoolFactory = defaultPoolFactory
-  ) {
+  constructor(connectionUrl?: string, poolFactory: PoolFactory = defaultPoolFactory) {
     this.connectionUrl = connectionUrl;
     this.#poolFactory = poolFactory;
   }
@@ -198,11 +185,12 @@ export class DbConnPool {
   }
 
   async #connect(connectionUrl?: string): Promise<PoolLike> {
+    // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- an empty URL falls back to the stored one, as upstream's `or` does
     const url = connectionUrl || this.connectionUrl;
     this.connectionUrl = url;
     if (!url) {
       this.isValid = false;
-      this.lastError = "Database connection URL not provided";
+      this.lastError = 'Database connection URL not provided';
       throw new Error(this.lastError);
     }
 
@@ -223,7 +211,7 @@ export class DbConnPool {
 
       const client = await pool.connect();
       try {
-        await client.query("SELECT 1");
+        await client.query('SELECT 1');
       } finally {
         client.release();
       }
@@ -235,12 +223,9 @@ export class DbConnPool {
       this.isValid = false;
       this.lastError = errorMessage(error);
       await this.close();
-      throw new Error(
-        `Connection attempt failed: ${obfuscatePassword(errorMessage(error))}`,
-        {
-          cause: error,
-        }
-      );
+      throw new Error(`Connection attempt failed: ${obfuscatePassword(errorMessage(error))}`, {
+        cause: error,
+      });
     }
   }
 
@@ -280,7 +265,7 @@ export class SqlDriver {
       this.engineUrl = engineUrl;
       this.conn = null;
     } else {
-      throw new Error("Either conn or engineUrl must be provided");
+      throw new Error('Either conn or engineUrl must be provided');
     }
   }
 
@@ -292,9 +277,7 @@ export class SqlDriver {
       this.conn = new DbConnPool(this.engineUrl);
       return this.conn;
     }
-    throw new Error(
-      "Connection not established. Either conn or engineUrl must be provided"
-    );
+    throw new Error('Connection not established. Either conn or engineUrl must be provided');
   }
 
   async executeQuery(

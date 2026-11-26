@@ -1,6 +1,6 @@
-import { loadModule, parseSync, SqlError } from "libpg-query";
+import { loadModule, parseSync, SqlError } from 'libpg-query';
 
-import { STRUCT_FIELD_TYPES } from "./allowlists.ts";
+import { STRUCT_FIELD_TYPES } from './allowlists.ts';
 
 export type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -21,12 +21,12 @@ export interface WrappedNode {
 export class SqlParseError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = "SqlParseError";
+    this.name = 'SqlParseError';
   }
 }
 
 export function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // Node type names start with an uppercase letter (`SelectStmt`, `A_Const`);
@@ -36,24 +36,20 @@ const NODE_TYPE_NAME = /^[A-Z]/u;
 /** Returns the node when `value` is a `{ NodeType: {...} }` wrapper, else undefined. */
 export function asWrappedNode(value: unknown): WrappedNode | undefined {
   if (!isJsonObject(value)) {
-    return;
+    return undefined;
   }
   const keys = Object.keys(value);
   const [type] = keys;
   if (keys.length !== 1 || type === undefined || !NODE_TYPE_NAME.test(type)) {
-    return;
+    return undefined;
   }
   const fields = value[type];
   return isJsonObject(fields) ? { type, fields } : undefined;
 }
 
-const UNKNOWN_NODE_TYPE = "";
+const UNKNOWN_NODE_TYPE = '';
 
-function collectNodes(
-  value: unknown,
-  structType: string | undefined,
-  out: AstNode[]
-): void {
+function collectNodes(value: unknown, structType: string | undefined, out: AstNode[]): void {
   if (Array.isArray(value)) {
     for (const item of value) {
       collectNodes(item, undefined, out);
@@ -93,12 +89,12 @@ export class AstNode {
 
   string(name: string): string | undefined {
     const value = this.fields[name];
-    return typeof value === "string" ? value : undefined;
+    return typeof value === 'string' ? value : undefined;
   }
 
   number(name: string): number | undefined {
     const value = this.fields[name];
-    return typeof value === "number" ? value : undefined;
+    return typeof value === 'number' ? value : undefined;
   }
 
   /** A single child node (wrapped, or a bare struct of a known type). */
@@ -140,12 +136,7 @@ export class AstNode {
       collectNodes(value, structType, out);
       // pglast exposes every bare struct as a node, listed or not; an unlisted
       // one is an untyped node that dispatches no visit method.
-      if (
-        out.length === before &&
-        structType === undefined &&
-        isJsonObject(value) &&
-        Object.keys(value).length > 0
-      ) {
+      if (out.length === before && structType === undefined && isJsonObject(value) && Object.keys(value).length > 0) {
         out.push(new AstNode(UNKNOWN_NODE_TYPE, value));
       }
     }
@@ -175,10 +166,8 @@ export class Visitor {
     // for-of over an array also visits elements appended during iteration.
     for (const { node, ancestors } of queue) {
       const method: unknown =
-        node.type === UNKNOWN_NODE_TYPE
-          ? undefined
-          : Reflect.get(this, `visit${node.type.replaceAll("_", "")}`);
-      if (typeof method === "function") {
+        node.type === UNKNOWN_NODE_TYPE ? undefined : Reflect.get(this, `visit${node.type.replaceAll('_', '')}`);
+      if (typeof method === 'function') {
         Reflect.apply(method, this, [ancestors, node]);
       }
       const childAncestors = [...ancestors, node];
@@ -202,19 +191,19 @@ export function loadParser(): Promise<void> {
 
 function toParseTree(result: unknown): ParseTree {
   if (!isJsonObject(result)) {
-    throw new Error("Unexpected parser output");
+    throw new Error('Unexpected parser output');
   }
   const { stmts } = result;
   if (stmts === undefined) {
     return { stmts: [] };
   }
   if (!Array.isArray(stmts)) {
-    throw new Error("Unexpected parser output");
+    throw new Error('Unexpected parser output');
   }
   const checked: RawStmtJson[] = [];
   for (const stmt of stmts) {
     if (!isJsonObject(stmt)) {
-      throw new Error("Unexpected parser output");
+      throw new Error('Unexpected parser output');
     }
     checked.push(stmt);
   }
@@ -224,7 +213,7 @@ function toParseTree(result: unknown): ParseTree {
 /** Synchronous parse; the module must already be loaded via {@link loadParser}. */
 export function parseSqlSync(sql: string): ParseTree {
   // The parser rejects an empty string; an empty script has no statements.
-  if (sql === "") {
+  if (sql === '') {
     return { stmts: [] };
   }
   try {

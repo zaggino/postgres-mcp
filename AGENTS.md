@@ -10,13 +10,13 @@ This file provides guidance to agents when working with code in this repository.
 
 Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 
-| Command | Purpose |
-| --- | --- |
-| `pnpm check` / `pnpm fix` | Ultracite on oxlint + oxfmt (not Biome) |
-| `pnpm typecheck` | `tsc --noEmit` |
-| `pnpm build` | tsdown to `dist/` |
-| `pnpm test:unit` | Vitest project `unit` |
-| `pnpm test:integration` | Vitest project `integration`; needs Docker |
+| Command                   | Purpose                                    |
+| ------------------------- | ------------------------------------------ |
+| `pnpm check` / `pnpm fix` | Ultracite on oxlint + oxfmt (not Biome)    |
+| `pnpm typecheck`          | `tsc --noEmit`                             |
+| `pnpm build`              | tsdown to `dist/`                          |
+| `pnpm test:unit`          | Vitest project `unit`                      |
+| `pnpm test:integration`   | Vitest project `integration`; needs Docker |
 
 - One file: `pnpm vitest run --project unit tests/unit/sql/safe-sql.test.ts`. One test: add `-t "<name>"`.
 - Integration tests build `tests/Dockerfile.postgres-hypopg` and run every file against Postgres 12, 15 and 16 through testcontainers (`tests/support/postgres.ts`). `PG_VERSIONS=16` limits the versions. Without Docker the tests skip, unless `REQUIRE_DOCKER=1` (set in CI). They are slow and run files serially: run them alone.
@@ -51,7 +51,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - **Number types from `pg`.** `int8` is parsed to `number` when safe and `bigint` otherwise; `numeric` stays a string and is converted with `Number()` where a calculation needs it.
 - **Tests replace seams, not modules.** `server.ts` exports `deps` and `runners` objects so tests can swap the driver and transports; unit tests use `tests/support/fake-pool.ts` for `pg` and `tests/support/mcp-client.ts` to drive the server as a client.
 - **Dependencies are pinned exactly** (`saveExact: true` in `pnpm-workspace.yaml`); Dependabot opens one grouped PR at a time.
-- **Lint config.** `oxlint.config.ts` switches off about 35 preset rules, each with its reason in a comment. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
+- **Lint config.** Linting is type-aware (`options.typeAware`, run by the `oxlint-tsgolint` engine against `tsconfig.json`). `oxlint.config.ts` switches off about 40 preset rules, each with its reason in a comment; a targeted exception is an inline `oxlint-disable-next-line <rule> -- <reason>`. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
 - TypeScript is strict with `noUncheckedIndexedAccess`, `verbatimModuleSyntax` and `.ts` import extensions; no `any` and no non-null assertions.
 - Releases: pushing a `v*` tag runs `.github/workflows/publish.yml`, which needs the `NPM_TOKEN` secret.
 

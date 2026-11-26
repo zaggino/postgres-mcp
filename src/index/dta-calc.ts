@@ -1,14 +1,9 @@
-import { pyFloatStr } from "../py-format.ts";
-import { ColumnCollector, TableAliasVisitor } from "../sql/bind-params.ts";
-import {
-  AstNode,
-  isJsonObject,
-  loadParser,
-  parseSqlSync,
-} from "../sql/pg-ast.ts";
-import type { SqlExecutor } from "../sql/safe-sql.ts";
-import { SafeSqlDriver } from "../sql/safe-sql.ts";
-import type { IndexConfiguration, QueryWeight } from "./index-opt-base.ts";
+import { pyFloatStr } from '../py-format.ts';
+import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
+import { AstNode, isJsonObject, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import type { IndexConfiguration, QueryWeight } from './index-opt-base.ts';
 import {
   candidateStr,
   formatFixed,
@@ -16,7 +11,7 @@ import {
   IndexRecommendation,
   IndexTuningBase,
   naturalSize,
-} from "./index-opt-base.ts";
+} from './index-opt-base.ts';
 
 const MEGABYTE = 1024 * 1024;
 
@@ -47,7 +42,7 @@ export interface IndexInfo {
 /** Python's `math.log`, which rejects non-positive values. */
 function pyLog(value: number): number {
   if (value <= 0) {
-    throw new RangeError("math domain error");
+    throw new RangeError('math domain error');
   }
   return Math.log(value);
 }
@@ -55,7 +50,7 @@ function pyLog(value: number): number {
 /** Python's `/`, which rejects a zero divisor. */
 function pyDivide(dividend: number, divisor: number): number {
   if (divisor === 0) {
-    throw new RangeError("float division by zero");
+    throw new RangeError('float division by zero');
   }
   return dividend / divisor;
 }
@@ -87,15 +82,13 @@ function* combinations<T>(items: readonly T[], size: number): Generator<T[]> {
 function classifyLongText(
   cells: Readonly<Record<string, unknown>>,
   maxTextLength: number
-): "problematic" | "potential" | undefined {
+): 'problematic' | 'potential' | undefined {
   if (!cells.potential_long_text) {
     return undefined;
   }
   const { avg_width: avgWidth } = cells;
   const unknownWidth = avgWidth === null || avgWidth === undefined;
-  return unknownWidth || Number(avgWidth) > maxTextLength * 0.4
-    ? "problematic"
-    : "potential";
+  return unknownWidth || Number(avgWidth) > maxTextLength * 0.4 ? 'problematic' : 'potential';
 }
 
 function pairKey(table: string, column: string): string {
@@ -103,15 +96,15 @@ function pairKey(table: string, column: string): string {
 }
 
 function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : String(value);
+  return typeof value === 'string' ? value : String(value);
 }
 
 /** The `sval`s of the String nodes of a list field. */
 function stringList(node: AstNode, field: string): string[] {
   return node
     .nodes(field)
-    .filter((item) => item.is("String"))
-    .map((item) => item.string("sval") ?? "");
+    .filter((item) => item.is('String'))
+    .map((item) => item.string('sval') ?? '');
 }
 
 export class DatabaseTuningAdvisor extends IndexTuningBase {
@@ -122,10 +115,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   paretoAlpha: number;
   minTimeImprovement: number;
 
-  constructor(
-    sqlDriver: SqlExecutor,
-    options: DatabaseTuningAdvisorOptions = {}
-  ) {
+  constructor(sqlDriver: SqlExecutor, options: DatabaseTuningAdvisorOptions = {}) {
     super(sqlDriver);
     this.budgetMb = options.budgetMb ?? -1;
     this.maxRuntimeSeconds = options.maxRuntimeSeconds ?? 30;
@@ -147,23 +137,12 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   }
 
   /** Generate index recommendations using a 'seed + greedy' approach with a time cutoff. */
-  protected override async generateRecommendations(
-    queryWeights: readonly QueryWeight[]
-  ): Promise<IndexConfiguration> {
-    const existingIndexDefs = new Set(
-      (await this.getExistingIndexes()).map((idx) =>
-        stringValue(idx.definition)
-      )
-    );
+  protected override async generateRecommendations(queryWeights: readonly QueryWeight[]): Promise<IndexConfiguration> {
+    const existingIndexDefs = new Set((await this.getExistingIndexes()).map((idx) => stringValue(idx.definition)));
 
-    const allCandidates = await this.generateCandidates(
-      queryWeights,
-      existingIndexDefs
-    );
+    const allCandidates = await this.generateCandidates(queryWeights, existingIndexDefs);
 
-    this.dtaTrace(
-      `All candidates (${allCandidates.length}): ${candidateStr(allCandidates)}`
-    );
+    this.dtaTrace(`All candidates (${allCandidates.length}): ${candidateStr(allCandidates)}`);
 
     // Only the empty seed is used: the greedy search starts from no indexes.
     const seedsList: Set<IndexRecommendation>[] = [new Set()];
@@ -175,16 +154,12 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         break;
       }
 
-      this.dtaTrace("Evaluating seed:");
+      this.dtaTrace('Evaluating seed:');
       const currentCost = await this.evaluateConfigurationCost(
         queryWeights,
         [...seed].map((idx) => idx.indexDefinition)
       );
-      const candidateIndexes = new Set(
-        allCandidates.map(
-          (c) => new IndexRecommendation(c.table, c.columns, c.using)
-        )
-      );
+      const candidateIndexes = new Set(allCandidates.map((c) => new IndexRecommendation(c.table, c.columns, c.using)));
       for (const idx of seed) {
         candidateIndexes.delete(idx);
       }
@@ -216,9 +191,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     // Filter out columns that appear in fewer than minColumnUsage queries
     const tableColumns = new Map<string, string[]>();
     for (const [tbl, usageMap] of tableColumnsUsage) {
-      const keptCols = [...usageMap]
-        .filter(([, usage]) => usage >= this.minColumnUsage)
-        .map(([column]) => column);
+      const keptCols = [...usageMap].filter(([, usage]) => usage >= this.minColumnUsage).map(([column]) => column);
       if (keptCols.length > 0) {
         tableColumns.set(tbl, keptCols);
       }
@@ -236,38 +209,24 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     }
 
     // filter out duplicates with existing indexes
-    const filteredCandidates = candidates.filter(
-      (c) => !this.indexExists(c, existingDefs)
-    );
+    const filteredCandidates = candidates.filter((c) => !this.indexExists(c, existingDefs));
 
     // filter out candidates with columns not used in query conditions
-    const conditionFiltered1 = this.filterCandidatesByQueryConditions(
-      workload,
-      filteredCandidates
-    );
+    const conditionFiltered1 = this.filterCandidatesByQueryConditions(workload, filteredCandidates);
 
     // filter out long text columns
-    const conditionFiltered =
-      await this.filterLongTextColumns(conditionFiltered1);
+    const conditionFiltered = await this.filterLongTextColumns(conditionFiltered1);
 
     this.dtaTrace(`Generated ${candidates.length} total candidates`);
-    this.dtaTrace(
-      `Filtered to ${filteredCandidates.length} after removing existing indexes.`
-    );
-    this.dtaTrace(
-      `Filtered to ${conditionFiltered1.length} after removing unused columns.`
-    );
-    this.dtaTrace(
-      `Filtered to ${conditionFiltered.length} after removing long text columns.`
-    );
+    this.dtaTrace(`Filtered to ${filteredCandidates.length} after removing existing indexes.`);
+    this.dtaTrace(`Filtered to ${conditionFiltered1.length} after removing unused columns.`);
+    this.dtaTrace(`Filtered to ${conditionFiltered.length} after removing long text columns.`);
     await this.storeHypotheticalSizes(conditionFiltered);
     return conditionFiltered;
   }
 
   /** table -> {column -> number of queries using it} */
-  private countColumnUsage(
-    workload: readonly QueryWeight[]
-  ): Map<string, Map<string, number>> {
+  private countColumnUsage(workload: readonly QueryWeight[]): Map<string, Map<string, number>> {
     const tableColumnsUsage = new Map<string, Map<string, number>>();
     for (const [, stmt] of workload) {
       const columnsPerTable = this.sqlBindParams.extractStmtColumns(stmt);
@@ -286,13 +245,11 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   }
 
   /** Batch create all hypothetical indexes and store their size estimates. */
-  private async storeHypotheticalSizes(
-    candidates: readonly IndexRecommendation[]
-  ): Promise<void> {
+  private async storeHypotheticalSizes(candidates: readonly IndexRecommendation[]): Promise<void> {
     if (candidates.length === 0) {
       return;
     }
-    const query = "SELECT hypopg_create_index({});".repeat(candidates.length);
+    const query = 'SELECT hypopg_create_index({});'.repeat(candidates.length);
     await SafeSqlDriver.executeParamQuery(
       this.sqlDriver,
       query,
@@ -301,12 +258,10 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
     // Get estimated sizes without resetting indexes yet
     const result = await this.sqlDriver.executeQuery(
-      "SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;"
+      'SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;'
     );
     if (result !== null) {
-      const indexMap = new Map(
-        result.map((r) => [r.cells.index_name, r.cells.index_size])
-      );
+      const indexMap = new Map(result.map((r) => [r.cells.index_name, r.cells.index_size]));
       for (const idx of candidates) {
         const size = indexMap.get(idx.name);
         if (size !== undefined) {
@@ -315,7 +270,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       }
     }
 
-    await this.sqlDriver.executeQuery("SELECT hypopg_reset();");
+    await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
   }
 
   /**
@@ -335,13 +290,9 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const alpha = this.paretoAlpha;
     const { minTimeImprovement } = this;
 
-    this.dtaTrace("\n[GREEDY SEARCH] Starting enumeration");
-    this.dtaTrace(
-      `  - Parameters: alpha=${pyFloatStr(alpha)}, min_time_improvement=${pyFloatStr(minTimeImprovement)}`
-    );
-    this.dtaTrace(
-      `  - Initial indexes: ${currentIndexes.size}, Candidates: ${candidateIndexes.size}`
-    );
+    this.dtaTrace('\n[GREEDY SEARCH] Starting enumeration');
+    this.dtaTrace(`  - Parameters: alpha=${pyFloatStr(alpha)}, min_time_improvement=${pyFloatStr(minTimeImprovement)}`);
+    this.dtaTrace(`  - Initial indexes: ${currentIndexes.size}, Candidates: ${candidateIndexes.size}`);
 
     // The tables involved in this analysis
     const tables = new Set<string>();
@@ -364,9 +315,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     let currentSpace = baseRelationSize + indexesSize;
     let currentTime = currentCost;
     let currentObjective =
-      currentCost > 0 && currentSpace > 0
-        ? pyLog(currentTime) + alpha * pyLog(currentSpace)
-        : Number.POSITIVE_INFINITY;
+      currentCost > 0 && currentSpace > 0 ? pyLog(currentTime) + alpha * pyLog(currentSpace) : Number.POSITIVE_INFINITY;
 
     this.dtaTrace(
       `  - Initial configuration: Time=${formatFixed(currentTime, 2)}, ` +
@@ -390,10 +339,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       for (const candidate of candidateIndexes) {
         this.dtaTrace(`Evaluating candidate: ${candidateStr([candidate])}`);
         // Additional size from this index
-        const indexSize = await this.estimateIndexSize(
-          candidate.table,
-          candidate.columns
-        );
+        const indexSize = await this.estimateIndexSize(candidate.table, candidate.columns);
         this.dtaTrace(`    + Index size: ${naturalSize(indexSize)}`);
         // Total space with this index = current space + new index size
         const testSpace = currentSpace + indexSize;
@@ -430,13 +376,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         const testObjective = pyLog(testTime) + alpha * pyLog(testSpace);
 
         // Select the index with the best time improvement that meets our threshold
-        if (
-          testObjective < bestObjective &&
-          timeImprovement > bestTimeImprovement
-        ) {
-          this.dtaTrace(
-            `  - Updating best candidate: ${candidateStr([candidate])}`
-          );
+        if (testObjective < bestObjective && timeImprovement > bestTimeImprovement) {
+          this.dtaTrace(`  - Updating best candidate: ${candidateStr([candidate])}`);
           bestIndex = candidate;
           bestTime = testTime;
           bestSpace = testSpace;
@@ -451,9 +392,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
       // If no improvement or no valid candidates, stop
       if (bestIndex === undefined) {
-        this.dtaTrace(
-          `STOPPED SEARCH: No indexes found with time improvement >= ${formatPercent(minTimeImprovement)}`
-        );
+        this.dtaTrace(`STOPPED SEARCH: No indexes found with time improvement >= ${formatPercent(minTimeImprovement)}`);
         break;
       }
 
@@ -481,7 +420,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
       // Check the time limit after doing at least one iteration
       if (this.checkTime()) {
-        this.dtaTrace("STOPPED SEARCH: Time limit reached");
+        this.dtaTrace('STOPPED SEARCH: Time limit reached');
         break;
       }
     }
@@ -510,9 +449,9 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       currentTime: number;
     }
   ): Promise<void> {
-    this.dtaTrace("\n[SEARCH COMPLETE]");
+    this.dtaTrace('\n[SEARCH COMPLETE]');
     if (addedCount === 0) {
-      this.dtaTrace("No indexes added - baseline configuration is optimal");
+      this.dtaTrace('No indexes added - baseline configuration is optimal');
       return;
     }
     const indexesSize = await this.sumIndexSizes(currentIndexes);
@@ -525,9 +464,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     );
   }
 
-  private async sumIndexSizes(
-    indexes: Iterable<IndexRecommendation>
-  ): Promise<number> {
+  private async sumIndexSizes(indexes: Iterable<IndexRecommendation>): Promise<number> {
     let total = 0;
     for (const idx of indexes) {
       total += await this.estimateIndexSize(idx.table, idx.columns);
@@ -563,7 +500,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
           }
         }
       } catch (error) {
-        throw new Error("Error extracting condition columns from query", {
+        throw new Error('Error extracting condition columns from query', {
           cause: error,
         });
       }
@@ -572,9 +509,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     // Keep only candidates where all columns are used in conditions
     return candidates.filter((candidate) => {
       const used = conditionColumns.get(candidate.table);
-      return (
-        used !== undefined && candidate.columns.every((col) => used.has(col))
-      );
+      return used !== undefined && candidate.columns.every((col) => used.has(col));
     });
   }
 
@@ -582,10 +517,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
    * Filter out indexes that contain long text columns based on catalog
    * information. `maxTextLength` is the maximum allowed text length.
    */
-  async filterLongTextColumns(
-    candidates: IndexRecommendation[],
-    maxTextLength = 100
-  ): Promise<IndexRecommendation[]> {
+  async filterLongTextColumns(candidates: IndexRecommendation[], maxTextLength = 100): Promise<IndexRecommendation[]> {
     if (candidates.length === 0) {
       return [];
     }
@@ -594,17 +526,14 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const tableColumns = new Map<string, [string, string]>();
     for (const candidate of candidates) {
       for (const column of candidate.columns) {
-        tableColumns.set(pairKey(candidate.table, column), [
-          candidate.table,
-          column,
-        ]);
+        tableColumns.set(pairKey(candidate.table, column), [candidate.table, column]);
       }
     }
 
     // The values are embedded without escaping
     const pairs = [...tableColumns.values()];
-    const tablesArray = pairs.map(([table]) => `'${table}'`).join(",");
-    const columnsArray = pairs.map(([, col]) => `'${col}'`).join(",");
+    const tablesArray = pairs.map(([table]) => `'${table}'`).join(',');
+    const columnsArray = pairs.map(([, col]) => `'${col}'`).join(',');
 
     // Column types and their length limits from the catalog
     const typeQuery = `
@@ -641,28 +570,23 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const potentialProblematicColumns = new Set<string>();
 
     for (const row of result) {
-      const key = pairKey(
-        stringValue(row.cells.table_name),
-        stringValue(row.cells.column_name)
-      );
+      const key = pairKey(stringValue(row.cells.table_name), stringValue(row.cells.column_name));
       const kind = classifyLongText(row.cells, maxTextLength);
-      if (kind === "problematic") {
+      if (kind === 'problematic') {
         problematicColumns.add(key);
-      } else if (kind === "potential") {
+      } else if (kind === 'potential') {
         potentialProblematicColumns.add(key);
       }
     }
 
     // Filter candidates based on column information
     return candidates.filter((candidate) => {
-      const keys = candidate.columns.map((column) =>
-        pairKey(candidate.table, column)
-      );
+      const keys = candidate.columns.map((column) => pairKey(candidate.table, column));
       const firstProblem = keys.findIndex((key) => problematicColumns.has(key));
       // Columns before a problematic one still mark the candidate as potentially problematic
       const examined = firstProblem === -1 ? keys : keys.slice(0, firstProblem);
       if (examined.some((key) => potentialProblematicColumns.has(key))) {
-        candidate.potentialProblematicReason = "long_text_column";
+        candidate.potentialProblematicReason = 'long_text_column';
       }
       return firstProblem === -1;
     });
@@ -689,50 +613,38 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
    * the database, by parsing the index definitions and comparing their
    * structure. The parser must be loaded (`loadParser()`) beforehand.
    */
-  indexExists(
-    index: IndexRecommendation,
-    existingDefs: ReadonlySet<string>
-  ): boolean {
+  indexExists(index: IndexRecommendation, existingDefs: ReadonlySet<string>): boolean {
     try {
-      const candidateInfo = this.extractIndexInfo(
-        DatabaseTuningAdvisor.parseFirstStatement(index.definition)
-      );
+      const candidateInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(index.definition));
 
       for (const existingDef of existingDefs) {
         try {
           // Skip if it's obviously not an index
           const upper = existingDef.toUpperCase();
-          if (
-            !(
-              upper.includes("CREATE INDEX") ||
-              upper.includes("CREATE UNIQUE INDEX")
-            )
-          ) {
+          if (!(upper.includes('CREATE INDEX') || upper.includes('CREATE UNIQUE INDEX'))) {
             continue;
           }
 
-          const existingInfo = this.extractIndexInfo(
-            DatabaseTuningAdvisor.parseFirstStatement(existingDef)
-          );
+          const existingInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(existingDef));
 
           if (this.isSameIndex(candidateInfo, existingInfo)) {
             return true;
           }
         } catch (error) {
-          throw new Error("Error parsing existing index", { cause: error });
+          throw new Error('Error parsing existing index', { cause: error });
         }
       }
 
       return false;
     } catch (error) {
-      throw new Error("Error in robust index comparison", { cause: error });
+      throw new Error('Error in robust index comparison', { cause: error });
     }
   }
 
   private static parseFirstStatement(sql: string): AstNode | undefined {
     const [first] = parseSqlSync(sql).stmts;
     if (!first) {
-      throw new Error("No statement found");
+      throw new Error('No statement found');
     }
     return AstNode.from(first.stmt);
   }
@@ -740,24 +652,24 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   /** Extract key information from a parsed index node. */
   extractIndexInfo(node: AstNode | undefined): IndexInfo {
     try {
-      if (!node?.is("IndexStmt")) {
+      if (!node?.is('IndexStmt')) {
         throw new TypeError(`Not an index statement: ${node?.type}`);
       }
 
       // `relation` is a bare RangeVar struct
       const relationJson = node.fields.relation;
       const relation = isJsonObject(relationJson)
-        ? (AstNode.from(relationJson) ?? new AstNode("RangeVar", relationJson))
+        ? (AstNode.from(relationJson) ?? new AstNode('RangeVar', relationJson))
         : undefined;
-      const tableName = relation?.string("relname");
+      const tableName = relation?.string('relname');
       if (tableName === undefined) {
-        throw new TypeError("Index statement has no table name");
+        throw new TypeError('Index statement has no table name');
       }
 
       const columns: string[] = [];
-      for (const idxElem of node.nodes("indexParams")) {
-        const name = idxElem.string("name");
-        const expr = idxElem.node("expr");
+      for (const idxElem of node.nodes('indexParams')) {
+        const name = idxElem.string('name');
+        const expr = idxElem.node('expr');
         if (name) {
           columns.push(name);
         } else if (expr) {
@@ -769,48 +681,48 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       return {
         table: tableName.toLowerCase(),
         columns: columns.map((col) => col.toLowerCase()),
-        type: (node.string("accessMethod") || "btree").toLowerCase(),
+        // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- an empty access method falls back to btree, as upstream's `or` does
+        type: (node.string('accessMethod') || 'btree').toLowerCase(),
         unique: node.fields.unique === true,
       };
     } catch (error) {
-      this.dtaTrace(
-        `Error extracting index info: ${error instanceof Error ? error.message : String(error)}`
-      );
-      throw new Error("Error extracting index info", { cause: error });
+      this.dtaTrace(`Error extracting index info: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error('Error extracting index info', { cause: error });
     }
   }
 
   /** Convert an AST expression (like FuncCall) to a string, e.g. "lower(name)". */
   astExprToString(expr: AstNode): string {
     try {
-      if (expr.is("FuncCall")) {
-        const names = stringList(expr, "funcname");
-        const funcName = names.length > 0 ? names.join(".") : "unknown_func";
-        const args = expr.nodes("args").map((arg) => this.astExprToString(arg));
-        return `${funcName}(${args.join(",")})`;
+      if (expr.is('FuncCall')) {
+        const names = stringList(expr, 'funcname');
+        const funcName = names.length > 0 ? names.join('.') : 'unknown_func';
+        const args = expr.nodes('args').map((arg) => this.astExprToString(arg));
+        return `${funcName}(${args.join(',')})`;
       }
-      if (expr.is("ColumnRef")) {
-        const fields = stringList(expr, "fields");
-        return fields.length > 0 ? fields.join(".") : "unknown_column";
+      if (expr.is('ColumnRef')) {
+        const fields = stringList(expr, 'fields');
+        return fields.length > 0 ? fields.join('.') : 'unknown_column';
       }
-      if (expr.is("A_Const")) {
-        const sval = expr.node("sval")?.string("sval");
+      if (expr.is('A_Const')) {
+        const sval = expr.node('sval')?.string('sval');
         if (sval !== undefined) {
           return sval;
         }
         const { ival } = expr.fields;
         if (isJsonObject(ival)) {
+          // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
           return String(ival.ival ?? 0);
         }
         const { fval } = expr.fields;
-        if (isJsonObject(fval) && typeof fval.fval === "string") {
+        if (isJsonObject(fval) && typeof fval.fval === 'string') {
           return fval.fval;
         }
       }
       // Other expressions never equal a plain column name
       return `<${expr.type}>`;
     } catch (error) {
-      throw new Error("Error converting expression to string", {
+      throw new Error('Error converting expression to string', {
         cause: error,
       });
     }
@@ -828,12 +740,11 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
     // Same columns (order matters for most index types)?
     const sameColumns =
-      index1.columns.length === index2.columns.length &&
-      index1.columns.every((col, i) => col === index2.columns[i]);
+      index1.columns.length === index2.columns.length && index1.columns.every((col, i) => col === index2.columns[i]);
     if (!sameColumns) {
       // For hash indexes, order doesn't matter
       return (
-        index1.type === "hash" &&
+        index1.type === 'hash' &&
         new Set(index1.columns).size === new Set(index2.columns).size &&
         index1.columns.every((col) => index2.columns.includes(col))
       );
@@ -879,16 +790,13 @@ export class ConditionColumnCollector extends ColumnCollector {
    * Visit a SelectStmt node, focusing on condition-related clauses while still
    * collecting column aliases.
    */
-  override visitSelectStmt(
-    _ancestors: readonly AstNode[],
-    node: AstNode
-  ): void {
+  override visitSelectStmt(_ancestors: readonly AstNode[], node: AstNode): void {
     this.conditionQueryLevel += 1;
     const queryLevel = this.conditionQueryLevel;
 
     // Get table aliases first
     const aliasVisitor = new TableAliasVisitor();
-    const fromClause = node.nodes("fromClause");
+    const fromClause = node.nodes('fromClause');
     for (const fromItem of fromClause) {
       aliasVisitor.visit(fromItem);
     }
@@ -898,42 +806,48 @@ export class ConditionColumnCollector extends ColumnCollector {
     });
 
     // First pass: collect column aliases from targetList
-    for (const targetEntry of node.nodes("targetList")) {
-      const colAlias = targetEntry.string("name");
+    for (const targetEntry of node.nodes('targetList')) {
+      const colAlias = targetEntry.string('name');
       if (colAlias) {
         this.conditionAliases.set(colAlias, {
-          node: targetEntry.node("val"),
+          node: targetEntry.node('val'),
           level: queryLevel,
         });
       }
     }
 
     // Process WHERE clause
-    const whereClause = node.node("whereClause");
+    const whereClause = node.node('whereClause');
     if (whereClause) {
-      this.inConditionDo(() => this.visit(whereClause));
+      this.inConditionDo(() => {
+        this.visit(whereClause);
+      });
     }
 
     // Process JOIN conditions in fromClause
     for (const item of fromClause) {
-      const quals = item.is("JoinExpr") ? item.node("quals") : undefined;
+      const quals = item.is('JoinExpr') ? item.node('quals') : undefined;
       if (quals) {
-        this.inConditionDo(() => this.visit(quals));
+        this.inConditionDo(() => {
+          this.visit(quals);
+        });
       }
     }
 
     // Process HAVING clause, which may reference aliases
-    const havingClause = node.node("havingClause");
+    const havingClause = node.node('havingClause');
     if (havingClause) {
-      this.inConditionDo(() => this.processNodeWithAliases(havingClause));
+      this.inConditionDo(() => {
+        this.processNodeWithAliases(havingClause);
+      });
     }
 
     // Process ORDER BY clause, also important for indexes
-    const sortClause = node.nodes("sortClause");
+    const sortClause = node.nodes('sortClause');
     if (sortClause.length > 0) {
       this.inConditionDo(() => {
         for (const sortItem of sortClause) {
-          this.processNodeWithAliases(sortItem.node("node"));
+          this.processNodeWithAliases(sortItem.node('node'));
         }
       });
     }
@@ -958,8 +872,8 @@ export class ConditionColumnCollector extends ColumnCollector {
     }
 
     // If the node is a column reference, it might be an alias
-    if (node.is("ColumnRef")) {
-      const fields = stringList(node, "fields");
+    if (node.is('ColumnRef')) {
+      const fields = stringList(node, 'fields');
       const [colName] = fields;
       if (fields.length === 1 && colName !== undefined) {
         const aliasInfo = this.conditionAliases.get(colName);
@@ -988,7 +902,7 @@ export class ConditionColumnCollector extends ColumnCollector {
       return;
     }
 
-    const fields = stringList(node, "fields");
+    const fields = stringList(node, 'fields');
     const [first, second] = fields;
 
     // Check if this is a reference to a column alias
@@ -1011,7 +925,7 @@ export class ConditionColumnCollector extends ColumnCollector {
       // column existence check is not backed by the catalog.
       for (const scopeTable of scope.tables) {
         // Skip schema qualification if present
-        const dot = scopeTable.indexOf(".");
+        const dot = scopeTable.indexOf('.');
         const table = dot === -1 ? scopeTable : scopeTable.slice(dot + 1);
         this.addConditionColumn(table, first);
       }

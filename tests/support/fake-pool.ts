@@ -1,6 +1,6 @@
-import { vi } from "vitest";
+import { vi } from 'vitest';
 
-import type { PoolLike, QueryResultLike } from "../../src/sql/sql-driver.ts";
+import type { PoolLike, QueryResultLike } from '../../src/sql/sql-driver.ts';
 
 export interface RecordedQuery {
   text: string;
@@ -30,6 +30,7 @@ export function createFakePool(handler: QueryHandler = () => [noRowsResult]) {
           try {
             return Promise.resolve(handler(recorded));
           } catch (error) {
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- passes on whatever the handler threw, Error or not
             return Promise.reject(error);
           }
         },

@@ -1,15 +1,11 @@
-import type { SqlExecutor } from "../sql/safe-sql.ts";
+import type { SqlExecutor } from '../sql/safe-sql.ts';
 
 export class ConnectionHealthCalc {
   private readonly maxIdleConnections: number;
   private readonly maxTotalConnections: number;
   private readonly sqlDriver: SqlExecutor;
 
-  constructor(
-    sqlDriver: SqlExecutor,
-    maxTotalConnections = 500,
-    maxIdleConnections = 100
-  ) {
+  constructor(sqlDriver: SqlExecutor, maxTotalConnections = 500, maxIdleConnections = 100) {
     this.sqlDriver = sqlDriver;
     this.maxTotalConnections = maxTotalConnections;
     this.maxIdleConnections = maxIdleConnections;

@@ -1,12 +1,9 @@
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import type { ExtensionStatus } from "../../src/sql/extension-utils.ts";
-import { SqlDriver } from "../../src/sql/sql-driver.ts";
-import {
-  PG_STAT_STATEMENTS,
-  TopQueriesCalc,
-} from "../../src/top-queries/top-queries-calc.ts";
-import { describeWithPostgres } from "../support/postgres.ts";
+import type { ExtensionStatus } from '../../src/sql/extension-utils.ts';
+import { SqlDriver } from '../../src/sql/sql-driver.ts';
+import { PG_STAT_STATEMENTS, TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
+import { describeWithPostgres } from '../support/postgres.ts';
 
 const checkExtensionOverride = vi.hoisted(() => ({
   status: null as ExtensionStatus | null,
@@ -14,30 +11,23 @@ const checkExtensionOverride = vi.hoisted(() => ({
 
 // ESM imports cannot be monkeypatched, so the module is wrapped instead: the
 // real check runs unless a test installs an override.
-vi.mock("../../src/sql/extension-utils.ts", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../src/sql/extension-utils.ts")>();
+vi.mock('../../src/sql/extension-utils.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/sql/extension-utils.ts')>();
   return {
     ...actual,
     checkExtension: (...args: Parameters<typeof actual.checkExtension>) =>
-      checkExtensionOverride.status
-        ? Promise.resolve(checkExtensionOverride.status)
-        : actual.checkExtension(...args),
+      checkExtensionOverride.status ? Promise.resolve(checkExtensionOverride.status) : actual.checkExtension(...args),
   };
 });
 
 /** Set up test data with sample queries to analyze. */
 async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
   // Check if extension exists
-  const rows = await sqlDriver.executeQuery(
-    "SELECT 1 FROM pg_available_extensions WHERE name = 'pg_stat_statements'"
-  );
+  const rows = await sqlDriver.executeQuery("SELECT 1 FROM pg_available_extensions WHERE name = 'pg_stat_statements'");
   if (!rows || rows.length === 0) {
-    throw new Error("pg_stat_statements extension not available");
+    throw new Error('pg_stat_statements extension not available');
   }
-  await sqlDriver.executeQuery(
-    "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
-  );
+  await sqlDriver.executeQuery('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
 
   // Create test tables
   await sqlDriver.executeQuery(`
@@ -59,12 +49,12 @@ async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
         `);
 
   // Reset pg_stat_statements to ensure clean data
-  await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
+  await sqlDriver.executeQuery('SELECT pg_stat_statements_reset()');
 
   // Run queries several times to ensure they're captured and have significant stats
   // Query 1: Simple select (should be fast)
   for (let i = 0; i < 10; i += 1) {
-    await sqlDriver.executeQuery("SELECT COUNT(*) FROM test_items");
+    await sqlDriver.executeQuery('SELECT COUNT(*) FROM test_items');
   }
 
   // Query 2: More complex query (should be slower)
@@ -90,11 +80,11 @@ async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
 }
 
 async function cleanupTestData(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_items");
-  await sqlDriver.executeQuery("SELECT pg_stat_statements_reset()");
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_items');
+  await sqlDriver.executeQuery('SELECT pg_stat_statements_reset()');
 }
 
-describeWithPostgres("top queries with a real database", (postgres) => {
+describeWithPostgres('top queries with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(() => {
@@ -107,9 +97,7 @@ describeWithPostgres("top queries with a real database", (postgres) => {
     await sqlDriver.conn?.close();
   });
 
-  test("reports the slowest queries by total and mean execution time", async ({
-    skip,
-  }) => {
+  test('reports the slowest queries by total and mean execution time', async ({ skip }) => {
     try {
       await setupTestData(sqlDriver);
 
@@ -118,26 +106,26 @@ describeWithPostgres("top queries with a real database", (postgres) => {
         "SELECT query FROM pg_stat_statements WHERE query LIKE '%CROSS JOIN%' LIMIT 1"
       );
       if (!pgStats || pgStats.length === 0) {
-        skip("pg_stat_statements did not capture the CROSS JOIN query");
+        skip('pg_stat_statements did not capture the CROSS JOIN query');
       }
 
       const calc = new TopQueriesCalc(sqlDriver);
 
       // Get top queries by total execution time
-      const totalResult = await calc.getTopQueriesByTime(10, "total");
+      const totalResult = await calc.getTopQueriesByTime(10, 'total');
 
       // Get top queries by mean execution time
-      const meanResult = await calc.getTopQueriesByTime(10, "mean");
+      const meanResult = await calc.getTopQueriesByTime(10, 'mean');
 
       // Basic verification
-      expect(totalResult).toContain("slowest queries by total execution time");
-      expect(meanResult).toContain("slowest queries by mean execution time");
+      expect(totalResult).toContain('slowest queries by total execution time');
+      expect(meanResult).toContain('slowest queries by mean execution time');
 
       // Check for our specific test queries - at least one should be found
       // since we run many different queries
-      const hasCrossJoin = totalResult.includes("CROSS JOIN");
-      const hasValueGt500 = totalResult.includes("value > 500");
-      const hasCount = totalResult.includes("COUNT(*)");
+      const hasCrossJoin = totalResult.includes('CROSS JOIN');
+      const hasValueGt500 = totalResult.includes('value > 500');
+      const hasCount = totalResult.includes('COUNT(*)');
 
       expect(hasCrossJoin || hasValueGt500 || hasCount).toBe(true);
     } finally {
@@ -145,20 +133,20 @@ describeWithPostgres("top queries with a real database", (postgres) => {
     }
   });
 
-  test("returns installation instructions when pg_stat_statements is not installed", async () => {
+  test('returns installation instructions when pg_stat_statements is not installed', async () => {
     const calc = new TopQueriesCalc(sqlDriver);
     checkExtensionOverride.status = {
       isInstalled: false,
       isAvailable: true,
       name: PG_STAT_STATEMENTS,
-      message: "Extension not installed",
+      message: 'Extension not installed',
       defaultVersion: null,
     };
 
     const result = await calc.getTopQueriesByTime();
 
     // Check that we get installation instructions
-    expect(result).toContain("not currently installed");
-    expect(result).toContain("CREATE EXTENSION");
+    expect(result).toContain('not currently installed');
+    expect(result).toContain('CREATE EXTENSION');
   });
 });

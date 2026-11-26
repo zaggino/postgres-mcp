@@ -1,19 +1,19 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from 'vitest';
 
-import { DatabaseHealthTool } from "../../src/database-health/database-health.ts";
-import { SqlDriver } from "../../src/sql/sql-driver.ts";
-import { describeWithPostgres } from "../support/postgres.ts";
+import { DatabaseHealthTool } from '../../src/database-health/database-health.ts';
+import { SqlDriver } from '../../src/sql/sql-driver.ts';
+import { describeWithPostgres } from '../support/postgres.ts';
 
 async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   const statements = [
     // Drop existing tables if they exist
-    "DROP TABLE IF EXISTS test_orders",
+    'DROP TABLE IF EXISTS test_orders',
     'DROP TABLE IF EXISTS "UpperCaseOrders"',
-    "DROP TABLE IF EXISTS test_customers",
-    "DROP SEQUENCE IF EXISTS test_seq",
+    'DROP TABLE IF EXISTS test_customers',
+    'DROP SEQUENCE IF EXISTS test_seq',
 
     // Create test sequence
-    "CREATE SEQUENCE test_seq",
+    'CREATE SEQUENCE test_seq',
 
     // Create tables with various features to test health checks
     `
@@ -93,8 +93,8 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         `,
 
     // Run ANALYZE to update statistics
-    "ANALYZE test_customers",
-    "ANALYZE test_orders",
+    'ANALYZE test_customers',
+    'ANALYZE test_orders',
     'ANALYZE "UpperCaseOrders"',
   ];
   for (const statement of statements) {
@@ -103,13 +103,13 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
 }
 
 async function cleanupTestTables(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_orders");
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
   await sqlDriver.executeQuery('DROP TABLE IF EXISTS "UpperCaseOrders"');
-  await sqlDriver.executeQuery("DROP TABLE IF EXISTS test_customers");
-  await sqlDriver.executeQuery("DROP SEQUENCE IF EXISTS test_seq");
+  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
+  await sqlDriver.executeQuery('DROP SEQUENCE IF EXISTS test_seq');
 }
 
-describeWithPostgres("database health with a real database", (postgres) => {
+describeWithPostgres('database health with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(async () => {
@@ -125,25 +125,25 @@ describeWithPostgres("database health with a real database", (postgres) => {
     }
   });
 
-  test("reports every health check for health type all", async () => {
+  test('reports every health check for health type all', async () => {
     const healthTool = new DatabaseHealthTool(sqlDriver);
 
-    const healthReport = await healthTool.health("all");
+    const healthReport = await healthTool.health('all');
 
-    expect(healthReport).toBeTypeOf("string");
+    expect(healthReport).toBeTypeOf('string');
     // Check that all health components are present
-    expect(healthReport).toContain("Invalid index check:");
-    expect(healthReport).toContain("Duplicate index check:");
-    expect(healthReport).toContain("Index bloat:");
-    expect(healthReport).toContain("Unused index check:");
-    expect(healthReport).toContain("Connection health:");
-    expect(healthReport).toContain("Vacuum health:");
-    expect(healthReport).toContain("Sequence health:");
-    expect(healthReport).toContain("Replication health:");
-    expect(healthReport).toContain("Buffer health for indexes:");
-    expect(healthReport).toContain("Buffer health for tables:");
-    expect(healthReport).toContain("Constraint health:");
+    expect(healthReport).toContain('Invalid index check:');
+    expect(healthReport).toContain('Duplicate index check:');
+    expect(healthReport).toContain('Index bloat:');
+    expect(healthReport).toContain('Unused index check:');
+    expect(healthReport).toContain('Connection health:');
+    expect(healthReport).toContain('Vacuum health:');
+    expect(healthReport).toContain('Sequence health:');
+    expect(healthReport).toContain('Replication health:');
+    expect(healthReport).toContain('Buffer health for indexes:');
+    expect(healthReport).toContain('Buffer health for tables:');
+    expect(healthReport).toContain('Constraint health:');
     // Should detect duplicate index
-    expect(healthReport).toContain("idx_orders_customer_dup");
+    expect(healthReport).toContain('idx_orders_customer_dup');
   });
 });

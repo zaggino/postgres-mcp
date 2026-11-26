@@ -681,6 +681,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       return {
         table: tableName.toLowerCase(),
         columns: columns.map((col) => col.toLowerCase()),
+        // An empty access method falls back to btree, as upstream's `or` did.
+        // oxlint-disable-next-line typescript/prefer-nullish-coalescing
         type: (node.string('accessMethod') || 'btree').toLowerCase(),
         unique: node.fields.unique === true,
       };
@@ -817,21 +819,27 @@ export class ConditionColumnCollector extends ColumnCollector {
     // Process WHERE clause
     const whereClause = node.node('whereClause');
     if (whereClause) {
-      this.inConditionDo(() => this.visit(whereClause));
+      this.inConditionDo(() => {
+        this.visit(whereClause);
+      });
     }
 
     // Process JOIN conditions in fromClause
     for (const item of fromClause) {
       const quals = item.is('JoinExpr') ? item.node('quals') : undefined;
       if (quals) {
-        this.inConditionDo(() => this.visit(quals));
+        this.inConditionDo(() => {
+          this.visit(quals);
+        });
       }
     }
 
     // Process HAVING clause, which may reference aliases
     const havingClause = node.node('havingClause');
     if (havingClause) {
-      this.inConditionDo(() => this.processNodeWithAliases(havingClause));
+      this.inConditionDo(() => {
+        this.processNodeWithAliases(havingClause);
+      });
     }
 
     // Process ORDER BY clause, also important for indexes

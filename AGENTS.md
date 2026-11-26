@@ -51,7 +51,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - **Number types from `pg`.** `int8` is parsed to `number` when safe and `bigint` otherwise; `numeric` stays a string and is converted with `Number()` where a calculation needs it.
 - **Tests replace seams, not modules.** `server.ts` exports `deps` and `runners` objects so tests can swap the driver and transports; unit tests use `tests/support/fake-pool.ts` for `pg` and `tests/support/mcp-client.ts` to drive the server as a client.
 - **Dependencies are pinned exactly** (`saveExact: true` in `pnpm-workspace.yaml`); Dependabot opens one grouped PR at a time.
-- **Lint config.** `oxlint.config.ts` switches off about 35 preset rules, each with its reason in a comment. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
+- **Lint config.** Linting is type-aware (`options.typeAware`, run by the `oxlint-tsgolint` engine against `tsconfig.json`). `oxlint.config.ts` switches off about 40 preset rules, each with its reason in a comment; a single deliberate exception is an inline `oxlint-disable-next-line` with its reason. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
 - TypeScript is strict with `noUncheckedIndexedAccess`, `verbatimModuleSyntax` and `.ts` import extensions; no `any` and no non-null assertions.
 - Releases: pushing a `v*` tag runs `.github/workflows/publish.yml`, which needs the `NPM_TOKEN` secret.
 

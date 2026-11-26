@@ -199,7 +199,7 @@ export class SafeSqlDriver implements SqlExecutor {
     const run = () => this.sqlDriver.executeQuery(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
 
     if (!this.timeout) {
-      return run();
+      return await run();
     }
     return await this.runWithTimeout(run, query);
   }

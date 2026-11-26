@@ -2,10 +2,6 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
-## 2026-11-26 · Major · Tooling · Linting is not type-aware
-
-`oxlint.config.ts` runs the syntax-only rules. Setting `options.typeAware: true` with the `oxlint-tsgolint` engine (as in `zaggino/z-schema`) adds the rules that need types, such as floating promises and unsafe `any` flows, which matter most in an async server. The number of findings is unknown until it is switched on, so do it as its own change.
-
 ## 2026-11-26 · Major · Infra · Releases are tagged by hand and there is no changelog
 
 The version in `package.json` is bumped manually and `.github/workflows/publish.yml` runs on a pushed `v*` tag, only checking that the tag matches. Release-please (as in `zaggino/z-schema`) would produce the version bump, `CHANGELOG.md`, tag and GitHub release from the Conventional Commits history. It needs a personal access token stored as a secret of a `main` environment. Set it up before the first npm publish so the changelog starts at the first release.
@@ -307,3 +303,7 @@ Error messages returned to the client and written to stderr include the full SQL
 ## 2026-11-26 · Minor · Refactor · Python-shaped data contracts
 
 `RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.
+
+## 2026-11-26 · Minor · Tooling · Two type-aware lint rules are switched off
+
+`oxlint.config.ts` switches off `typescript/promise-function-async` (50 findings) and `typescript/strict-boolean-expressions` (40) because their fixes can change behaviour. Marking a promise-returning function `async` turns its synchronous throws into rejections. Replacing a truthiness check on a nullable string or boolean changes which values pass, for example `""`. Go through the findings one by one, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.

@@ -172,6 +172,7 @@ function formatPlanNode(node: PlanNode, level = 0): string {
   // Add filter if present
   if (node.filter) {
     // Truncate long filters for readability (by code point)
+    // oxlint-disable-next-line typescript/no-misused-spread -- truncation is by code point on purpose
     const chars = [...node.filter];
     const filterText =
       chars.length > MAX_FILTER_LENGTH ? `${chars.slice(0, MAX_FILTER_LENGTH - 3).join('')}...` : node.filter;

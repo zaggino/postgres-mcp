@@ -74,6 +74,8 @@ function toColumnList(columns: unknown): unknown[] {
     return columns;
   }
   if (typeof columns === 'string') {
+    // Mirrors upstream's list(str), which splits a string into characters (see docs/TODO.md).
+    // oxlint-disable-next-line typescript/no-misused-spread
     return [...columns];
   }
   if (isJsonObject(columns)) {
@@ -124,7 +126,7 @@ export class ExplainPlanTool {
   /** Generate an EXPLAIN plan for a SQL query. */
   async explain(sqlQuery: string, doAnalyze = false): Promise<ExplainPlanArtifact | ErrorResult> {
     const [modifiedSqlQuery, useGenericPlan] = await this.replaceQueryParametersIfNeeded(sqlQuery);
-    return this.runExplainQuery(modifiedSqlQuery, doAnalyze, useGenericPlan);
+    return await this.runExplainQuery(modifiedSqlQuery, doAnalyze, useGenericPlan);
   }
 
   /** Generate an EXPLAIN ANALYZE plan for a SQL query. */

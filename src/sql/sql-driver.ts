@@ -84,6 +84,8 @@ const customTypes: CustomTypesConfig = {
     if (oid === INT8_OID && (format ?? 'text') === 'text') {
       return parseInt8;
     }
+    // pg types the OID as its TypeId enum and the parser as any; every OID is accepted at runtime.
+    // oxlint-disable-next-line typescript/no-unsafe-return, typescript/no-unsafe-enum-assignment
     return pg.types.getTypeParser(oid, format);
   }) as CustomTypesConfig['getTypeParser'],
 };
@@ -184,6 +186,8 @@ export class DbConnPool {
   }
 
   async #connect(connectionUrl?: string): Promise<PoolLike> {
+    // An empty URL argument falls back to the stored one, as upstream's `or` did.
+    // oxlint-disable-next-line typescript/prefer-nullish-coalescing
     const url = connectionUrl || this.connectionUrl;
     this.connectionUrl = url;
     if (!url) {

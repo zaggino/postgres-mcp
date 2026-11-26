@@ -36,12 +36,12 @@ const NODE_TYPE_NAME = /^[A-Z]/u;
 /** Returns the node when `value` is a `{ NodeType: {...} }` wrapper, else undefined. */
 export function asWrappedNode(value: unknown): WrappedNode | undefined {
   if (!isJsonObject(value)) {
-    return;
+    return undefined;
   }
   const keys = Object.keys(value);
   const [type] = keys;
   if (keys.length !== 1 || type === undefined || !NODE_TYPE_NAME.test(type)) {
-    return;
+    return undefined;
   }
   const fields = value[type];
   return isJsonObject(fields) ? { type, fields } : undefined;

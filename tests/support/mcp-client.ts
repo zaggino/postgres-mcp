@@ -14,12 +14,19 @@ export async function connectClient(server: McpServer): Promise<Client> {
 /** The text of the single content item a tool call returned. */
 export async function callToolText(client: Client, name: string, args: Record<string, unknown> = {}): Promise<string> {
   const result = await client.callTool({ name, arguments: args });
-  const content = Array.isArray(result.content) ? result.content : [];
+  const content: unknown[] = Array.isArray(result.content) ? result.content : [];
   if (content.length !== 1) {
     throw new Error(`Expected one content item, got ${content.length}`);
   }
   const [item] = content;
-  if (item?.type !== 'text' || typeof item.text !== 'string') {
+  if (
+    typeof item !== 'object' ||
+    item === null ||
+    !('type' in item) ||
+    item.type !== 'text' ||
+    !('text' in item) ||
+    typeof item.text !== 'string'
+  ) {
     throw new Error('Expected a text content item');
   }
   return item.text;

@@ -771,6 +771,7 @@ export class SqlBindParams {
         }
       }
     }
+    return undefined;
   }
 
   /** Statistics for a column from pg_stats (cached, including misses). */

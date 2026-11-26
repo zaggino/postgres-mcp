@@ -40,7 +40,7 @@ function useDriver(executeQuery: ExecuteQuery = vi.fn<ExecuteQuery>()) {
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
   const client = await connectClient(createServer(AccessMode.UNRESTRICTED));
-  return callToolText(client, 'explain_query', args);
+  return await callToolText(client, 'explain_query', args);
 }
 
 beforeEach(() => {

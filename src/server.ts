@@ -775,6 +775,7 @@ const SSE_SESSION_PARAM = 'sessionId';
 
 async function handleSseRequest(
   createMcpServer: ServerFactory,
+  // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   sessions: Map<string, SSEServerTransport>,
   guard: HostGuard,
   req: IncomingMessage,
@@ -792,6 +793,7 @@ async function handleSseRequest(
       res.writeHead(403).end(violation);
       return;
     }
+    // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
     const transport = new SSEServerTransport('/messages', res, guard);
     sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
@@ -821,6 +823,7 @@ export async function startSseServer(
   host: string,
   port: number
 ): Promise<HttpServerHandle> {
+  // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   const sessions = new Map<string, SSEServerTransport>();
   const state: { guard: HostGuard } = { guard: {} };
 

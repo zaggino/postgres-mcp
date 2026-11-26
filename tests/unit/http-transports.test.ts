@@ -38,6 +38,7 @@ async function startSse(): Promise<HttpServerHandle> {
   return handle;
 }
 
+// oxlint-disable-next-line typescript/no-deprecated -- the server still offers the SSE transport
 async function listToolsThrough(client: Client, transport: SSEClientTransport | StreamableHTTPClientTransport) {
   cleanups.push(() => client.close());
   await client.connect(transport);
@@ -96,6 +97,7 @@ test('SSE serves the nine tools to the SDK client', async () => {
 
   const tools = await listToolsThrough(
     new Client({ name: 'test-client', version: '0.0.0' }),
+    // oxlint-disable-next-line typescript/no-deprecated -- the server still offers the SSE transport
     new SSEClientTransport(new URL(`http://${HOST}:${port}/sse`))
   );
 

@@ -175,7 +175,7 @@ describe(ExplainPlanTool, () => {
 
     expect(result).toBeInstanceOf(ErrorResult);
     expect(result).toMatchObject({
-      value: expect.stringContaining('Database error'),
+      value: expect.stringContaining('Database error') as unknown,
     });
   });
 
@@ -187,7 +187,7 @@ describe(ExplainPlanTool, () => {
 
     expect(result).toBeInstanceOf(ErrorResult);
     expect(result).toMatchObject({
-      value: expect.stringContaining('Expected list'),
+      value: expect.stringContaining('Expected list') as unknown,
     });
   });
 
@@ -199,7 +199,7 @@ describe(ExplainPlanTool, () => {
 
     expect(result).toBeInstanceOf(ErrorResult);
     expect(result).toMatchObject({
-      value: expect.stringContaining('No results'),
+      value: expect.stringContaining('No results') as unknown,
     });
   });
 
@@ -211,7 +211,7 @@ describe(ExplainPlanTool, () => {
 
     expect(result).toBeInstanceOf(ErrorResult);
     expect(result).toMatchObject({
-      value: expect.stringContaining('No results'),
+      value: expect.stringContaining('No results') as unknown,
     });
   });
 

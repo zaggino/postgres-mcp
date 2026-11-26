@@ -242,7 +242,7 @@ Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt
 
 ## 2026-11-26 · Minor · Security · Publishing has no approval gate
 
-The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Add required reviewers to the environment, and a tag ruleset that limits who can create `v*` tags, since the publish guard trusts any `v<version>` tag.
+The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Add required reviewers to the environment. (Creating `v*` tags, which the publish guard trusts, is already limited to admins by a tag ruleset.)
 
 ## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
 

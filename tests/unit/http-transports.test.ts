@@ -181,3 +181,67 @@ test('--allowed-origins and --allowed-hosts set to * accept any Origin and Host'
 
   expect(status).toBe(400);
 });
+
+const MCP_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+
+/** Raw `initialize` against /mcp: the status and the session id the server assigned. */
+function initializeSession(port: number): Promise<{ sessionId: string | undefined; status: number }> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: HOST, port, path: '/mcp', method: 'POST', headers: MCP_HEADERS }, (res) => {
+      res.resume();
+      const id = res.headers['mcp-session-id'];
+      resolve({ status: res.statusCode ?? 0, sessionId: Array.isArray(id) ? id[0] : id });
+    });
+    req.on('error', reject);
+    req.end(INITIALIZE);
+  });
+}
+
+test('streamable HTTP refuses an initialize beyond --max-sessions with 503', async () => {
+  const { port } = await startStreamable({ maxSessions: 1 });
+
+  const first = await initializeSession(port);
+  const second = await initializeSession(port);
+
+  expect(first.status).toBe(200);
+  expect(second.status).toBe(503);
+});
+
+test('SSE refuses GET /sse beyond --max-sessions with 503', async () => {
+  const { port } = await startSse({ maxSessions: 1 });
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  // oxlint-disable-next-line typescript/no-deprecated -- the server still offers the SSE transport
+  await listToolsThrough(client, new SSEClientTransport(new URL(`http://${HOST}:${port}/sse`)));
+
+  const status = await statusOf(port, { method: 'GET' }, '/sse');
+
+  expect(status).toBe(503);
+});
+
+test('a streamable HTTP session idle past --session-idle-minutes is closed and its id gets 404', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startStreamable({ sessionIdleMinutes: 1 });
+  const { sessionId } = await initializeSession(port);
+  const post = () =>
+    statusOf(
+      port,
+      { method: 'POST', body: '{}', headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId ?? '' } },
+      '/mcp'
+    );
+
+  await vi.advanceTimersByTimeAsync(30_000);
+  const requestResetsTimer = await post();
+  await vi.advanceTimersByTimeAsync(45_000);
+  const stillOpen = await post();
+  await vi.advanceTimersByTimeAsync(60_001);
+  const expired = await post();
+
+  expect(sessionId).toBeTruthy();
+  expect(requestResetsTimer).not.toBe(404);
+  expect(stillOpen).not.toBe(404);
+  expect(expired).toBe(404);
+});

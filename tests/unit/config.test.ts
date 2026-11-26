@@ -61,6 +61,10 @@ describe(parseCli, () => {
     expect(() => parseCli(['--database', 'a', '--idle-minutes=-1'])).toThrow(/--idle-minutes: must be between 0 and/u);
   });
 
+  it('rejects --max-sessions below 1', () => {
+    expect(() => parseCli(['--database', 'a', '--max-sessions=0'])).toThrow(/--max-sessions: must be at least 1/u);
+  });
+
   it('refuses a non-loopback HTTP bind without --allowed-hosts and accepts it with one', () => {
     const args = ['--database', 'a', '--transport=sse', '--sse-host=0.0.0.0'];
 

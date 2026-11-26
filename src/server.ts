@@ -14,7 +14,14 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
-import { exitOnCliError, HELP, LOOPBACK_HOSTS, parseCli } from './cli.ts';
+import {
+  DEFAULT_MAX_SESSIONS,
+  DEFAULT_SESSION_IDLE_MINUTES,
+  exitOnCliError,
+  HELP,
+  LOOPBACK_HOSTS,
+  parseCli,
+} from './cli.ts';
 import { resolveConfig } from './config.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
 import { DatabaseAccessError, DatabaseRegistry } from './database-registry.ts';
@@ -662,7 +669,63 @@ export interface HttpServerOptions {
   /** Origin header values to accept; `['*']` accepts any. */
   allowedOrigins?: readonly string[];
   host: string;
+  /** Most concurrent sessions; further ones get 503. Default 100. */
+  maxSessions?: number;
   port: number;
+  /** Minutes without a request before a session is closed; 0 = never. Default 30. */
+  sessionIdleMinutes?: number;
+}
+
+interface IdleTimers {
+  clear: (id: string) => void;
+  clearAll: () => void;
+  /** Restarts the idle timer of a tracked session. */
+  touch: (id: string) => void;
+  /** Starts tracking a session; `onExpire` runs once if it stays idle. */
+  track: (id: string, onExpire: () => void) => void;
+}
+
+/** Per-session idle timers; they never keep the process alive. */
+function createIdleTimers(idleMinutes: number): IdleTimers {
+  const entries = new Map<string, { onExpire: () => void; timer: NodeJS.Timeout }>();
+  const idleMs = idleMinutes * 60_000;
+
+  const start = (id: string, onExpire: () => void) => {
+    const timer = setTimeout(() => {
+      entries.delete(id);
+      log('INFO', `Closing session ${id} after ${idleMinutes} idle minute(s)`);
+      onExpire();
+    }, idleMs);
+    timer.unref();
+    entries.set(id, { timer, onExpire });
+  };
+  return {
+    track: (id, onExpire) => {
+      if (idleMs > 0) {
+        start(id, onExpire);
+      }
+    },
+    touch: (id) => {
+      const entry = entries.get(id);
+      if (entry) {
+        clearTimeout(entry.timer);
+        start(id, entry.onExpire);
+      }
+    },
+    clear: (id) => {
+      const entry = entries.get(id);
+      if (entry) {
+        clearTimeout(entry.timer);
+        entries.delete(id);
+      }
+    },
+    clearAll: () => {
+      for (const entry of entries.values()) {
+        clearTimeout(entry.timer);
+      }
+      entries.clear();
+    },
+  };
 }
 
 /** A running HTTP transport: the bound port and a way to stop it. */
@@ -851,10 +914,23 @@ async function runStdio(createMcpServer: ServerFactory, onClientGone: () => void
 
 const SSE_SESSION_PARAM = 'sessionId';
 
+interface SessionLimits {
+  maxSessions: number;
+  timers: IdleTimers;
+}
+
+function createSessionLimits(options: HttpServerOptions): SessionLimits {
+  return {
+    maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+    timers: createIdleTimers(options.sessionIdleMinutes ?? DEFAULT_SESSION_IDLE_MINUTES),
+  };
+}
+
 async function handleSseRequest(
   createMcpServer: ServerFactory,
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   sessions: Map<string, SSEServerTransport>,
+  limits: SessionLimits,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
@@ -865,13 +941,23 @@ async function handleSseRequest(
   }
   const path = url.pathname;
   if (req.method === 'GET' && path === '/sse') {
+    if (sessions.size >= limits.maxSessions) {
+      res.writeHead(503).end('Too many sessions');
+      return;
+    }
     // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
     const transport = new SSEServerTransport('/messages', res);
     sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
     res.on('close', () => {
       sessions.delete(transport.sessionId);
+      limits.timers.clear(transport.sessionId);
       void mcpServer.close();
+    });
+    limits.timers.track(transport.sessionId, () => {
+      sessions.delete(transport.sessionId);
+      void transport.close();
+      res.end();
     });
     await mcpServer.connect(transport);
     return;
@@ -883,6 +969,7 @@ async function handleSseRequest(
       res.writeHead(sessionId ? 404 : 400).end('Could not find session');
       return;
     }
+    limits.timers.touch(transport.sessionId);
     await transport.handlePostMessage(req, res);
     return;
   }
@@ -896,6 +983,7 @@ export async function startSseServer(
 ): Promise<HttpServerHandle> {
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
   const sessions = new Map<string, SSEServerTransport>();
+  const limits = createSessionLimits(options);
   // The bound port is only known after listening, and the default allow-list names it.
   const state: { guard: RequestGuard | undefined } = { guard: undefined };
 
@@ -905,7 +993,7 @@ export async function startSseServer(
       res.writeHead(403).end(violation);
       return;
     }
-    handleSseRequest(createMcpServer, sessions, req, res).catch((error: unknown) => {
+    handleSseRequest(createMcpServer, sessions, limits, req, res).catch((error: unknown) => {
       log('ERROR', `SSE request failed: ${errorMessage(error)}`);
       if (!res.headersSent) {
         res.writeHead(500).end('Internal Server Error');
@@ -916,14 +1004,26 @@ export async function startSseServer(
   const boundPort = await listen(httpServer, options.host, options.port);
   state.guard = createRequestGuard(options, boundPort);
   log('INFO', `SSE server listening on http://${options.host}:${boundPort}/sse`);
-  return { port: boundPort, close: () => closeHttpServer(httpServer) };
+  return {
+    port: boundPort,
+    close: async () => {
+      limits.timers.clearAll();
+      await closeHttpServer(httpServer);
+    },
+  };
 }
 
 type McpSessions = Map<string, StreamableHTTPServerTransport>;
 
+interface McpContext extends SessionLimits {
+  /** Sessions being initialized, which count against the cap before they are in the map. */
+  pending: { count: number };
+  sessions: McpSessions;
+}
+
 async function startMcpSession(
   createMcpServer: ServerFactory,
-  sessions: McpSessions,
+  { sessions, timers, pending }: McpContext,
   req: IncomingMessage,
   res: ServerResponse,
   body: unknown
@@ -932,32 +1032,49 @@ async function startMcpSession(
     sessionIdGenerator: () => randomUUID(),
     onsessioninitialized: (id) => {
       sessions.set(id, transport);
+      timers.track(id, () => {
+        sessions.delete(id);
+        void transport.close();
+      });
     },
   });
   transport.onclose = () => {
     if (transport.sessionId) {
       sessions.delete(transport.sessionId);
+      timers.clear(transport.sessionId);
     }
   };
-  await createMcpServer().connect(transport);
-  await transport.handleRequest(req, res, body);
+  pending.count += 1;
+  try {
+    await createMcpServer().connect(transport);
+    await transport.handleRequest(req, res, body);
+  } finally {
+    pending.count -= 1;
+  }
 }
 
 async function handleMcpRequest(
   createMcpServer: ServerFactory,
-  sessions: McpSessions,
+  context: McpContext,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
   const sessionId = headerValue(req, 'mcp-session-id');
-  const existing = sessionId ? sessions.get(sessionId) : undefined;
+  const existing = sessionId ? context.sessions.get(sessionId) : undefined;
+  if (sessionId && existing) {
+    context.timers.touch(sessionId);
+  }
 
   if (req.method === 'POST') {
     const body = await readBody(req);
     if (existing) {
       await existing.handleRequest(req, res, body);
     } else if (!sessionId && isInitializeRequest(body)) {
-      await startMcpSession(createMcpServer, sessions, req, res, body);
+      if (context.sessions.size + context.pending.count >= context.maxSessions) {
+        sendJsonRpcError(res, 503, -32_000, 'Too many sessions');
+        return;
+      }
+      await startMcpSession(createMcpServer, context, req, res, body);
     } else {
       sendMissingSession(res, sessionId);
     }
@@ -989,7 +1106,7 @@ export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
   options: HttpServerOptions
 ): Promise<HttpServerHandle> {
-  const sessions: McpSessions = new Map();
+  const context: McpContext = { ...createSessionLimits(options), pending: { count: 0 }, sessions: new Map() };
   // The bound port is only known after listening, and the default allow-list names it.
   const state: { guard: RequestGuard | undefined } = { guard: undefined };
 
@@ -1008,7 +1125,7 @@ export async function startStreamableHttpServer(
       res.writeHead(404).end('Not Found');
       return;
     }
-    handleMcpRequest(createMcpServer, sessions, req, res).catch((error: unknown) => {
+    handleMcpRequest(createMcpServer, context, req, res).catch((error: unknown) => {
       log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
       if (error instanceof RangeError) {
         sendBodyTooLarge(req, res);
@@ -1030,7 +1147,8 @@ export async function startStreamableHttpServer(
   return {
     port: boundPort,
     close: async () => {
-      await Promise.all([...sessions.values()].map((transport) => transport.close()));
+      context.timers.clearAll();
+      await Promise.all([...context.sessions.values()].map((transport) => transport.close()));
       await closeHttpServer(httpServer);
     },
   };
@@ -1131,6 +1249,8 @@ export async function main(argv: string[]): Promise<void> {
         port: options.ssePort,
         allowedHosts: options.allowedHosts,
         allowedOrigins: options.allowedOrigins,
+        maxSessions: options.maxSessions,
+        sessionIdleMinutes: options.sessionIdleMinutes,
       });
       break;
     }
@@ -1140,6 +1260,8 @@ export async function main(argv: string[]): Promise<void> {
         port: options.streamableHttpPort,
         allowedHosts: options.allowedHosts,
         allowedOrigins: options.allowedOrigins,
+        maxSessions: options.maxSessions,
+        sessionIdleMinutes: options.sessionIdleMinutes,
       });
       break;
     }

@@ -8,6 +8,9 @@ export class CliError extends Error {}
 /** The longest delay setTimeout accepts (2^31 - 1 ms); larger values would fire at once. */
 export const MAX_IDLE_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
 
+export const DEFAULT_MAX_SESSIONS = 100;
+export const DEFAULT_SESSION_IDLE_MINUTES = 30;
+
 const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
 
@@ -26,6 +29,8 @@ export interface CliOptions {
   streamableHttpPort: number;
   allowedHosts: string[] | undefined;
   allowedOrigins: string[] | undefined;
+  maxSessions: number;
+  sessionIdleMinutes: number;
   transport: Transport;
 }
 
@@ -39,6 +44,7 @@ const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
                     [--streamable-http-host STREAMABLE_HTTP_HOST]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
                     [--allowed-hosts HOSTS] [--allowed-origins ORIGINS]
+                    [--max-sessions N] [--session-idle-minutes N]
                     [--database NAME] [--config FILE] [--idle-minutes N]`;
 
 export const HELP = `${USAGE}
@@ -78,6 +84,11 @@ options:
                         Requests without an Origin header are not checked.
                         Default: loopback origins on a loopback bind, none
                         otherwise
+  --max-sessions N      Most concurrent sessions the HTTP transports hold;
+                        further ones get 503 (default: ${DEFAULT_MAX_SESSIONS})
+  --session-idle-minutes N
+                        Close an HTTP session after N minutes without a request
+                        (default: ${DEFAULT_SESSION_IDLE_MINUTES}, 0 = never)
 `;
 
 /** The matching choice, or `undefined` when the flag is absent. */
@@ -116,6 +127,34 @@ function parseIdleMinutes(value: string | undefined): number | undefined {
   const minutes = Number.parseInt(value, 10);
   if (minutes < 0 || minutes > MAX_IDLE_MINUTES) {
     throw new CliError(`argument --idle-minutes: must be between 0 and ${MAX_IDLE_MINUTES}: '${value}'`);
+  }
+  return minutes;
+}
+
+function parseMaxSessions(value: string | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_MAX_SESSIONS;
+  }
+  if (!INT_PATTERN.test(value.trim())) {
+    throw new CliError(`argument --max-sessions: invalid int value: '${value}'`);
+  }
+  const sessions = Number.parseInt(value, 10);
+  if (sessions < 1 || !Number.isSafeInteger(sessions)) {
+    throw new CliError(`argument --max-sessions: must be at least 1: '${value}'`);
+  }
+  return sessions;
+}
+
+function parseSessionIdleMinutes(value: string | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_SESSION_IDLE_MINUTES;
+  }
+  if (!INT_PATTERN.test(value.trim())) {
+    throw new CliError(`argument --session-idle-minutes: invalid int value: '${value}'`);
+  }
+  const minutes = Number.parseInt(value, 10);
+  if (minutes < 0 || minutes > MAX_IDLE_MINUTES) {
+    throw new CliError(`argument --session-idle-minutes: must be between 0 and ${MAX_IDLE_MINUTES}: '${value}'`);
   }
   return minutes;
 }
@@ -166,6 +205,8 @@ function parseRaw(argv: string[]) {
         'streamable-http-port': { type: 'string' },
         'allowed-hosts': { type: 'string' },
         'allowed-origins': { type: 'string' },
+        'max-sessions': { type: 'string' },
+        'session-idle-minutes': { type: 'string' },
       },
     });
   } catch (error) {
@@ -195,6 +236,8 @@ export function parseCli(argv: string[]): CliOptions | null {
     streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
     allowedHosts: parseList('--allowed-hosts', values['allowed-hosts']),
     allowedOrigins: parseList('--allowed-origins', values['allowed-origins']),
+    maxSessions: parseMaxSessions(values['max-sessions']),
+    sessionIdleMinutes: parseSessionIdleMinutes(values['session-idle-minutes']),
   };
   requireAllowedHosts(options);
   return options;

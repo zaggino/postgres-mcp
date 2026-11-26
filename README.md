@@ -19,7 +19,7 @@ Differences from upstream:
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
 - Error messages and stderr logs do not include SQL text or parse trees. Upstream included the full query.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
-- The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB.
+- The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
 - One server serves many databases. Every tool takes a required `database` argument and there is a new `list_databases` tool, so the tool schemas differ from upstream. Databases are named with `--database` flags or a `--config` file, which can also discover the databases of a server; pools open lazily and close when idle (`--idle-minutes`). `DATABASE_URI` and the positional `database_url` are removed. See [Multiple databases](#multiple-databases).
 
@@ -174,6 +174,8 @@ The HTTP transports check every request on every MCP endpoint (`/mcp`, `/sse` an
 - `Host` must be on the allow-list. On a loopback bind (`localhost`, `127.0.0.1`, `::1`) that is those three names with the bound port plus whatever `--allowed-hosts` adds. On any other bind it is `--allowed-hosts` alone, and the server refuses to start without it; pass `--allowed-hosts='*'` to accept any Host. An entry without a port matches that hostname on any port; matching ignores case.
 - `Origin`, when the request has one, must be on the allow-list: `--allowed-origins` if given, else `http://localhost:<port>`, `http://127.0.0.1:<port>` and `http://[::1]:<port>` on a loopback bind and nothing on any other bind. `--allowed-origins='*'` accepts any Origin. Requests without an `Origin` header (non-browser clients) are not checked.
 
+Each HTTP transport holds at most `--max-sessions` sessions (default 100) and answers 503 `Too many sessions` to a new streamable HTTP `initialize` or a new `GET /sse` beyond that. A session with no request for `--session-idle-minutes` (default 30, `0` never) is closed, and its id then gets 404. Every request that carries the session id restarts the timer: any `POST`, `GET` or `DELETE` on `/mcp`, and each `POST /messages` for SSE. An open event stream (the SSE `GET /sse` stream, or a streamable HTTP `GET`) counts as activity only when it starts, so a client that only listens on a stream is closed after the idle time.
+
 There is no authentication. A server bound to a non-loopback address logs a warning at startup saying so; put it behind something that authenticates.
 
 ## CLI reference
@@ -195,6 +197,8 @@ postgres-mcp [options] (--database NAME ... | --config FILE)
 | `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.                                                           |
 | `--allowed-hosts`        | loopback only  | Comma-separated `Host` values to accept; required on a non-loopback bind; `*` accepts any.    |
 | `--allowed-origins`      | loopback only  | Comma-separated `Origin` values (`scheme://host[:port]`) to accept; `*` accepts any.          |
+| `--max-sessions`         | `100`          | Most concurrent HTTP sessions; further ones get 503.                                          |
+| `--session-idle-minutes` | `30`           | Close an HTTP session after this many minutes without a request; `0` never; max 35791.        |
 | `-h`, `--help`           |                | Show help.                                                                                    |
 
 Environment variables:

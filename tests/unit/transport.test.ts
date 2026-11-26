@@ -89,6 +89,8 @@ describe('transport host and port', () => {
       port: 9000,
       allowedHosts: ['mcp.example', 'other.example:9000'],
       allowedOrigins: ['https://app.example'],
+      maxSessions: 100,
+      sessionIdleMinutes: 30,
     });
   });
 
@@ -102,6 +104,8 @@ describe('transport host and port', () => {
       port: 8080,
       allowedHosts: ['*'],
       allowedOrigins: undefined,
+      maxSessions: 100,
+      sessionIdleMinutes: 30,
     });
   });
 });

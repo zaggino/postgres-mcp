@@ -219,7 +219,9 @@ This is a TypeScript fork maintained by Martin Zagora. The original project was 
 
 ## Issues and contributions
 
-Open an [issue](https://github.com/zaggino/postgres-mcp/issues) or a [pull request](https://github.com/zaggino/postgres-mcp/pulls). Known follow-ups are listed in [docs/TODO.md](docs/TODO.md).
+Open an [issue](https://github.com/zaggino/postgres-mcp/issues) or a [pull request](https://github.com/zaggino/postgres-mcp/pulls). Known follow-ups are listed in [docs/TODO.md](docs/TODO.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+`pnpm install` installs git hooks (`lefthook.yml`) that check formatting and lint on commit and run the typecheck and build on push.
 
 ## Technical notes
 

@@ -1,15 +1,9 @@
 pre-commit:
   commands:
     check:
-      glob: '*.{cjs,js,json,jsonc,md,mjs,mts,ts,yaml,yml}'
       run: pnpm exec ultracite check {staged_files}
 
 pre-push:
-  piped: true
   commands:
-    typecheck:
-      priority: 1
-      run: pnpm typecheck
-    build:
-      priority: 2
-      run: pnpm build
+    verify:
+      run: pnpm typecheck && pnpm build

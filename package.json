@@ -37,7 +37,7 @@
     "check": "ultracite check",
     "fix": "ultracite fix",
     "prepack": "pnpm build",
-    "prepare": "lefthook install",
+    "prepare": "lefthook install || exit 0",
     "test:integration": "vitest run --project integration",
     "test:unit": "vitest run --project unit",
     "typecheck": "tsc --noEmit"

@@ -14,14 +14,7 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
-import {
-  DEFAULT_MAX_SESSIONS,
-  DEFAULT_SESSION_IDLE_MINUTES,
-  exitOnCliError,
-  HELP,
-  LOOPBACK_HOSTS,
-  parseCli,
-} from './cli.ts';
+import { exitOnCliError, HELP, httpOptions, parseCli } from './cli.ts';
 import { resolveConfig } from './config.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
 import { DatabaseAccessError, DatabaseRegistry } from './database-registry.ts';
@@ -34,6 +27,9 @@ import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
+import type { HttpServerOptions } from './transports/request-guard.ts';
+import { guardRequests, LOOPBACK_HOSTS } from './transports/request-guard.ts';
+import { SessionStore } from './transports/sessions.ts';
 
 const SERVER_NAME = 'postgres-mcp';
 const SERVER_VERSION = packageJson.version;
@@ -662,147 +658,18 @@ type ServerFactory = () => McpServer;
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
-/** Options shared by the HTTP transports. */
-export interface HttpServerOptions {
-  /** Host header values to accept besides loopback on a loopback bind; `['*']` accepts any. */
-  allowedHosts?: readonly string[];
-  /** Origin header values to accept; `['*']` accepts any. */
-  allowedOrigins?: readonly string[];
-  host: string;
-  /** Most concurrent sessions; further ones get 503. Default 100. */
-  maxSessions?: number;
-  port: number;
-  /** Minutes without a request before a session is closed; 0 = never. Default 30. */
-  sessionIdleMinutes?: number;
-}
-
-interface IdleTimers {
-  clear: (id: string) => void;
-  clearAll: () => void;
-  /** Restarts the idle timer of a tracked session. */
-  touch: (id: string) => void;
-  /** Starts tracking a session; `onExpire` runs once if it stays idle. */
-  track: (id: string, onExpire: () => void) => void;
-}
-
-/** Per-session idle timers; they never keep the process alive. */
-function createIdleTimers(idleMinutes: number): IdleTimers {
-  const entries = new Map<string, { onExpire: () => void; timer: NodeJS.Timeout }>();
-  const idleMs = idleMinutes * 60_000;
-
-  const start = (id: string, onExpire: () => void) => {
-    const timer = setTimeout(() => {
-      entries.delete(id);
-      log('INFO', `Closing session ${id} after ${idleMinutes} idle minute(s)`);
-      onExpire();
-    }, idleMs);
-    timer.unref();
-    entries.set(id, { timer, onExpire });
-  };
-  return {
-    track: (id, onExpire) => {
-      if (idleMs > 0) {
-        start(id, onExpire);
-      }
-    },
-    touch: (id) => {
-      const entry = entries.get(id);
-      if (entry) {
-        clearTimeout(entry.timer);
-        start(id, entry.onExpire);
-      }
-    },
-    clear: (id) => {
-      const entry = entries.get(id);
-      if (entry) {
-        clearTimeout(entry.timer);
-        entries.delete(id);
-      }
-    },
-    clearAll: () => {
-      for (const entry of entries.values()) {
-        clearTimeout(entry.timer);
-      }
-      entries.clear();
-    },
-  };
-}
-
 /** A running HTTP transport: the bound port and a way to stop it. */
 export interface HttpServerHandle {
   close: () => Promise<void>;
   port: number;
 }
 
-const ANY = '*';
-
-/** The hostname of a Host header value or allow-list entry, and whether it names a port. */
-function splitHostPort(value: string): { hasPort: boolean; hostname: string } {
-  const lower = value.toLowerCase();
-  if (lower.startsWith('[')) {
-    const close = lower.indexOf(']');
-    if (close !== -1) {
-      return { hostname: lower.slice(0, close + 1), hasPort: close + 1 < lower.length };
-    }
-  }
-  const colon = lower.lastIndexOf(':');
-  if (colon === -1 || lower.indexOf(':') !== colon) {
-    return { hostname: lower, hasPort: false };
-  }
-  return { hostname: lower.slice(0, colon), hasPort: true };
-}
-
-function hostAllowed(header: string, allowed: readonly string[]): boolean {
-  const actual = splitHostPort(header);
-  const lower = header.toLowerCase();
-  return allowed.some((entry) => {
-    const expected = splitHostPort(entry);
-    return expected.hasPort ? entry.toLowerCase() === lower : expected.hostname === actual.hostname;
-  });
-}
-
-/**
- * Builds the Host and Origin check applied to every request of an HTTP
- * transport: a web page cannot reach the server through a DNS name it controls
- * or from a foreign origin. Returns the rejection message, or null to accept.
- */
-function createRequestGuard(options: HttpServerOptions, boundPort: number): (req: IncomingMessage) => string | null {
-  const loopback = LOOPBACK_HOSTS.has(options.host);
-  const configuredHosts = options.allowedHosts ?? [];
-  const allowedHosts = [
-    ...(loopback ? [`localhost:${boundPort}`, `127.0.0.1:${boundPort}`, `[::1]:${boundPort}`] : []),
-    ...configuredHosts,
-  ];
-  const anyHost = configuredHosts.includes(ANY);
-  const anyOrigin = options.allowedOrigins?.includes(ANY) ?? false;
-  const allowedOrigins = new Set(
-    (
-      options.allowedOrigins ??
-      (loopback ? [`http://localhost:${boundPort}`, `http://127.0.0.1:${boundPort}`, `http://[::1]:${boundPort}`] : [])
-    ).map((origin) => origin.toLowerCase())
-  );
-
-  return (req) => {
-    const hostHeader = req.headers.host;
-    if (!anyHost && !(hostHeader && hostAllowed(hostHeader, allowedHosts))) {
-      return `Invalid Host header: ${hostHeader}`;
-    }
-    const originHeader = req.headers.origin;
-    if (originHeader !== undefined && !anyOrigin && !allowedOrigins.has(originHeader.toLowerCase())) {
-      return `Invalid Origin header: ${originHeader}`;
-    }
-    return null;
-  };
-}
-
-type RequestGuard = ReturnType<typeof createRequestGuard>;
-
-function warnIfExposed(host: string, accessMode: string, allowedHosts: readonly string[] | undefined): void {
-  if (!LOOPBACK_HOSTS.has(host)) {
-    const hostChecks = allowedHosts?.includes(ANY) ? ' Host checks are disabled by --allowed-hosts=*.' : '';
+function warnIfExposed(http: HttpServerOptions, accessMode: string): void {
+  if (!LOOPBACK_HOSTS.has(http.host)) {
+    const hostChecks = http.allowedHosts === 'any' ? ' Host checks are disabled by --allowed-hosts=*.' : '';
     log(
       'WARNING',
-      `Listening on ${host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
+      `Listening on ${http.host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
     );
   }
 }
@@ -914,23 +781,47 @@ async function runStdio(createMcpServer: ServerFactory, onClientGone: () => void
 
 const SSE_SESSION_PARAM = 'sessionId';
 
-interface SessionLimits {
-  maxSessions: number;
-  timers: IdleTimers;
-}
-
-function createSessionLimits(options: HttpServerOptions): SessionLimits {
-  return {
-    maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
-    timers: createIdleTimers(options.sessionIdleMinutes ?? DEFAULT_SESSION_IDLE_MINUTES),
+function logCloseFailure(what: string): (error: unknown) => void {
+  return (error) => {
+    log('ERROR', `Error closing ${what}: ${errorMessage(error)}`);
   };
 }
 
+/** Keeps the session's idle timer stopped until the response closes. */
+function holdSession<T extends { close: () => Promise<void> }>(
+  store: SessionStore<T>,
+  id: string,
+  res: ServerResponse
+): void {
+  store.begin(id);
+  res.once('close', () => {
+    store.end(id);
+  });
+}
+
+/**
+ * Listens, then serves requests that pass the Host and Origin check. The handler
+ * attaches after listening because the default allow-list names the bound port.
+ */
+async function listenGuarded(
+  label: string,
+  path: string,
+  options: HttpServerOptions,
+  handler: (req: IncomingMessage, res: ServerResponse) => void
+): Promise<{ httpServer: ReturnType<typeof createHttpServer>; port: number }> {
+  const httpServer = createHttpServer();
+  const port = await listen(httpServer, options.host, options.port);
+  httpServer.on('request', guardRequests(options, port, handler));
+  log('INFO', `${label} listening on http://${options.host}:${port}${path}`);
+  return { httpServer, port };
+}
+
+// oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
+type SseSessions = SessionStore<SSEServerTransport>;
+
 async function handleSseRequest(
   createMcpServer: ServerFactory,
-  // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-  sessions: Map<string, SSEServerTransport>,
-  limits: SessionLimits,
+  store: SseSessions,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
@@ -941,35 +832,28 @@ async function handleSseRequest(
   }
   const path = url.pathname;
   if (req.method === 'GET' && path === '/sse') {
-    if (sessions.size >= limits.maxSessions) {
+    if (store.full) {
       res.writeHead(503).end('Too many sessions');
       return;
     }
     // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
     const transport = new SSEServerTransport('/messages', res);
-    sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
+    store.add(transport.sessionId, transport);
     res.on('close', () => {
-      sessions.delete(transport.sessionId);
-      limits.timers.clear(transport.sessionId);
-      void mcpServer.close();
-    });
-    limits.timers.track(transport.sessionId, () => {
-      sessions.delete(transport.sessionId);
-      void transport.close();
-      res.end();
+      store.remove(transport.sessionId);
+      mcpServer.close().catch(logCloseFailure(`SSE session ${transport.sessionId}`));
     });
     await mcpServer.connect(transport);
     return;
   }
   if (req.method === 'POST' && path === '/messages') {
     const sessionId = url.searchParams.get(SSE_SESSION_PARAM);
-    const transport = sessionId ? sessions.get(sessionId) : undefined;
+    const transport = sessionId ? store.get(sessionId) : undefined;
     if (!transport) {
       res.writeHead(sessionId ? 404 : 400).end('Could not find session');
       return;
     }
-    limits.timers.touch(transport.sessionId);
     await transport.handlePostMessage(req, res);
     return;
   }
@@ -982,87 +866,65 @@ export async function startSseServer(
   options: HttpServerOptions
 ): Promise<HttpServerHandle> {
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-  const sessions = new Map<string, SSEServerTransport>();
-  const limits = createSessionLimits(options);
-  // The bound port is only known after listening, and the default allow-list names it.
-  const state: { guard: RequestGuard | undefined } = { guard: undefined };
+  const store: SseSessions = new SessionStore<SSEServerTransport>(options);
 
-  const httpServer = createHttpServer((req, res) => {
-    const violation = state.guard ? state.guard(req) : 'Server not ready';
-    if (violation !== null) {
-      res.writeHead(403).end(violation);
-      return;
-    }
-    handleSseRequest(createMcpServer, sessions, limits, req, res).catch((error: unknown) => {
+  const { httpServer, port } = await listenGuarded('SSE server', '/sse', options, (req, res) => {
+    handleSseRequest(createMcpServer, store, req, res).catch((error: unknown) => {
       log('ERROR', `SSE request failed: ${errorMessage(error)}`);
       if (!res.headersSent) {
         res.writeHead(500).end('Internal Server Error');
       }
     });
   });
-
-  const boundPort = await listen(httpServer, options.host, options.port);
-  state.guard = createRequestGuard(options, boundPort);
-  log('INFO', `SSE server listening on http://${options.host}:${boundPort}/sse`);
   return {
-    port: boundPort,
+    port,
     close: async () => {
-      limits.timers.clearAll();
+      await store.closeAll();
       await closeHttpServer(httpServer);
     },
   };
 }
 
-type McpSessions = Map<string, StreamableHTTPServerTransport>;
-
-interface McpContext extends SessionLimits {
-  /** Sessions being initialized, which count against the cap before they are in the map. */
-  pending: { count: number };
-  sessions: McpSessions;
-}
+type McpSessions = SessionStore<StreamableHTTPServerTransport>;
 
 async function startMcpSession(
   createMcpServer: ServerFactory,
-  { sessions, timers, pending }: McpContext,
+  store: McpSessions,
   req: IncomingMessage,
   res: ServerResponse,
   body: unknown
 ): Promise<void> {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (id) => {
-      sessions.set(id, transport);
-      timers.track(id, () => {
-        sessions.delete(id);
-        void transport.close();
-      });
-    },
-  });
+  // The id is chosen up front so the session counts against the cap before the first await.
+  const id = randomUUID();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => id });
   transport.onclose = () => {
-    if (transport.sessionId) {
-      sessions.delete(transport.sessionId);
-      timers.clear(transport.sessionId);
-    }
+    store.remove(id);
   };
-  pending.count += 1;
+  store.add(id, transport);
+  holdSession(store, id, res);
+  let initialized = false;
   try {
     await createMcpServer().connect(transport);
     await transport.handleRequest(req, res, body);
+    initialized = transport.sessionId === id && res.statusCode >= 200 && res.statusCode < 300;
   } finally {
-    pending.count -= 1;
+    if (!initialized) {
+      store.remove(id);
+      transport.close().catch(logCloseFailure(`session ${id}`));
+    }
   }
 }
 
 async function handleMcpRequest(
   createMcpServer: ServerFactory,
-  context: McpContext,
+  store: McpSessions,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
   const sessionId = headerValue(req, 'mcp-session-id');
-  const existing = sessionId ? context.sessions.get(sessionId) : undefined;
+  const existing = sessionId ? store.get(sessionId) : undefined;
   if (sessionId && existing) {
-    context.timers.touch(sessionId);
+    holdSession(store, sessionId, res);
   }
 
   if (req.method === 'POST') {
@@ -1070,11 +932,11 @@ async function handleMcpRequest(
     if (existing) {
       await existing.handleRequest(req, res, body);
     } else if (!sessionId && isInitializeRequest(body)) {
-      if (context.sessions.size + context.pending.count >= context.maxSessions) {
+      if (store.full) {
         sendJsonRpcError(res, 503, -32_000, 'Too many sessions');
         return;
       }
-      await startMcpSession(createMcpServer, context, req, res, body);
+      await startMcpSession(createMcpServer, store, req, res, body);
     } else {
       sendMissingSession(res, sessionId);
     }
@@ -1106,16 +968,9 @@ export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
   options: HttpServerOptions
 ): Promise<HttpServerHandle> {
-  const context: McpContext = { ...createSessionLimits(options), pending: { count: 0 }, sessions: new Map() };
-  // The bound port is only known after listening, and the default allow-list names it.
-  const state: { guard: RequestGuard | undefined } = { guard: undefined };
+  const store: McpSessions = new SessionStore(options);
 
-  const httpServer = createHttpServer((req, res) => {
-    const violation = state.guard ? state.guard(req) : 'Server not ready';
-    if (violation !== null) {
-      res.writeHead(403).end(violation);
-      return;
-    }
+  const { httpServer, port } = await listenGuarded('Streamable HTTP server', '/mcp', options, (req, res) => {
     const path = parseRequestUrl(req)?.pathname;
     if (path === undefined) {
       res.writeHead(400).end('Bad Request');
@@ -1125,7 +980,7 @@ export async function startStreamableHttpServer(
       res.writeHead(404).end('Not Found');
       return;
     }
-    handleMcpRequest(createMcpServer, context, req, res).catch((error: unknown) => {
+    handleMcpRequest(createMcpServer, store, req, res).catch((error: unknown) => {
       log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
       if (error instanceof RangeError) {
         sendBodyTooLarge(req, res);
@@ -1140,15 +995,10 @@ export async function startStreamableHttpServer(
       );
     });
   });
-
-  const boundPort = await listen(httpServer, options.host, options.port);
-  state.guard = createRequestGuard(options, boundPort);
-  log('INFO', `Streamable HTTP server listening on http://${options.host}:${boundPort}/mcp`);
   return {
-    port: boundPort,
+    port,
     close: async () => {
-      context.timers.clearAll();
-      await Promise.all([...context.sessions.values()].map((transport) => transport.close()));
+      await store.closeAll();
       await closeHttpServer(httpServer);
     },
   };
@@ -1229,44 +1079,19 @@ export async function main(argv: string[]): Promise<void> {
 
   installSignalHandlers(registry);
 
-  if (options.transport === 'sse') {
-    warnIfExposed(options.sseHost, accessMode, options.allowedHosts);
-  } else if (options.transport === 'streamable-http') {
-    warnIfExposed(options.streamableHttpHost, accessMode, options.allowedHosts);
+  const http = httpOptions(options);
+  if (http) {
+    warnIfExposed(http, accessMode);
   }
 
   const factory = () => createServer(registry);
-  switch (options.transport) {
-    case 'stdio': {
-      await runners.runStdio(factory, () => {
-        void shutdown(registry);
-      });
-      break;
-    }
-    case 'sse': {
-      await runners.runSse(factory, {
-        host: options.sseHost,
-        port: options.ssePort,
-        allowedHosts: options.allowedHosts,
-        allowedOrigins: options.allowedOrigins,
-        maxSessions: options.maxSessions,
-        sessionIdleMinutes: options.sessionIdleMinutes,
-      });
-      break;
-    }
-    case 'streamable-http': {
-      await runners.runStreamableHttp(factory, {
-        host: options.streamableHttpHost,
-        port: options.streamableHttpPort,
-        allowedHosts: options.allowedHosts,
-        allowedOrigins: options.allowedOrigins,
-        maxSessions: options.maxSessions,
-        sessionIdleMinutes: options.sessionIdleMinutes,
-      });
-      break;
-    }
-    default: {
-      break;
-    }
+  if (http === undefined) {
+    await runners.runStdio(factory, () => {
+      void shutdown(registry);
+    });
+  } else if (options.transport === 'sse') {
+    await runners.runSse(factory, http);
+  } else {
+    await runners.runStreamableHttp(factory, http);
   }
 }

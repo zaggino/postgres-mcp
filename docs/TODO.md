@@ -218,7 +218,7 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 ## 2026-11-26 · Major · Refactor · Split `src/server.ts`
 
-`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, HTTP plumbing for three transports, and startup and shutdown (CLI parsing moved to `src/cli.ts`). Split the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
+`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, the SSE and streamable HTTP servers with their request handling, stdio, and startup and shutdown (CLI parsing is in `src/cli.ts`; `src/transports/` holds only the request guard and the session store so far). Move the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
 
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
@@ -299,7 +299,7 @@ Eight handlers in `src/server.ts` each wrap their body in `try { … } catch { l
 
 ## 2026-11-26 · Minor · Refactor · Small cleanups left over from the multi-database review
 
-`parsePort` and `parseIdleMinutes` in `src/cli.ts` repeat the same integer validation and error text; one `parseIntFlag(flag, value)` would serve both. `MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
+`MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
 
 ## 2026-11-26 · Minor · Refactor · Server URIs are validated in two places
 
@@ -320,3 +320,11 @@ When an explicit database fails to connect, `DbConnPool.close` drops the pool an
 ## 2026-11-26 · Minor · Tests · Gaps in the multi-database tests
 
 Untested so far: `--idle-minutes` and config `idleMinutes` above 35791 are rejected; `list_databases` shows `open` with a counting-down `idle_seconds_left` after a successful call; a server whose `${VAR}` is unset shows the error in `servers[].error` and its databases are unknown; an invalid `--database` name, a duplicate name, an unreadable config file. Add one case each to `tests/unit/config.test.ts` and `tests/unit/database-registry.test.ts`.
+
+## 2026-11-26 · Minor · Bug · An SSE session can be closed during a tool call longer than the idle time
+
+On SSE, `POST /messages` returns 202 before the tool runs and the result travels over the `GET /sse` stream, so `SessionStore` (`src/transports/sessions.ts`) sees no request in flight while a tool call runs. A call longer than `--session-idle-minutes` with no other message from the client closes the session and the result is lost. Streamable HTTP is unaffected: its response carries the result and keeps the session held. Fix by tracking pending tool calls per SSE session (for example through the McpServer request handlers).
+
+## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
+
+`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both.

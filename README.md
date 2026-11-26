@@ -17,7 +17,7 @@ Differences from upstream:
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
-- Error messages and stderr logs do not include SQL text or parse trees. Upstream included the full query.
+- Error messages and stderr logs do not include the SQL text, plans or parse trees of a query. Upstream included the full query. A database or parser error can still quote the token it failed at.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
@@ -171,10 +171,12 @@ For SSE, start the server with `--transport=sse` and in Claude Code use `"type":
 
 The HTTP transports check every request on every MCP endpoint (`/mcp`, `/sse` and `/messages`) and answer 403 when it fails:
 
-- `Host` must be on the allow-list. On a loopback bind (`localhost`, `127.0.0.1`, `::1`) that is those three names with the bound port plus whatever `--allowed-hosts` adds. On any other bind it is `--allowed-hosts` alone, and the server refuses to start without it; pass `--allowed-hosts='*'` to accept any Host. An entry without a port matches that hostname on any port; matching ignores case.
-- `Origin`, when the request has one, must be on the allow-list: `--allowed-origins` if given, else `http://localhost:<port>`, `http://127.0.0.1:<port>` and `http://[::1]:<port>` on a loopback bind and nothing on any other bind. `--allowed-origins='*'` accepts any Origin. Requests without an `Origin` header (non-browser clients) are not checked.
+- `Host` must be on the allow-list. On a loopback bind (`localhost`, `127.0.0.1`, `::1`) that is those three names with the bound port plus whatever `--allowed-hosts` adds. On any other bind it is `--allowed-hosts` alone, and the server refuses to start without it; pass `--allowed-hosts='*'` to accept any Host (`*` cannot be mixed with other entries). An entry without a port matches that hostname on any port; matching ignores case. Entries are checked at startup: no scheme or path, and IPv6 addresses in brackets (`[::1]:8000`).
+- `Origin`, when the request has one, must be on the allow-list: `http://localhost:<port>`, `http://127.0.0.1:<port>` and `http://[::1]:<port>` on a loopback bind, plus whatever `--allowed-origins` adds; on any other bind `--allowed-origins` alone. `--allowed-origins='*'` accepts any Origin. Each entry must be exactly `scheme://host[:port]`, with no path or trailing slash. Requests without an `Origin` header (non-browser clients) are not checked.
 
-Each HTTP transport holds at most `--max-sessions` sessions (default 100) and answers 503 `Too many sessions` to a new streamable HTTP `initialize` or a new `GET /sse` beyond that. A session with no request for `--session-idle-minutes` (default 30, `0` never) is closed, and its id then gets 404. Every request that carries the session id restarts the timer: any `POST`, `GET` or `DELETE` on `/mcp`, and each `POST /messages` for SSE. An open event stream (the SSE `GET /sse` stream, or a streamable HTTP `GET`) counts as activity only when it starts, so a client that only listens on a stream is closed after the idle time.
+A 403 is sent as `text/plain` with `X-Content-Type-Options: nosniff`.
+
+Each HTTP transport holds at most `--max-sessions` sessions (default 100) and answers 503 `Too many sessions` to a new streamable HTTP `initialize` or a new `GET /sse` beyond that. A session with no request for `--session-idle-minutes` (default 30, `0` never) is closed, and its id then gets 404. On streamable HTTP the timer does not run while a request for the session is in flight, and starts afresh when the last one ends: a tool call longer than the idle time keeps its session, and so does an open `GET` stream, so a listening client is not closed. On SSE each `POST /messages` restarts the timer, but the result of a tool call travels over the `GET /sse` stream, which does not hold the session: a tool call longer than the idle time with no other message can still lose its session. The session cap bounds memory; it is not a security control, since anyone who passes the `Host` check can occupy the sessions.
 
 There is no authentication. A server bound to a non-loopback address logs a warning at startup saying so; put it behind something that authenticates.
 
@@ -184,22 +186,22 @@ There is no authentication. A server bound to a non-loopback address logs a warn
 postgres-mcp [options] (--database NAME ... | --config FILE)
 ```
 
-| Option                   | Default        | Description                                                                                   |
-| ------------------------ | -------------- | --------------------------------------------------------------------------------------------- |
-| `--database`             | none           | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`. |
-| `--config`               | none           | JSON [config file](#config-file). Exclusive with `--database`.                                |
-| `--idle-minutes`         | `10`           | Close a database's pool after this many idle minutes; `0` never closes; max 35791.            |
-| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.                                                               |
-| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.                                                          |
-| `--sse-host`             | `localhost`    | Host to bind the SSE server to.                                                               |
-| `--sse-port`             | `8000`         | Port of the SSE server.                                                                       |
-| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to.                                                   |
-| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.                                                           |
-| `--allowed-hosts`        | loopback only  | Comma-separated `Host` values to accept; required on a non-loopback bind; `*` accepts any.    |
-| `--allowed-origins`      | loopback only  | Comma-separated `Origin` values (`scheme://host[:port]`) to accept; `*` accepts any.          |
-| `--max-sessions`         | `100`          | Most concurrent HTTP sessions; further ones get 503.                                          |
-| `--session-idle-minutes` | `30`           | Close an HTTP session after this many minutes without a request; `0` never; max 35791.        |
-| `-h`, `--help`           |                | Show help.                                                                                    |
+| Option                   | Default        | Description                                                                                                                      |
+| ------------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `--database`             | none           | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`.                                    |
+| `--config`               | none           | JSON [config file](#config-file). Exclusive with `--database`.                                                                   |
+| `--idle-minutes`         | `10`           | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
+| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.                                                                                                  |
+| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.                                                                                             |
+| `--sse-host`             | `localhost`    | Host to bind the SSE server to.                                                                                                  |
+| `--sse-port`             | `8000`         | Port of the SSE server.                                                                                                          |
+| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to.                                                                                      |
+| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.                                                                                              |
+| `--allowed-hosts`        | loopback only  | Comma-separated `Host` values to accept, added to loopback on a loopback bind; required on a non-loopback bind; `*` accepts any. |
+| `--allowed-origins`      | loopback only  | Comma-separated `Origin` values (`scheme://host[:port]`) to accept, added to loopback on a loopback bind; `*` accepts any.       |
+| `--max-sessions`         | `100`          | Most concurrent HTTP sessions; further ones get 503.                                                                             |
+| `--session-idle-minutes` | `30`           | Close an HTTP session after this many minutes without a request; `0` never; max 35791.                                           |
+| `-h`, `--help`           |                | Show help.                                                                                                                       |
 
 Environment variables:
 

@@ -89,8 +89,8 @@ describe('transport host and port', () => {
       port: 9000,
       allowedHosts: ['mcp.example', 'other.example:9000'],
       allowedOrigins: ['https://app.example'],
-      maxSessions: 100,
-      sessionIdleMinutes: 30,
+      maxSessions: undefined,
+      sessionIdleMinutes: undefined,
     });
   });
 
@@ -102,10 +102,10 @@ describe('transport host and port', () => {
     expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
       port: 8080,
-      allowedHosts: ['*'],
+      allowedHosts: 'any',
       allowedOrigins: undefined,
-      maxSessions: 100,
-      sessionIdleMinutes: 30,
+      maxSessions: undefined,
+      sessionIdleMinutes: undefined,
     });
   });
 });

@@ -220,10 +220,10 @@ export class DbConnPool {
       this.lastError = null;
       return pool;
     } catch (error) {
-      this.isValid = false;
-      this.lastError = obfuscatePassword(errorMessage(error)) ?? '';
+      this.markInvalid(error);
+      const message = this.lastError ?? '';
       await this.close();
-      throw new Error(`Connection attempt failed: ${obfuscatePassword(errorMessage(error))}`, {
+      throw new Error(`Connection attempt failed: ${message}`, {
         cause: error,
       });
     }

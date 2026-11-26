@@ -308,7 +308,7 @@ export class ExplainPlanTool {
       // Return empty plan if no result
       return { Plan: { 'Total Cost': Number.POSITIVE_INFINITY } };
     } catch (error) {
-      logError(`Error getting explain plan for query: ${queryText} with error: ${errorMessage(error)}`);
+      logError(`Error getting explain plan: ${errorMessage(error)}`);
       throw error;
     }
   }

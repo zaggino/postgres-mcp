@@ -175,10 +175,14 @@ async function validateQuery(query: string): Promise<void> {
       validateStatement(stmt);
     }
   } catch (error) {
-    throw new Error(`Error validating query: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new Error(`Error validating query: ${errorMessage(error)}`, {
       cause: error,
     });
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Wraps an executor so only read-only, allowlisted SQL reaches the database. */

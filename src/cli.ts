@@ -2,14 +2,14 @@ import { parseArgs } from 'node:util';
 
 import type { AccessMode } from './sql/driver-factory.ts';
 import { ACCESS_MODES } from './sql/driver-factory.ts';
+import type { AllowList, HttpServerOptions } from './transports/request-guard.ts';
+import { hostEntryProblem, LOOPBACK_HOSTS, originEntryProblem } from './transports/request-guard.ts';
+import { DEFAULT_MAX_SESSIONS, DEFAULT_SESSION_IDLE_MINUTES } from './transports/sessions.ts';
 
 export class CliError extends Error {}
 
 /** The longest delay setTimeout accepts (2^31 - 1 ms); larger values would fire at once. */
 export const MAX_IDLE_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
-
-export const DEFAULT_MAX_SESSIONS = 100;
-export const DEFAULT_SESSION_IDLE_MINUTES = 30;
 
 const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
@@ -27,15 +27,28 @@ export interface CliOptions {
   ssePort: number;
   streamableHttpHost: string;
   streamableHttpPort: number;
-  allowedHosts: string[] | undefined;
-  allowedOrigins: string[] | undefined;
-  maxSessions: number;
-  sessionIdleMinutes: number;
+  allowedHosts: AllowList | undefined;
+  allowedOrigins: AllowList | undefined;
+  maxSessions: number | undefined;
+  sessionIdleMinutes: number | undefined;
   transport: Transport;
 }
 
-/** Hosts a server can bind to without being reachable from the network. */
-export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '::1']);
+/** The HTTP transport's options, or undefined for stdio. Session limits and allow-lists default where they are used. */
+export function httpOptions(options: CliOptions): HttpServerOptions | undefined {
+  if (options.transport === 'stdio') {
+    return undefined;
+  }
+  const sse = options.transport === 'sse';
+  return {
+    host: sse ? options.sseHost : options.streamableHttpHost,
+    port: sse ? options.ssePort : options.streamableHttpPort,
+    allowedHosts: options.allowedHosts,
+    allowedOrigins: options.allowedOrigins,
+    maxSessions: options.maxSessions,
+    sessionIdleMinutes: options.sessionIdleMinutes,
+  };
+}
 
 const PROG = 'postgres-mcp';
 const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
@@ -77,13 +90,13 @@ options:
                         Comma-separated Host header values the HTTP transports
                         accept, in addition to loopback on a loopback bind. An
                         entry without a port matches any port; '*' accepts any
-                        Host. Required when the bind host is not loopback
+                        Host. Write IPv6 addresses in brackets. Required when
+                        the bind host is not loopback
   --allowed-origins ORIGINS
                         Comma-separated Origin header values (scheme://host[:port])
-                        the HTTP transports accept; '*' accepts any Origin.
-                        Requests without an Origin header are not checked.
-                        Default: loopback origins on a loopback bind, none
-                        otherwise
+                        the HTTP transports accept, in addition to loopback on a
+                        loopback bind; '*' accepts any Origin. Requests without
+                        an Origin header are not checked
   --max-sessions N      Most concurrent sessions the HTTP transports hold;
                         further ones get 503 (default: ${DEFAULT_MAX_SESSIONS})
   --session-idle-minutes N
@@ -105,58 +118,44 @@ function choice<T extends string>(flag: string, value: string | undefined, choic
   return match;
 }
 
+const DEFAULT_PORT = 8000;
 const INT_PATTERN = /^[+-]?\d+$/u;
 
-function parsePort(flag: string, value: string | undefined): number {
-  if (value === undefined) {
-    return 8000;
+function rangeText(range: { max?: number; min?: number }): string {
+  const { min, max } = range;
+  if (min !== undefined && max !== undefined) {
+    return `must be between ${min} and ${max}`;
   }
-  if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument ${flag}: invalid int value: '${value}'`);
+  if (min !== undefined) {
+    return `must be at least ${min}`;
   }
-  return Number.parseInt(value, 10);
+  if (max !== undefined) {
+    return `must be at most ${max}`;
+  }
+  return 'must be a safe integer';
 }
 
-function parseIdleMinutes(value: string | undefined): number | undefined {
+/** The integer value of a flag within `range`, or `undefined` when the flag is absent. */
+function parseIntFlag(
+  flag: string,
+  value: string | undefined,
+  range: { max?: number; min?: number } = {}
+): number | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument --idle-minutes: invalid int value: '${value}'`);
+    throw new CliError(`argument ${flag}: invalid int value: '${value}'`);
   }
-  const minutes = Number.parseInt(value, 10);
-  if (minutes < 0 || minutes > MAX_IDLE_MINUTES) {
-    throw new CliError(`argument --idle-minutes: must be between 0 and ${MAX_IDLE_MINUTES}: '${value}'`);
+  const parsed = Number.parseInt(value, 10);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    (range.min !== undefined && parsed < range.min) ||
+    (range.max !== undefined && parsed > range.max)
+  ) {
+    throw new CliError(`argument ${flag}: ${rangeText(range)}: '${value}'`);
   }
-  return minutes;
-}
-
-function parseMaxSessions(value: string | undefined): number {
-  if (value === undefined) {
-    return DEFAULT_MAX_SESSIONS;
-  }
-  if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument --max-sessions: invalid int value: '${value}'`);
-  }
-  const sessions = Number.parseInt(value, 10);
-  if (sessions < 1 || !Number.isSafeInteger(sessions)) {
-    throw new CliError(`argument --max-sessions: must be at least 1: '${value}'`);
-  }
-  return sessions;
-}
-
-function parseSessionIdleMinutes(value: string | undefined): number {
-  if (value === undefined) {
-    return DEFAULT_SESSION_IDLE_MINUTES;
-  }
-  if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument --session-idle-minutes: invalid int value: '${value}'`);
-  }
-  const minutes = Number.parseInt(value, 10);
-  if (minutes < 0 || minutes > MAX_IDLE_MINUTES) {
-    throw new CliError(`argument --session-idle-minutes: must be between 0 and ${MAX_IDLE_MINUTES}: '${value}'`);
-  }
-  return minutes;
+  return parsed;
 }
 
 /** The comma-separated entries, `undefined` when the flag is absent. */
@@ -171,18 +170,36 @@ function parseList(flag: string, value: string | undefined): string[] | undefine
   return entries;
 }
 
-function requireAllowedHosts(options: CliOptions): void {
-  let host: string;
-  if (options.transport === 'sse') {
-    host = options.sseHost;
-  } else if (options.transport === 'streamable-http') {
-    host = options.streamableHttpHost;
-  } else {
-    return;
+/** `'*'` alone becomes `'any'`; every other entry must pass `problemWith`. */
+function parseAllowList(
+  flag: string,
+  value: string | undefined,
+  problemWith: (entry: string) => string | null
+): AllowList | undefined {
+  const entries = parseList(flag, value);
+  if (entries === undefined) {
+    return undefined;
   }
-  if (!LOOPBACK_HOSTS.has(host) && options.allowedHosts === undefined) {
+  if (entries.includes('*')) {
+    if (entries.length > 1) {
+      throw new CliError(`argument ${flag}: '*' cannot be combined with other entries: '${value}'`);
+    }
+    return 'any';
+  }
+  for (const entry of entries) {
+    const problem = problemWith(entry);
+    if (problem !== null) {
+      throw new CliError(`argument ${flag}: ${problem}: '${entry}'`);
+    }
+  }
+  return entries;
+}
+
+function requireAllowedHosts(options: CliOptions): void {
+  const http = httpOptions(options);
+  if (http && !LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
     throw new CliError(
-      `binding ${host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
+      `binding ${http.host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
     );
   }
 }
@@ -228,16 +245,19 @@ export function parseCli(argv: string[]): CliOptions | null {
     accessMode: choice('--access-mode', values['access-mode'], ACCESS_MODES),
     databases: values.database ?? [],
     configPath: values.config,
-    idleMinutes: parseIdleMinutes(values['idle-minutes']),
+    idleMinutes: parseIntFlag('--idle-minutes', values['idle-minutes'], { min: 0, max: MAX_IDLE_MINUTES }),
     transport: choice('--transport', values.transport, TRANSPORTS) ?? 'stdio',
     sseHost: values['sse-host'] ?? 'localhost',
-    ssePort: parsePort('--sse-port', values['sse-port']),
+    ssePort: parseIntFlag('--sse-port', values['sse-port']) ?? DEFAULT_PORT,
     streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
-    streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
-    allowedHosts: parseList('--allowed-hosts', values['allowed-hosts']),
-    allowedOrigins: parseList('--allowed-origins', values['allowed-origins']),
-    maxSessions: parseMaxSessions(values['max-sessions']),
-    sessionIdleMinutes: parseSessionIdleMinutes(values['session-idle-minutes']),
+    streamableHttpPort: parseIntFlag('--streamable-http-port', values['streamable-http-port']) ?? DEFAULT_PORT,
+    allowedHosts: parseAllowList('--allowed-hosts', values['allowed-hosts'], hostEntryProblem),
+    allowedOrigins: parseAllowList('--allowed-origins', values['allowed-origins'], originEntryProblem),
+    maxSessions: parseIntFlag('--max-sessions', values['max-sessions'], { min: 1 }),
+    sessionIdleMinutes: parseIntFlag('--session-idle-minutes', values['session-idle-minutes'], {
+      min: 0,
+      max: MAX_IDLE_MINUTES,
+    }),
   };
   requireAllowedHosts(options);
   return options;

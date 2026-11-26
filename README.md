@@ -2,144 +2,92 @@
 
 <img src="assets/postgres-mcp-pro.png" alt="Postgres MCP Pro Logo" width="600"/>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![PyPI - Version](https://img.shields.io/pypi/v/postgres-mcp)](https://pypi.org/project/postgres-mcp/)
-[![Discord](https://img.shields.io/discord/1336769798603931789?label=Discord)](https://discord.gg/4BEHC7ZM)
-[![Twitter Follow](https://img.shields.io/twitter/follow/auto_dba?style=flat)](https://x.com/auto_dba)
-[![Contributors](https://img.shields.io/github/contributors/crystaldba/postgres-mcp)](https://github.com/crystaldba/postgres-mcp/graphs/contributors)
-
-<h3>A Postgres MCP server with index tuning, explain plans, health checks, and safe sql execution.</h3>
-
-<div class="toc">
-  <a href="#overview">Overview</a> •
-  <a href="#demo">Demo</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#technical-notes">Technical Notes</a> •
-  <a href="#mcp-server-api">MCP API</a> •
-  <a href="#related-projects">Related Projects</a> •
-  <a href="#frequently-asked-questions">FAQ</a>
 </div>
 
-</div>
+# postgres-mcp
+
+[![npm version](https://img.shields.io/npm/v/@zaggino/postgres-mcp)](https://www.npmjs.com/package/@zaggino/postgres-mcp)
+[![CI](https://github.com/zaggino/postgres-mcp/actions/workflows/build.yml/badge.svg)](https://github.com/zaggino/postgres-mcp/actions/workflows/build.yml)
+
+A Postgres MCP server with index tuning, explain plans, health checks, and safe SQL execution.
+
+> This is a fork of [crystaldba/postgres-mcp](https://github.com/crystaldba/postgres-mcp) (Postgres MCP Pro), rewritten in TypeScript and published on npm as [`@zaggino/postgres-mcp`](https://www.npmjs.com/package/@zaggino/postgres-mcp). Credit for the design, the index tuning approach and the original implementation goes to Crystal DBA.
+
+Differences from upstream:
+
+- TypeScript on Node.js 26+ instead of Python.
+- Installed from npm. There is no Docker image and no PyPI package.
+- Structured tool results are JSON instead of Python repr text.
+- The experimental LLM index tuning method (`method="llm"`) is not included. `method` accepts only `"dta"`.
+- Restricted mode runs statements in an enforced read-only transaction.
+- HTTP transports bound to a loopback address reject requests with a foreign `Host` header.
+- The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
 
 ## Overview
 
-**Postgres MCP Pro** is an open source Model Context Protocol (MCP) server built to support you and your AI agents throughout the **entire development process**—from initial coding, through testing and deployment, and to production tuning and maintenance.
+Postgres MCP Pro is a Model Context Protocol (MCP) server for working with a Postgres database from an AI agent, from initial coding through testing and deployment to production tuning and maintenance.
 
-Postgres MCP Pro does much more than wrap a database connection.
+Features:
 
-Features include:
+- **Database health**: analyze index health, connection utilization, buffer cache, vacuum health, sequence limits, replication lag, and more.
+- **Index tuning**: search for the best set of indexes for your workload with a greedy search adapted from an industrial index advisor.
+- **Query plans**: review EXPLAIN plans and simulate the effect of hypothetical indexes.
+- **Schema information**: list schemas, objects, and object details so the agent can write correct SQL.
+- **Safe SQL execution**: configurable access control, including a read-only mode with SQL parsing, for both development and production.
 
-- **🔍 Database Health** - analyze index health, connection utilization, buffer cache, vacuum health, sequence limits, replication lag, and more.
-- **⚡ Index Tuning** - explore thousands of possible indexes to find the best solution for your workload, using industrial-strength algorithms.
-- **📈 Query Plans** - validate and optimize performance by reviewing EXPLAIN plans and simulating the impact of hypothetical indexes.
-- **🧠 Schema Intelligence** - context-aware SQL generation based on detailed understanding of the database schema.
-- **🛡️ Safe SQL Execution** - configurable access control, including support for read-only mode and safe SQL parsing, making it usable for both development and production.
+The server supports the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio), [SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) and streamable HTTP transports.
 
-Postgres MCP Pro supports both the [Standard Input/Output (stdio)](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) and [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) transports, for flexibility in different environments.
-
-For additional background on why we built Postgres MCP Pro, see [our launch blog post](https://www.crystaldba.ai/blog/post/announcing-postgres-mcp-server-pro).
+For background on why the original project was built, see the [upstream launch blog post](https://www.crystaldba.ai/blog/post/announcing-postgres-mcp-server-pro).
 
 ## Demo
 
-*From Unusable to Lightning Fast*
-- **Challenge:** We generated a movie app using an AI assistant, but the SQLAlchemy ORM code ran painfully slow.
-- **Solution:** Using Postgres MCP Pro with Cursor, we fixed the performance issues in minutes.
+*From unusable to lightning fast.*
 
-What we did:
-- 🚀 Fixed performance - including ORM queries, indexing, and caching
-- 🛠️ Fixed a broken page - by prompting the agent to explore the data, fix queries, and add related content.
-- 🧠 Improved the top movies - by exploring the data and fixing the ORM query to surface more relevant results.
+Upstream's demo generated a movie app with an AI assistant whose SQLAlchemy ORM code ran painfully slow. With Postgres MCP Pro and Cursor the agent fixed ORM queries, indexing and caching, repaired a broken page by exploring the data, and improved the top movies query.
 
 See the video below or read the [play-by-play](examples/movie-app.md).
 
 https://github.com/user-attachments/assets/24e05745-65e9-4998-b877-a368f1eadc13
 
-
-
-
 ## Quick Start
 
 ### Prerequisites
 
-Before getting started, ensure you have:
-1. Access credentials for your database.
-2. Docker *or* Python 3.12 or higher.
+1. Access credentials for your database. You can check them with `psql` or a GUI tool such as [pgAdmin](https://www.pgadmin.org/).
+2. Node.js 26 or higher.
 
-#### Access Credentials
- You can confirm your access credentials are valid by using `psql` or a GUI tool such as [pgAdmin](https://www.pgadmin.org/).
+### Run the server
 
-
-#### Docker or Python
-
-The choice to use Docker or Python is yours.
-We generally recommend Docker because Python users can encounter more environment-specific issues.
-However, it often makes sense to use whichever method you are most familiar with.
-
-
-### Installation
-
-Choose one of the following methods to install Postgres MCP Pro:
-
-#### Option 1: Using Docker
-
-Pull the Postgres MCP Pro MCP server Docker image.
-This image contains all necessary dependencies, providing a reliable way to run Postgres MCP Pro in a variety of environments.
+The server takes a [Postgres connection URI](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS) either as a positional argument or in the `DATABASE_URI` environment variable. If both are set, `DATABASE_URI` wins.
 
 ```bash
-docker pull crystaldba/postgres-mcp
+npx -y @zaggino/postgres-mcp "postgresql://user:pass@host:5432/db" --access-mode=restricted
 ```
 
-
-#### Option 2: Using Python
-
-If you have `pipx` installed you can install Postgres MCP Pro with:
+To run from source instead:
 
 ```bash
-pipx install postgres-mcp
+git clone https://github.com/zaggino/postgres-mcp.git
+cd postgres-mcp
+pnpm install && pnpm build
+node dist/index.js "postgresql://user:pass@host:5432/db" --access-mode=restricted
 ```
 
-Otherwise, install Postgres MCP Pro with `uv`:
+### Configure your AI assistant
 
-```bash
-uv pip install postgres-mcp
-```
+Add the server to the `mcpServers` section of your client's configuration. For Claude Desktop the file is:
 
-If you need to install `uv`, see the [uv installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
-
-
-### Configure Your AI Assistant
-
-We provide full instructions for configuring Postgres MCP Pro with Claude Desktop.
-Many MCP clients have similar configuration files, you can adapt these steps to work with the client of your choice.
-
-#### Claude Desktop Configuration
-
-You will need to edit the Claude Desktop configuration file to add Postgres MCP Pro.
-The location of this file depends on your operating system:
-- MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
-You can also use `Settings` menu item in Claude Desktop to locate the configuration file.
-
-You will now edit the `mcpServers` section of the configuration file.
-
-##### If you are using Docker
+You can also open it from the `Settings` menu in Claude Desktop.
 
 ```json
 {
   "mcpServers": {
     "postgres": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e",
-        "DATABASE_URI",
-        "crystaldba/postgres-mcp",
-        "--access-mode=unrestricted"
-      ],
+      "command": "npx",
+      "args": ["-y", "@zaggino/postgres-mcp", "--access-mode=unrestricted"],
       "env": {
         "DATABASE_URI": "postgresql://username:password@localhost:5432/dbname"
       }
@@ -148,504 +96,301 @@ You will now edit the `mcpServers` section of the configuration file.
 }
 ```
 
-The Postgres MCP Pro Docker image will automatically remap the hostname `localhost` to work from inside of the container.
+When running from source, use `"command": "node"` and `"args": ["/path/to/postgres-mcp/dist/index.js", "--access-mode=unrestricted"]`.
 
-- MacOS/Windows: Uses `host.docker.internal` automatically
-- Linux: Uses `172.17.0.1` or the appropriate host address automatically
+### Access modes
 
-##### If you are using `uvx`
+- **Unrestricted**: full read/write access to data and schema. Suitable for development.
+- **Restricted**: SQL is parsed and checked against allowlists of statements, node types and functions, executed in a read-only transaction, and limited to 30 seconds of execution time. Suitable for production.
 
-```json
-{
-  "mcpServers": {
-    "postgres": {
-      "command": "uvx",
-      "args": [
-        "postgres-mcp",
-        "--access-mode=unrestricted"
-      ],
-      "env": {
-        "DATABASE_URI": "postgresql://username:password@localhost:5432/dbname"
-      }
-    }
-  }
-}
-```
+Select the mode with `--access-mode=restricted` or `--access-mode=unrestricted` (the default).
 
+### Other MCP clients
 
-##### If you are using `pipx`
+Most MCP clients use a configuration file similar to Claude Desktop's.
 
-```json
-{
-  "mcpServers": {
-    "postgres": {
-      "command": "postgres-mcp",
-      "args": [
-        "--access-mode=unrestricted"
-      ],
-      "env": {
-        "DATABASE_URI": "postgresql://username:password@localhost:5432/dbname"
-      }
-    }
-  }
-}
-```
+- Cursor: from the Command Palette open `Cursor Settings`, then the `MCP` tab.
+- Windsurf: from the Command Palette open `Open Windsurf Settings Page`.
+- Goose: run `goose configure`, then select `Add Extension`.
+- Qodo Gen: open the Chat panel, click `Connect more tools`, then `+ Add new MCP`.
 
+## Transports
 
-##### If you are using `uv`
+| Transport | Flags | Endpoint |
+|-----------|-------|----------|
+| stdio (default) | `--transport=stdio` | standard input and output |
+| SSE | `--transport=sse --sse-host --sse-port` | `/sse` (messages are posted to `/messages`) |
+| Streamable HTTP | `--transport=streamable-http --streamable-http-host --streamable-http-port` | `/mcp` |
 
-```json
-{
-  "mcpServers": {
-    "postgres": {
-      "command": "uv",
-      "args": [
-        "run",
-        "postgres-mcp",
-        "--access-mode=unrestricted"
-      ],
-      "env": {
-        "DATABASE_URI": "postgresql://username:password@localhost:5432/dbname"
-      }
-    }
-  }
-}
-```
-
-
-##### Connection URI
-
-Replace `postgresql://...` with your [Postgres database connection URI](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS).
-
-
-##### Access Mode
-
-Postgres MCP Pro supports multiple *access modes* to give you control over the operations that the AI agent can perform on the database:
-- **Unrestricted Mode**: Allows full read/write access to modify data and schema. It is suitable for development environments.
-- **Restricted Mode**: Limits operations to read-only transactions and imposes constraints on resource utilization (presently only execution time). It is suitable for production environments.
-
-To use restricted mode, replace `--access-mode=unrestricted` with `--access-mode=restricted` in the configuration examples above.
-
-
-#### Other MCP Clients
-
-Many MCP clients have similar configuration files to Claude Desktop, and you can adapt the examples above to work with the client of your choice.
-
-- If you are using Cursor, you can use navigate from the `Command Palette` to `Cursor Settings`, then open the `MCP` tab to access the configuration file.
-- If you are using Windsurf, you can navigate to from the `Command Palette` to `Open Windsurf Settings Page` to access the configuration file.
-- If you are using Goose run `goose configure`, then select `Add Extension`.
-- If you are using Qodo Gen, open the Chat panel, click `Connect more tools`, click `+ Add new MCP`, then add the new configuration.
-
-## SSE Transport
-
-Postgres MCP Pro supports the [SSE transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse), which allows multiple MCP clients to share one server, possibly a remote server.
-To use the SSE transport, you need to start the server with the `--transport=sse` option.
-
-For example, with Docker run:
+The SSE and streamable HTTP transports let several MCP clients share one server. For example:
 
 ```bash
-docker run -p 8000:8000 \
-  -e DATABASE_URI=postgresql://username:password@localhost:5432/dbname \
-  crystaldba/postgres-mcp --access-mode=unrestricted --transport=sse
+DATABASE_URI=postgresql://username:password@localhost:5432/dbname \
+  npx -y @zaggino/postgres-mcp --access-mode=unrestricted --transport=sse
 ```
 
-Then update your MCP client configuration to call the the MCP server.
-For example, in Cursor's `mcp.json` or Cline's `cline_mcp_settings.json` you can put:
+Then point the client at it. In Cursor's `mcp.json` or Cline's `cline_mcp_settings.json`:
 
 ```json
 {
-    "mcpServers": {
-        "postgres": {
-            "type": "sse",
-            "url": "http://localhost:8000/sse"
-        }
+  "mcpServers": {
+    "postgres": {
+      "type": "sse",
+      "url": "http://localhost:8000/sse"
     }
+  }
 }
 ```
 
-For Windsurf, the format in `mcp_config.json` is slightly different:
+For Windsurf, `mcp_config.json` uses `serverUrl`:
 
 ```json
 {
-    "mcpServers": {
-        "postgres": {
-            "type": "sse",
-            "serverUrl": "http://localhost:8000/sse"
-        }
+  "mcpServers": {
+    "postgres": {
+      "type": "sse",
+      "serverUrl": "http://localhost:8000/sse"
     }
+  }
 }
 ```
 
-## Postgres Extension Installation (Optional)
+For streamable HTTP use `http://localhost:8000/mcp` as the URL.
 
-To enable index tuning and comprehensive performance analysis you need to load the `pg_stat_statements` and `hypopg` extensions on your database.
+When the server is bound to a loopback host (`localhost`, `127.0.0.1`, `::1`), it rejects requests whose `Host` header does not name that address and port. Servers bound to other addresses do no Host or Origin checks and have no authentication; put them behind something that does.
 
-- The `pg_stat_statements` extension allows Postgres MCP Pro to analyze query execution statistics.
-For example, this allows it to understand which queries are running slow or consuming significant resources.
-- The `hypopg` extension allows Postgres MCP Pro to simulate the behavior of the Postgres query planner after adding indexes.
+## CLI reference
 
-### Installing extensions on AWS RDS, Azure SQL, or Google Cloud SQL
+```
+postgres-mcp [options] [database_url]
+```
 
-If your Postgres database is running on a cloud provider managed service, the `pg_stat_statements` and `hypopg` extensions should already be available on the system.
-In this case, you can just run `CREATE EXTENSION` commands using a role with sufficient privileges:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `database_url` | none | Database connection URL (positional). |
+| `--access-mode` | `unrestricted` | `unrestricted` or `restricted`. |
+| `--transport` | `stdio` | `stdio`, `sse` or `streamable-http`. |
+| `--sse-host` | `localhost` | Host to bind the SSE server to. |
+| `--sse-port` | `8000` | Port of the SSE server. |
+| `--streamable-http-host` | `localhost` | Host to bind the streamable HTTP server to. |
+| `--streamable-http-port` | `8000` | Port of the streamable HTTP server. |
+| `-h`, `--help` | | Show help. |
+
+Environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URI` | Database connection URL. Takes precedence over the positional argument. |
+| `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` | Set to `false` to leave the `_langfuse_trace` field out of index recommendation results. Defaults to `true`. |
+
+## Postgres extension installation (optional)
+
+Index tuning and workload analysis need the `pg_stat_statements` and `hypopg` extensions on your database.
+
+- `pg_stat_statements` records query execution statistics, which lets the server find slow or resource-heavy queries.
+- `hypopg` lets the server simulate the Postgres query planner after adding indexes.
+
+### Cloud-managed Postgres (AWS RDS, Azure, Google Cloud SQL)
+
+Both extensions are normally available already. Run `CREATE EXTENSION` with a sufficiently privileged role:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION IF NOT EXISTS hypopg;
 ```
 
-### Installing extensions on self-managed Postgres
+### Self-managed Postgres
 
-If you are managing your own Postgres installation, you may need to do additional work.
-Before loading the `pg_stat_statements` extension you must ensure that it is listed in the `shared_preload_libraries` in the Postgres configuration file.
-The `hypopg` extension may also require additional system-level installation (e.g., via your package manager) because it does not always ship with Postgres.
+Before creating `pg_stat_statements`, list it in `shared_preload_libraries` in the Postgres configuration file. `hypopg` does not ship with Postgres, so you may need to install it with your package manager first. `tests/Dockerfile.postgres-hypopg` shows one way to build an image that has it.
 
-## Usage Examples
+## Usage examples
 
-### Get Database Health Overview
-
-Ask:
+Check database health:
 > Check the health of my database and identify any issues.
 
-### Analyze Slow Queries
-
-Ask:
+Analyze slow queries:
 > What are the slowest queries in my database? And how can I speed them up?
 
-### Get Recommendations On How To Speed Things Up
-
-Ask:
+Get recommendations:
 > My app is slow. How can I make it faster?
 
-### Generate Index Recommendations
-
-Ask:
+Generate index recommendations:
 > Analyze my database workload and suggest indexes to improve performance.
 
-### Optimize a Specific Query
-
-Ask:
+Optimize a specific query:
 > Help me optimize this query: SELECT \* FROM orders JOIN customers ON orders.customer_id = customers.id WHERE orders.created_at > '2023-01-01';
 
-## MCP Server API
+## MCP server API
 
-The [MCP standard](https://modelcontextprotocol.io/) defines various types of endpoints: Tools, Resources, Prompts, and others.
+The server provides its functionality through [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools) only, because tool support is widespread across the [MCP client ecosystem](https://modelcontextprotocol.io/clients). Some other Postgres MCP servers, such as the [reference Postgres MCP server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), expose schema information as [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources).
 
-Postgres MCP Pro provides functionality via [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools) alone.
-We chose this approach because the [MCP client ecosystem](https://modelcontextprotocol.io/clients) has widespread support for MCP tools.
-This contrasts with the approach of other Postgres MCP servers, including the [Reference Postgres MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), which use [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources) to expose schema information.
-
-
-Postgres MCP Pro Tools:
-
-| Tool Name | Description |
+| Tool name | Description |
 |-----------|-------------|
-| `list_schemas` | Lists all database schemas available in the PostgreSQL instance. |
-| `list_objects` | Lists database objects (tables, views, sequences, extensions) within a specified schema. |
-| `get_object_details` | Provides information about a specific database object, for example, a table's columns, constraints, and indexes. |
-| `execute_sql` | Executes SQL statements on the database, with read-only limitations when connected in restricted mode. |
-| `explain_query` | Gets the execution plan for a SQL query describing how PostgreSQL will process it and exposing the query planner's cost model. Can be invoked with hypothetical indexes to simulate the behavior after adding indexes. |
-| `get_top_queries` | Reports the slowest SQL queries based on total execution time using `pg_stat_statements` data. |
-| `analyze_workload_indexes` | Analyzes the database workload to identify resource-intensive queries, then recommends optimal indexes for them. |
-| `analyze_query_indexes` | Analyzes a list of specific SQL queries (up to 10) and recommends optimal indexes for them. |
-| `analyze_db_health` | Performs comprehensive health checks including: buffer cache hit rates, connection health, constraint validation, index health (duplicate/unused/invalid), sequence limits, and vacuum health. |
+| `list_schemas` | Lists all schemas in the database. |
+| `list_objects` | Lists objects (tables, views, sequences, extensions) in a schema. |
+| `get_object_details` | Shows details of one object, for example a table's columns, constraints and indexes. |
+| `execute_sql` | Executes SQL. In restricted mode only read-only statements are accepted. |
+| `explain_query` | Gets the execution plan for a query and its cost estimates. Accepts hypothetical indexes to simulate the plan after adding them. |
+| `get_top_queries` | Reports the slowest or most resource-intensive queries using `pg_stat_statements`. `sort_by` is `total_time`, `mean_time` or `resources`. |
+| `analyze_workload_indexes` | Analyzes the workload for resource-intensive queries and recommends indexes. |
+| `analyze_query_indexes` | Analyzes a list of up to 10 SQL queries and recommends indexes. |
+| `analyze_db_health` | Runs health checks: index, connection, constraint, buffer cache, sequence, vacuum, and replication health. |
 
+## Related projects
 
-## Related Projects
-
-**Postgres MCP Servers**
+**Postgres MCP servers**
 - [Query MCP](https://github.com/alexander-zuev/supabase-mcp-server). An MCP server for Supabase Postgres with a three-tier safety architecture and Supabase management API support.
 - [PG-MCP](https://github.com/stuzero/pg-mcp-server). An MCP server for PostgreSQL with flexible connection options, explain plans, extension context, and more.
-- [Reference PostgreSQL MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres). A simple MCP Server implementation exposing schema information as MCP resources and executing read-only queries.
-- [Supabase Postgres MCP Server](https://github.com/supabase-community/supabase-mcp). This MCP Server provides Supabase management features and is actively maintained by the Supabase community.
-- [Nile MCP Server](https://github.com/niledatabase/nile-mcp-server). An MCP server providing access to the management API for the Nile's multi-tenant Postgres service.
-- [Neon MCP Server](https://github.com/neondatabase-labs/mcp-server-neon). An MCP server providing access to the management API for Neon's serverless Postgres service.
-- [Wren MCP Server](https://github.com/Canner/wren-engine). Provides a semantic engine powering business intelligence for Postgres and other databases.
+- [Reference PostgreSQL MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres). Exposes schema information as MCP resources and executes read-only queries.
+- [Supabase Postgres MCP Server](https://github.com/supabase-community/supabase-mcp). Supabase management features, maintained by the Supabase community.
+- [Nile MCP Server](https://github.com/niledatabase/nile-mcp-server). Access to the management API of Nile's multi-tenant Postgres service.
+- [Neon MCP Server](https://github.com/neondatabase-labs/mcp-server-neon). Access to the management API of Neon's serverless Postgres service.
+- [Wren MCP Server](https://github.com/Canner/wren-engine). A semantic engine for business intelligence on Postgres and other databases.
 
-**DBA Tools (including commercial offerings)**
-- [Aiven Database Optimizer](https://aiven.io/solutions/aiven-ai-database-optimizer). A tool that provides holistic database workload analysis, query optimizations, and other performance improvements.
+**DBA tools (including commercial offerings)**
+- [Aiven Database Optimizer](https://aiven.io/solutions/aiven-ai-database-optimizer). Workload analysis, query optimizations, and other performance improvements.
 - [dba.ai](https://www.dba.ai/). An AI-powered database administration assistant that integrates with GitHub to resolve code issues.
-- [pgAnalyze](https://pganalyze.com/). A comprehensive monitoring and analytics platform for identifying performance bottlenecks, optimizing queries, and real-time alerting.
-- [Postgres.ai](https://postgres.ai/). An interactive chat experience combining an extensive Postgres knowledge base and GPT-4.
-- [Xata Agent](https://github.com/xataio/agent). An open-source AI agent that automatically monitors database health, diagnoses issues, and provides recommendations using LLM-powered reasoning and playbooks.
+- [pgAnalyze](https://pganalyze.com/). Monitoring and analytics for finding performance bottlenecks, optimizing queries, and alerting.
+- [Postgres.ai](https://postgres.ai/). An interactive chat experience combining a Postgres knowledge base and GPT-4.
+- [Xata Agent](https://github.com/xataio/agent). An open-source AI agent that monitors database health, diagnoses issues, and gives recommendations.
 
-**Postgres Utilities**
+**Postgres utilities**
 - [Dexter](https://github.com/DexterDB/dexter). A tool for generating and testing hypothetical indexes on PostgreSQL.
-- [PgHero](https://github.com/ankane/pghero). A performance dashboard for Postgres, with recommendations.
-Postgres MCP Pro incorporates health checks from PgHero.
+- [PgHero](https://github.com/ankane/pghero). A performance dashboard for Postgres, with recommendations. The health checks here are adapted from PgHero.
 - [PgTune](https://github.com/le0pard/pgtune?tab=readme-ov-file). Heuristics for tuning Postgres configuration.
 
-## Frequently Asked Questions
+## Frequently asked questions
 
-*How is Postgres MCP Pro different from other Postgres MCP servers?*
-There are many MCP servers allow an AI agent to run queries against a Postgres database.
-Postgres MCP Pro does that too, but also adds tools for understanding and improving the performance of your Postgres database.
-For example, it implements a version of the [Anytime Algorithm of Database Tuning Advisor for Microsoft SQL Server](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf), a modern industrial-strength algorithm for automatic index tuning.
+*How is this different from other Postgres MCP servers?*
+Many MCP servers let an AI agent run queries against Postgres. This one also adds tools for understanding and improving performance. For example, it implements a version of the [Anytime Algorithm of Database Tuning Advisor for Microsoft SQL Server](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf) for automatic index tuning. The health checks are deterministic queries rather than SQL the LLM writes on each run, and index recommendations are based on the planner's cost model through `hypopg` rather than guesses.
 
-| Postgres MCP Pro | Other Postgres MCP Servers |
-|--------------|----------------------------|
-| ✅ Deterministic database health checks | ❌ Unrepeatable LLM-generated health queries |
-| ✅ Principled indexing search strategies | ❌ Gen-AI guesses at indexing improvements |
-| ✅ Workload analysis to find top problems | ❌ Inconsistent problem analysis |
-| ✅ Simulates performance improvements | ❌ Try it yourself and see if it works |
-
-Postgres MCP Pro complements generative AI by adding deterministic tools and classical optimization algorithms
-The combination is both reliable and flexible.
-
-
-*Why are MCP tools needed when the LLM can reason, generate SQL, etc?*
-LLMs are invaluable for tasks that involve ambiguity, reasoning, or natural language.
-When compared to procedural code, however, they can be slow, expensive, non-deterministic, and sometimes produce unreliable results.
-In the case of database tuning, we have well established algorithms, developed over decades, that are proven to work.
-Postgres MCP Pro lets you combine the best of both worlds by pairing LLMs with classical optimization algorithms and other procedural tools.
-
-*How do you test Postgres MCP Pro?*
-Testing is critical to ensuring that Postgres MCP Pro is reliable and accurate.
-We are building out a suite of AI-generated adversarial workloads designed to challenge Postgres MCP Pro and ensure it performs under a broad variety of scenarios.
+*Why are MCP tools needed when the LLM can reason and generate SQL?*
+LLMs are good at ambiguity, reasoning and natural language. Compared with procedural code they can be slow, expensive and non-deterministic. For index tuning there are established algorithms, so the server pairs the LLM with those algorithms and other procedural tools.
 
 *What Postgres versions are supported?*
-Our testing presently focuses on Postgres 15, 16, and 17.
-We plan to support Postgres versions 13 through 17.
+The integration tests run against Postgres 12, 15 and 16.
 
 *Who created this project?*
-This project is created and maintained by [Crystal DBA](https://www.crystaldba.ai).
+This is a TypeScript fork maintained by Martin Zagora. The original project was created by [Crystal DBA](https://www.crystaldba.ai).
 
-## Roadmap
+## Issues and contributions
 
-*TBD*
+Open an [issue](https://github.com/zaggino/postgres-mcp/issues) or a [pull request](https://github.com/zaggino/postgres-mcp/pulls). Known follow-ups are listed in [docs/TODO.md](docs/TODO.md).
 
-You and your needs are a critical driver for what we build.
-Tell us what you want to see by opening an [issue](https://github.com/crystaldba/postgres-mcp/issues) or a [pull request](https://github.com/crystaldba/postgres-mcp/pulls).
-You can also contact us on [Discord](https://discord.gg/4BEHC7ZM).
+## Technical notes
 
-## Technical Notes
+This section describes the technical considerations behind the design.
 
-This section includes a high-level overview technical considerations that influenced the design of Postgres MCP Pro.
+### Index tuning
 
-### Index Tuning
+Missing indexes are one of the most common causes of database performance problems. Indexes let Postgres locate data quickly. On small tables they make little difference, but as data grows the gap between a table scan and an index lookup becomes significant (typically *O*(*n*) vs *O*(*log* *n*), more if joins on multiple tables are involved).
 
-Developers know that missing indexes are one of the most common causes of database performance issues.
-Indexes provide access methods that allow Postgres to quickly locate data that is required to execute a query.
-When tables are small, indexes make little difference, but as the size of the data grows, the difference in algorithmic complexity between a table scan and an index lookup becomes significant (typically *O*(*n*) vs *O*(*log* *n*), potentially more if joins on multiple tables are involved).
-
-Generating suggested indexes in Postgres MCP Pro proceeds in several stages:
+Index recommendations are generated in several stages:
 
 1. *Identify SQL queries in need of tuning*.
-    If you know you are having a problem with a specific SQL query you can provide it.
-    Postgres MCP Pro can also analyze the workload to identify index tuning targets.
-    To do this, it relies on the `pg_stat_statements` extension, which records the runtime and resource consumption of each query.
+    If you know a specific query is slow you can provide it. The server can also analyze the workload to find tuning targets, using the `pg_stat_statements` extension, which records the runtime and resource consumption of each query.
 
-    A query is a candidate for index tuning if it is a top resource consumer, either on a per-execution basis or in aggregate.
-    At present, we use execution time as a proxy for cumulative resource consumption, but it may also make sense to look at specifics resources, e.g., the number of blocks accessed or the number of blocks read from disk.
-    The `analyze_query_workload` tool focuses on slow queries, using the mean time per execution with thresholds for execution count and mean execution time.
-    Agents may also call `get_top_queries`, which accepts a parameter for mean vs. total execution time, then pass these queries `analyze_query_indexes` to get index recommendations.
+    A query is a candidate if it is a top resource consumer, either per execution or in aggregate. Execution time is used as a proxy for cumulative resource consumption. `analyze_workload_indexes` focuses on slow queries, using the mean time per execution with thresholds for execution count and mean execution time. Agents may also call `get_top_queries`, which accepts a parameter for mean vs. total execution time, then pass those queries to `analyze_query_indexes`.
 
-    Sophisticated index tuning systems use "workload compression" to produce a representative subset of queries that reflects the characteristics of the workload as a whole, reducing the problem for downstream algorithms.
-    Postgres MCP Pro performs a limited form of workload compression by normalizing queries so that those generated from the same template appear as one.
-    It weights each query equally, a simplification that works when the benefits to indexing are large.
+    Index tuning systems often use "workload compression" to produce a representative subset of queries. This server does a limited form of it by normalizing queries so that those generated from the same template appear as one. Each query is weighted equally, a simplification that works when the benefits of indexing are large.
 
-2. *Generate candidate indexes*
-    Once we have a list of SQL queries that we want to improve through indexing, we generate a list of indexes that we might want to add.
-    To do this, we parse the SQL and identify any columns used in filters, joins, grouping, or sorting.
+2. *Generate candidate indexes*.
+    The SQL is parsed and columns used in filters, joins, grouping or sorting are identified.
 
-    To generate all possible indexes we need to consider combinations of these columns, because Postgres supports [multicolumn indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html).
-    In the present implementation, we include only one permutation of each possible multicolumn index, which is selected at random.
-    We make this simplification to reduce the search space because permutations often have equivalent performance.
-    However, we hope to improve in this area.
+    All possible indexes would need combinations of these columns, because Postgres supports [multicolumn indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html). The present implementation includes only one permutation of each multicolumn index to reduce the search space, because permutations often have equivalent performance.
 
 3. *Search for the optimal index configuration*.
-    Our objective is to find the combination of indexes that optimally balances the performance benefits against the costs of storing and maintaining those indexes.
-    We estimate the performance improvement by using the "what if?" capabilities provided by the `hypopg` extension.
-    This simulates how the Postgres query optimizer will execute a query after the addition of indexes, and reports changes based on the actual Postgres cost model.
+    The goal is the combination of indexes that best balances performance benefit against the cost of storing and maintaining them. The performance improvement is estimated with the "what if?" capabilities of the `hypopg` extension, which simulates how the Postgres optimizer would execute a query after the indexes are added, using the actual Postgres cost model.
 
-    One challenge is that generating query plans generally requires knowledge of the specific parameter values used in the query.
-    Query normalization, which is necessary to reduce the queries under consideration, removes parameter constants.
-    Parameter values provided via bind variables are similarly not available to us.
+    Planning a query generally needs the parameter values used in it, but query normalization removes constants and bind variables are not available. To address this, the server produces realistic constants by sampling table statistics. Postgres 16 added [generic explain plans](https://www.postgresql.org/docs/current/sql-explain.html), but they have limitations, for example around `LIKE` clauses.
 
-    To address this problem, we produce realistic constants that we can provide as parameters by sampling from the table statistics.
-    In version 16, Postgres added [generic explain plan functionality](https://www.postgresql.org/docs/current/sql-explain.html), but it has limitations, for example around `LIKE` clauses, which our implementation does not have.
-
-    Search strategy is critical because evaluating all possible index combinations feasible only in simple situations.
-    This is what most sets apart various indexing approaches.
-    Adapting the approach of Microsoft's Anytime algorithm, we employ a greedy search strategy, i.e., find the best one-index solution, then find the best index to add to that to produce a two-index solution.
-    Our search terminates when the time budget is exhausted or when a round of exploration fails to produce any gains above the minimum improvement threshold of 10%.
+    Search strategy matters because evaluating all index combinations is feasible only in simple situations. Adapting Microsoft's Anytime algorithm, the server uses a greedy search: find the best one-index solution, then the best index to add to it for a two-index solution, and so on. The search ends when the time budget is used up or a round fails to produce gains above the minimum improvement threshold of 10%.
 
 4. *Cost-benefit analysis*.
-    When posed with two indexing alternatives, one which produces better performance and one which requires more space, how do we decide which to choose?
-    Traditionally, index advisors ask for a storage budget and optimize performance with respect to that storage budget.
-    We also take a storage budget, but perform a cost-benefit analysis throughout the optimization.
+    When one alternative performs better and another needs less space, the choice is framed as selecting a point along the [Pareto front](https://en.wikipedia.org/wiki/Pareto_front). The server takes a storage budget (`max_index_size_mb`), and also compares changes in relative terms: by default the change in the log (base 10) of the performance improvement must be 2x the difference in the log of the space cost. That allows a 10x increase in space for a 100x performance improvement.
 
-    We frame this as the problem of selecting a point along the [Pareto front](https://en.wikipedia.org/wiki/Pareto_front)—the set of choices for which improving one quality metric necessarily worsens another.
-    In an ideal world, we might want to assess the cost of the storage and the benefit of improved performance in monetary terms.
-    However, there is a simpler and more practical approach: to look at the changes in relative terms.
-    Most people would agree that a 100x performance improvement is worth it, even if the storage cost is 2x.
-    In our implementation, we use a configurable parameter to set this threshold.
-    By default, we require the change in the log (base 10) of the performance improvement to be 2x the difference in the log of the space cost.
-    This works out to allowing a maximum 10x increase in space for a 100x performance improvement.
+The implementation is most closely related to the [Anytime Algorithm](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf) in Microsoft SQL Server. Compared with [Dexter](https://github.com/ankane/dexter/), it searches a larger space and uses different heuristics, which gives better solutions at the cost of longer runtime.
 
-Our implementation is most closely related to the [Anytime Algorithm](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf) found in Microsoft SQL Server.
-Compared to [Dexter](https://github.com/ankane/dexter/), an automatic indexing tool for Postgres, we search a larger space and use different heuristics.
-This allows us to generate better solutions at the cost of longer runtime.
+The result shows the work done in each round of the search, including a comparison of the query plans before and after each index. This gives the LLM context for responding to the recommendations.
 
-We also show the work done in each round of the search, including a comparison of the query plans before and after the addition of each index.
-This give the LLM additional context that it can use when responding to the indexing recommendations.
+### Database health
 
-### Experimental: Index Tuning by LLM
+Health checks identify tuning opportunities and maintenance needs before they become critical. They are adapted from [PgHero](https://github.com/ankane/pghero).
 
-Postgres MCP Pro includes an experimental index tuning feature based on [Optimization by LLM](https://arxiv.org/abs/2309.03409).
-Instead of using heuristics to explore possible index configurations, we provide the database schema and query plans to an LLM and ask it to propose index configurations.
-We then use `hypopg` to predict performance with the proposed indexes, then feed those results back into the LLM to produce a new set of suggestions.
-We repeat this process until multiple rounds of iteration produce no further improvements.
+- *Index health*. Looks for unused indexes, duplicate indexes, and bloated indexes. Autovacuum marks index entries that point to dead tuples as reusable but does not compact index pages, so eventually pages may contain few live references.
+- *Buffer cache hit rate*. Measures the proportion of reads served from the buffer cache instead of disk. A low rate often means degraded application performance.
+- *Connection health*. Checks the number of connections and their utilization. The biggest risk is running out of connections, but many idle or blocked connections can also indicate problems.
+- *Vacuum health*. Vacuum prevents transaction id wraparound, which can make the database stop accepting writes. Postgres uses 32-bit transaction ids, so after about 2 billion transactions it must reuse them. To do that it "freezes" old records, replacing their transaction ids with a special value that means distant past. This check looks for tables that need vacuuming to prevent wraparound.
+- *Replication health*. Monitors lag between primary and replicas, replication status, and replication slot usage.
+- *Constraint health*. Postgres rejects transactions that would violate a constraint, but invalid constraints can appear after loading data or in recovery scenarios. This check looks for invalid constraints.
+- *Sequence health*. Looks for sequences at risk of exceeding their maximum value.
 
-Index optimization by LLM is has advantages when the index search space is large, or when indexes with many columns need to be considered.
-Like traditional search-based approaches, it relies on the accuracy of the `hypopg` performance predictions.
+### Postgres client library
 
-In order to perform index optimization by LLM, you must provide an OpenAI API key by setting the `OPENAI_API_KEY` environment variable.
+The server connects with [node-postgres](https://node-postgres.com/) (`pg`). SQL is parsed with [`libpg-query`](https://github.com/launchql/libpg-query-node), which wraps the actual PostgreSQL parser.
 
+### Connection configuration
 
-### Database Health
+Like the [reference PostgreSQL MCP server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), this server takes the connection information at startup. That is convenient if you always use the same database, but cumbersome if you switch.
 
-Database health checks identify tuning opportunities and maintenance needs before they lead to critical issues.
-In the present release, Postgres MCP Pro adapts the database health checks directly from [PgHero](https://github.com/ankane/pghero).
-We are working to fully validate these checks and may extend them in the future.
+[PG-MCP](https://github.com/stuzero/pg-mcp-server) instead takes connection details in MCP tool calls. That is easier for switching databases and lets one server serve several users, but the credentials pass through the LLM and are stored in the chat history. Startup configuration has its own weakness: few MCP clients store server configuration securely.
 
-- *Index Health*. Looks for unused indexes, duplicate indexes, and indexes that are bloated. Bloated indexes make inefficient use of database pages.
-  Postgres autovacuum cleans up index entries pointing to dead tuples, and marks the entries as reusable. However, it does not compact the index pages and, eventually, index pages may contain few live tuple references.
-- *Buffer Cache Hit Rate*. Measures the proportion of database reads that are served from the buffer cache instead of disk.
-  A low buffer cache hit rate must be investigated as it is often not cost-optimal and leads to degraded application performance.
-- *Connection Health*. Checks the number of connections to the database and reports on their utilization.
-  The biggest risk is running out of connections, but a high number of idle or blocked connections can also indicate issues.
-- *Vacuum Health*. Vacuum is important for many reasons.
-  A critical one is preventing transaction id wraparound, which can cause the database to stop accepting writes.
-  The Postgres multi-version concurrency control (MVCC) mechanism requires a unique transaction id for each transaction.
-  However, because Postgres uses a 32-bit signed integer for transaction ids, it needs to reuse transaction ids after after a maximum of 2 billion transactions.
-  To do this it "freezes" the transaction ids of historical transactions, setting them all to a special value that indicates distant past.
-  When records first go to disk, they are written visibility for a range of transaction ids.
-  Before re-using these transaction ids, Postgres must update any on-disk records, "freezing" them to remove the references to the transaction ids to be reused.
-  This check looks for tables that require vacuuming to prevent transaction id wraparound.
-- *Replication Health*. Checks replication health by monitoring lag between primary and replicas, verifying replication status, and tracking usage of replication slots.
-- *Constraint Health*. During normal operation, Postgres rejects any transactions that would cause a constraint violation.
-  However, invalid constraints may occur after loading data or in recovery scenarios. This check looks for any invalid constraints.
-- *Sequence Health*. Looks for sequences that are at risk of exceeding their maximum value.
+### Schema information
 
+The schema tools give the agent what it needs to generate correct and performant SQL. For example, for "How many flights took off from San Francisco and landed in Paris during the past year?" the agent must find the flights table, the origin and destination columns, and perhaps a table that maps airport codes to locations.
 
-### Postgres Client Library
+*Why provide schema tools when LLMs can query the Postgres system catalog directly?*
+In upstream's experience Claude is very good at exploring the [system catalog](https://www.postgresql.org/docs/current/catalogs.html) and the [information schema](https://www.postgresql.org/docs/current/information-schema.html), but other LLMs may not be as reliable.
 
-Postgres MCP Pro uses [psycopg3](https://www.psycopg.org/) to connect to Postgres using asynchronous I/O.
-Under the hood, psycopg3 uses the [libpq](https://www.postgresql.org/docs/current/libpq.html) library to connect to Postgres, providing access to the full Postgres feature set and an underlying implementation fully supported by the Postgres community.
+*Why tools and not [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources)?*
+Resource support is less widespread than tool support in MCP clients, and some clients only support human navigation of the resource tree, even though the standard allows agents to access resources.
 
-Some other Python-based MCP servers use [asyncpg](https://github.com/MagicStack/asyncpg), which may simplify installation by eliminating the `libpq` dependency.
-Asyncpg is also probably [faster](https://fernandoarteaga.dev/blog/psycopg-vs-asyncpg/) than psycopg3, but we have not validated this ourselves.
-[Older benchmarks](https://gistpreview.github.io/?0ed296e93523831ea0918d42dd1258c2) report a larger performance gap, suggesting that the newer psycopg3 has closed the gap as it matures.
+### Protected SQL execution
 
-Balancing these considerations, we selected `psycopg3` over `asyncpg`.
-We remain open to revising this decision in the future.
+AI amplifies the long-standing challenge of protecting databases from mistakes and attacks. Restricted mode focuses on integrity: preventing LLM-generated SQL from modifying or deleting data or changing the schema outside of your change management process.
 
+The simplest way to guarantee read-only SQL is a database user with read-only permissions. Many find that cumbersome, so restricted mode enforces read-only execution on a read-write connection. Every statement runs inside `BEGIN TRANSACTION READ ONLY`. That alone can be circumvented, for example by issuing `ROLLBACK` and then starting a new transaction:
 
-### Connection Configuration
-
-Like the [Reference PostgreSQL MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), Postgres MCP Pro takes Postgres connection information at startup.
-This is convenient for users who always connect to the same database but can be cumbersome when users switch databases.
-
-An alternative approach, taken by [PG-MCP](https://github.com/stuzero/pg-mcp-server), is provide connection details via MCP tool calls at the time of use.
-This is more convenient for users who switch databases, and allows a single MCP server to simultaneously support multiple end-users.
-
-There must be a better approach than either of these.
-Both have security weaknesses—few MCP clients store the MCP server configuration securely (an exception is Goose), and credentials provided via MCP tools are passed through the LLM and stored in the chat history.
-Both also have usability issues in some scenarios.
-
-
-### Schema Information
-
-The purpose of the schema information tool is to provide the calling AI agent with the information it needs to generate correct and performant SQL.
-For example, suppose a user asks, "How many flights took off from San Francisco and landed in Paris during the past year?"
-The AI agent needs to find the table that stores the flights, the columns that store the origin and destinations, and perhaps a table that maps between airport codes and airport locations.
-
-
-*Why provide schema information tools when LLMs are generally capable of generating the SQL to retrieve this information from Postgres directly?*
-
-Our experience using Claude indicates that the calling LLM is very good at generating SQL to explore the Postgres schema by querying the [Postgres system catalog](https://www.postgresql.org/docs/current/catalogs.html) and the [information schema](https://www.postgresql.org/docs/current/information-schema.html) (an ANSI-standardized database metadata view).
-However, we do not know whether other LLMs do so as reliably and capably.
-
-*Would it be better to provide schema information using [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources) rather than [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools)?*
-
-The [Reference PostgreSQL MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres) uses resources to expose schema information rather than tools.
-Navigating resources is similar to navigating a file system, so this approach is natural in many ways.
-However, resource support is less widespread than tool support in the MCP client ecosystem (see [example clients](https://modelcontextprotocol.io/clients)).
-In addition, while the MCP standard says that resources can be accessed by either AI agents or end-user humans, some clients only support human navigation of the resource tree.
-
-
-### Protected SQL Execution
-
-AI amplifies longstanding challenges of protecting databases from a range of threats, ranging from simple mistakes to sophisticated attacks by malicious actors.
-Whether the threat is accidental or malicious, a similar security framework applies, with aims that fall into three categories: confidentiality, integrity, and availability.
-The familiar tension between convenience and safety is also evident and pronounced.
-
-Postgres MCP Pro's protected SQL execution mode focuses on integrity.
-In the context of MCP, we are most concerned with LLM-generated SQL causing damage—for example, unintended data modification or deletion, or other changes that might circumvent an organization's change management process.
-
-The simplest way to provide integrity is to ensure that all SQL executed against the database is read-only.
-One way to do this is by creating a database user with read-only access permissions.
-While this is a good approach, many find this cumbersome in practice.
-Postgres does not provide a way to place a connection or session into read-only mode, so Postgres MCP Pro uses a more complex approach to ensure read-only SQL execution on top of a read-write connection.
-
-Postgres MCP Provides a read-only transaction mode that prevents data and schema modifications.
-Like the [Reference PostgreSQL MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), we use read-only transactions to provide protected SQL execution.
-
-To make this mechanism robust, we need to ensure that the SQL does not somehow circumvent the read-only transaction mode, say by issuing a `COMMIT` or `ROLLBACK` statement and then beginning a new transaction.
-
-For example, the LLM can circumvent the read-only transaction mode by issuing a `ROLLBACK` statement and then beginning a new transaction.
-For example:
 ```sql
 ROLLBACK; DROP TABLE users;
 ```
 
-To prevent cases like this, we parse the SQL before execution using the [pglast](https://pglast.readthedocs.io/) library.
-We reject any SQL that contains `commit` or `rollback` statements.
-Helpfully, the popular Postgres stored procedure languages, including PL/pgSQL and PL/Python, do not allow for `COMMIT` or `ROLLBACK` statements.
-If you have unsafe stored procedure languages enabled on your database, then our read-only protections could be circumvented.
+To prevent this the SQL is parsed before execution with `libpg-query`, and anything that is not on an allowlist of statement types, parse tree nodes, functions and extensions is rejected. That includes `COMMIT` and `ROLLBACK`. The common stored procedure languages, including PL/pgSQL and PL/Python, do not allow `COMMIT` or `ROLLBACK` inside functions, but if you have unsafe procedural languages enabled, the read-only protection could be circumvented.
 
-At present, Postgres MCP Pro provides two levels of protection for the database, one at either extreme of the convenience/safety spectrum.
-- "Unrestricted" provides maximum flexibility.
-It is suitable for development environments where speed and flexibility are paramount, and where there is no need to protect valuable or sensitive data.
-- "Restricted" provides a balance between flexibility and safety.
-It is suitable for production environments where the database is exposed to untrusted users, and where it is important to protect valuable or sensitive data.
+Restricted mode also limits query execution time to 30 seconds. The limit is applied on the client side: the server stops waiting, but the statement can keep running on the database (see [docs/TODO.md](docs/TODO.md)).
 
-Unrestricted mode aligns with the approach of [Cursor's auto-run mode](https://docs.cursor.com/chat/tools#auto-run), where the AI agent operates with limited human oversight or approvals.
-We expect auto-run to be deployed in development environments where the consequences of mistakes are low, where databases do not contain valuable or sensitive data, and where they can be recreated or restored from backups when needed.
+The two modes sit at opposite ends of the convenience and safety spectrum:
 
-We designed restricted mode to be conservative, erring on the side of safety even though it may be inconvenient.
-Restricted mode is limited to read-only operations, and we limit query execution time to prevent long-running queries from impacting system performance.
-We may add measures in the future to make sure that restricted mode is safe to use with production databases.
+- "Unrestricted" gives maximum flexibility for development environments where speed matters and there is no valuable or sensitive data. It matches [Cursor's auto-run mode](https://docs.cursor.com/chat/tools#auto-run), where the agent works with little human oversight.
+- "Restricted" is conservative, erring on the side of safety even when that is inconvenient. It is meant for databases exposed to untrusted users. For databases holding valuable or sensitive data, also use a database role with limited permissions.
 
+## Development
 
-## Postgres MCP Pro Development
+Requirements: Node.js 26+ and pnpm 11.
 
-The instructions below are for developers who want to work on Postgres MCP Pro, or users who prefer to install Postgres MCP Pro from source.
+```bash
+git clone https://github.com/zaggino/postgres-mcp.git
+cd postgres-mcp
+pnpm install
+```
 
-### Local Development Setup
+| Command | Purpose |
+|---------|---------|
+| `pnpm build` | Build to `dist/`. |
+| `pnpm check` | Lint and format check (Ultracite/Biome). |
+| `pnpm fix` | Apply lint and format fixes. |
+| `pnpm typecheck` | Type check with `tsc`. |
+| `pnpm test:unit` | Unit tests. |
+| `pnpm test:integration` | Integration tests against real databases (needs Docker). |
 
-1. **Install uv**:
+The integration tests start Postgres 12, 15 and 16 in containers. Set `PG_VERSIONS=16` to run a single version, and `REQUIRE_DOCKER=1` to fail instead of skip when Docker is missing.
 
-   ```bash
-   curl -sSL https://astral.sh/uv/install.sh | sh
-   ```
+Run the server from source:
 
-2. **Clone the repository**:
+```bash
+node dist/index.js "postgresql://user:password@localhost:5432/dbname"
+```
 
-   ```bash
-   git clone https://github.com/crystaldba/postgres-mcp.git
-   cd postgres-mcp
-   ```
+## License
 
-3. **Install dependencies**:
-
-   ```bash
-   uv pip install -e .
-   uv sync
-   ```
-
-4. **Run the server**:
-   ```bash
-   uv run postgres-mcp "postgres://user:password@localhost:5432/dbname"
-   ```
+MIT. See [LICENSE](LICENSE).

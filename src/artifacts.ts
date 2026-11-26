@@ -186,7 +186,7 @@ function formatPlanNode(node: PlanNode, level = 0): string {
 
   // Add filter if present
   if (node.filter) {
-    // Truncate long filters for readability (by code point, as Python does)
+    // Truncate long filters for readability (by code point)
     const chars = Array.from(node.filter);
     const filterText =
       chars.length > MAX_FILTER_LENGTH

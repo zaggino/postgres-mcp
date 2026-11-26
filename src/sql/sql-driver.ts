@@ -100,6 +100,7 @@ export const defaultPoolFactory: PoolFactory = (connectionString) => {
   const pool = new pg.Pool({
     connectionString,
     max: 5,
+    connectionTimeoutMillis: 30_000,
     types: customTypes,
   });
   pool.on("error", (error) => {
@@ -170,6 +171,7 @@ export class DbConnPool {
   isValid = false;
   lastError: string | null = null;
   readonly #poolFactory: PoolFactory;
+  #connecting: Promise<PoolLike> | null = null;
 
   constructor(
     connectionUrl?: string,
@@ -179,11 +181,24 @@ export class DbConnPool {
     this.#poolFactory = poolFactory;
   }
 
-  async poolConnect(connectionUrl?: string): Promise<PoolLike> {
+  poolConnect(connectionUrl?: string): Promise<PoolLike> {
     if (this.pool && this.isValid) {
-      return this.pool;
+      return Promise.resolve(this.pool);
     }
+    // Concurrent callers share one connection attempt.
+    if (this.#connecting) {
+      return this.#connecting;
+    }
+    const attempt = this.#connect(connectionUrl).finally(() => {
+      if (this.#connecting === attempt) {
+        this.#connecting = null;
+      }
+    });
+    this.#connecting = attempt;
+    return attempt;
+  }
 
+  async #connect(connectionUrl?: string): Promise<PoolLike> {
     const url = connectionUrl || this.connectionUrl;
     this.connectionUrl = url;
     if (!url) {
@@ -192,7 +207,16 @@ export class DbConnPool {
       throw new Error(this.lastError);
     }
 
-    await this.close();
+    // pool.end() waits for every checked-out client, so the old pool is
+    // detached and ended in the background instead of blocking the rebuild.
+    const stale = this.pool;
+    this.pool = null;
+    this.isValid = false;
+    if (stale) {
+      stale.end().catch((error: unknown) => {
+        logError(`Error closing connection pool: ${errorMessage(error)}`);
+      });
+    }
 
     try {
       const pool = this.#poolFactory(url);

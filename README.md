@@ -157,7 +157,7 @@ For Windsurf, `mcp_config.json` uses `serverUrl`:
 
 For streamable HTTP use `http://localhost:8000/mcp` as the URL.
 
-When the server is bound to a loopback host (`localhost`, `127.0.0.1`, `::1`), it rejects requests whose `Host` header does not name that address and port. Servers bound to other addresses do no Host or Origin checks and have no authentication; put them behind something that does.
+When the server is bound to a loopback host (`localhost`, `127.0.0.1`, `::1`), it rejects requests whose `Host` header does not name that address and port, on every MCP endpoint (`/mcp`, `/sse` and `/messages`). Servers bound to other addresses do no Host or Origin checks and have no authentication, and log a warning at startup saying so; put them behind something that does.
 
 ## CLI reference
 

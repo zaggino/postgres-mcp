@@ -582,31 +582,6 @@ export function createServer(accessMode: AccessMode): McpServer {
       explainQuery(accessMode, sql, analyze, hypothetical_indexes)
   );
 
-  // execute_sql is described according to the access mode
-  const executeSqlConfig =
-    accessMode === AccessMode.UNRESTRICTED
-      ? {
-          description: "Execute any SQL query",
-          annotations: { title: "Execute SQL", destructiveHint: true },
-        }
-      : {
-          description: "Execute a read-only SQL query",
-          annotations: {
-            title: "Execute SQL (Read-Only)",
-            readOnlyHint: true,
-          },
-        };
-  server.registerTool(
-    "execute_sql",
-    {
-      ...executeSqlConfig,
-      inputSchema: {
-        sql: z.string().default("all").describe("SQL to run"),
-      },
-    },
-    ({ sql }) => executeSql(accessMode, sql)
-  );
-
   server.registerTool(
     "analyze_workload_indexes",
     {
@@ -682,6 +657,31 @@ export function createServer(accessMode: AccessMode): McpServer {
     ({ sort_by, limit }) => getTopQueries(accessMode, sort_by, limit)
   );
 
+  // execute_sql is described according to the access mode
+  const executeSqlConfig =
+    accessMode === AccessMode.UNRESTRICTED
+      ? {
+          description: "Execute any SQL query",
+          annotations: { title: "Execute SQL", destructiveHint: true },
+        }
+      : {
+          description: "Execute a read-only SQL query",
+          annotations: {
+            title: "Execute SQL (Read-Only)",
+            readOnlyHint: true,
+          },
+        };
+  server.registerTool(
+    "execute_sql",
+    {
+      ...executeSqlConfig,
+      inputSchema: {
+        sql: z.string().default("all").describe("SQL to run"),
+      },
+    },
+    ({ sql }) => executeSql(accessMode, sql)
+  );
+
   return server;
 }
 
@@ -693,6 +693,12 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 interface HostGuard {
   allowedHosts?: string[];
   enableDnsRebindingProtection?: boolean;
+}
+
+/** A running HTTP transport: the bound port and a way to stop it. */
+export interface HttpServerHandle {
+  close: () => Promise<void>;
+  port: number;
 }
 
 /**
@@ -709,21 +715,51 @@ function hostGuard(host: string, port: number): HostGuard {
   };
 }
 
+/** The message for a request whose Host header the guard rejects, if any. */
+function hostViolation(guard: HostGuard, req: IncomingMessage): string | null {
+  if (!(guard.enableDnsRebindingProtection && guard.allowedHosts)) {
+    return null;
+  }
+  const hostHeader = req.headers.host;
+  if (hostHeader && guard.allowedHosts.includes(hostHeader)) {
+    return null;
+  }
+  return `Invalid Host header: ${hostHeader}`;
+}
+
+function warnIfExposed(host: string, accessMode: string): void {
+  if (!LOOPBACK_HOSTS.has(host)) {
+    log(
+      "WARNING",
+      `Listening on ${host}: the server is reachable from the network with no authentication and no Host or Origin checks. Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
+    );
+  }
+}
+
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let overflowed = false;
     req.on("data", (chunk: Buffer) => {
+      if (overflowed) {
+        return;
+      }
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
+        // Keep the socket open so the client can read the 413.
+        overflowed = true;
+        chunks.length = 0;
         reject(new RangeError("Request body too large"));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
     req.on("error", reject);
     req.on("end", () => {
+      if (overflowed) {
+        return;
+      }
       const text = Buffer.concat(chunks).toString("utf8");
       if (!text) {
         resolve(undefined);
@@ -753,22 +789,47 @@ function sendJsonRpcError(
   );
 }
 
+function sendBodyTooLarge(req: IncomingMessage, res: ServerResponse): void {
+  res.setHeader("Connection", "close");
+  sendJsonRpcError(res, 413, -32_600, "Request body too large");
+  res.once("finish", () => {
+    req.destroy();
+  });
+}
+
+/** Starts listening and resolves with the port the OS actually bound. */
 function listen(
   httpServer: ReturnType<typeof createHttpServer>,
   host: string,
   port: number
-): Promise<void> {
+): Promise<number> {
   return new Promise((resolve, reject) => {
     httpServer.once("error", reject);
     httpServer.listen(port, host, () => {
       httpServer.off("error", reject);
-      resolve();
+      const address = httpServer.address();
+      resolve(typeof address === "object" && address ? address.port : port);
     });
   });
 }
 
-function requestPath(req: IncomingMessage): string {
-  return new URL(req.url ?? "/", "http://localhost").pathname;
+function closeHttpServer(
+  httpServer: ReturnType<typeof createHttpServer>
+): Promise<void> {
+  return new Promise((resolve) => {
+    httpServer.close(() => {
+      resolve();
+    });
+    httpServer.closeAllConnections();
+  });
+}
+
+function parseRequestUrl(req: IncomingMessage): URL | null {
+  try {
+    return new URL(req.url ?? "/", "http://localhost");
+  } catch {
+    return null;
+  }
 }
 
 function headerValue(req: IncomingMessage, name: string): string | undefined {
@@ -778,10 +839,18 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
 
 async function runStdio(createMcpServer: ServerFactory): Promise<void> {
   const server = createMcpServer();
-  // Like the Python server, exit once the client closes stdin.
-  server.server.onclose = () => {
+  let closing = false;
+  const onClientGone = () => {
+    if (closing) {
+      return;
+    }
+    closing = true;
     void shutdown();
   };
+  // StdioServerTransport does not report stdin EOF through onclose.
+  server.server.onclose = onClientGone;
+  process.stdin.once("end", onClientGone);
+  process.stdin.once("close", onClientGone);
   await server.connect(new StdioServerTransport());
 }
 
@@ -794,8 +863,18 @@ async function handleSseRequest(
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
-  const path = requestPath(req);
+  const url = parseRequestUrl(req);
+  if (!url) {
+    res.writeHead(400).end("Bad Request");
+    return;
+  }
+  const path = url.pathname;
   if (req.method === "GET" && path === "/sse") {
+    const violation = hostViolation(guard, req);
+    if (violation) {
+      res.writeHead(403).end(violation);
+      return;
+    }
     const transport = new SSEServerTransport("/messages", res, guard);
     sessions.set(transport.sessionId, transport);
     const mcpServer = createMcpServer();
@@ -807,10 +886,7 @@ async function handleSseRequest(
     return;
   }
   if (req.method === "POST" && path === "/messages") {
-    const sessionId = new URL(
-      req.url ?? "/",
-      "http://localhost"
-    ).searchParams.get(SSE_SESSION_PARAM);
+    const sessionId = url.searchParams.get(SSE_SESSION_PARAM);
     const transport = sessionId ? sessions.get(sessionId) : undefined;
     if (!transport) {
       res.writeHead(sessionId ? 404 : 400).end("Could not find session");
@@ -822,16 +898,17 @@ async function handleSseRequest(
   res.writeHead(404).end("Not Found");
 }
 
-async function runSse(
+/** Serve MCP over SSE and resolve once listening. */
+export async function startSseServer(
   createMcpServer: ServerFactory,
   host: string,
   port: number
-): Promise<void> {
+): Promise<HttpServerHandle> {
   const sessions = new Map<string, SSEServerTransport>();
-  const guard = hostGuard(host, port);
+  const state: { guard: HostGuard } = { guard: {} };
 
   const httpServer = createHttpServer((req, res) => {
-    handleSseRequest(createMcpServer, sessions, guard, req, res).catch(
+    handleSseRequest(createMcpServer, sessions, state.guard, req, res).catch(
       (error: unknown) => {
         log("ERROR", `SSE request failed: ${errorMessage(error)}`);
         if (!res.headersSent) {
@@ -841,8 +918,10 @@ async function runSse(
     );
   });
 
-  await listen(httpServer, host, port);
-  log("INFO", `SSE server listening on http://${host}:${port}/sse`);
+  const boundPort = await listen(httpServer, host, port);
+  state.guard = hostGuard(host, boundPort);
+  log("INFO", `SSE server listening on http://${host}:${boundPort}/sse`);
+  return { port: boundPort, close: () => closeHttpServer(httpServer) };
 }
 
 type McpSessions = Map<string, StreamableHTTPServerTransport>;
@@ -921,27 +1000,33 @@ function sendMissingSession(
   }
 }
 
-async function runStreamableHttp(
+/** Serve MCP over streamable HTTP and resolve once listening. */
+export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
   host: string,
   port: number
-): Promise<void> {
+): Promise<HttpServerHandle> {
   const sessions: McpSessions = new Map();
-  const guard = hostGuard(host, port);
+  const state: { guard: HostGuard } = { guard: {} };
 
   const httpServer = createHttpServer((req, res) => {
-    if (requestPath(req) !== "/mcp") {
+    const path = parseRequestUrl(req)?.pathname;
+    if (path === undefined) {
+      res.writeHead(400).end("Bad Request");
+      return;
+    }
+    if (path !== "/mcp") {
       res.writeHead(404).end("Not Found");
       return;
     }
-    handleMcpRequest(createMcpServer, sessions, guard, req, res).catch(
+    handleMcpRequest(createMcpServer, sessions, state.guard, req, res).catch(
       (error: unknown) => {
         log("ERROR", `Streamable HTTP request failed: ${errorMessage(error)}`);
-        const badJson = error instanceof SyntaxError;
         if (error instanceof RangeError) {
-          sendJsonRpcError(res, 413, -32_600, "Request body too large");
+          sendBodyTooLarge(req, res);
           return;
         }
+        const badJson = error instanceof SyntaxError;
         sendJsonRpcError(
           res,
           badJson ? 400 : 500,
@@ -952,8 +1037,37 @@ async function runStreamableHttp(
     );
   });
 
-  await listen(httpServer, host, port);
-  log("INFO", `Streamable HTTP server listening on http://${host}:${port}/mcp`);
+  const boundPort = await listen(httpServer, host, port);
+  state.guard = hostGuard(host, boundPort);
+  log(
+    "INFO",
+    `Streamable HTTP server listening on http://${host}:${boundPort}/mcp`
+  );
+  return {
+    port: boundPort,
+    close: async () => {
+      await Promise.all(
+        [...sessions.values()].map((transport) => transport.close())
+      );
+      await closeHttpServer(httpServer);
+    },
+  };
+}
+
+async function runSse(
+  createMcpServer: ServerFactory,
+  host: string,
+  port: number
+): Promise<void> {
+  await startSseServer(createMcpServer, host, port);
+}
+
+async function runStreamableHttp(
+  createMcpServer: ServerFactory,
+  host: string,
+  port: number
+): Promise<void> {
+  await startStreamableHttpServer(createMcpServer, host, port);
 }
 
 /** Replaceable seams so tests can observe which transport ran. */
@@ -1171,6 +1285,12 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   installSignalHandlers();
+
+  if (options.transport === "sse") {
+    warnIfExposed(options.sseHost, accessMode);
+  } else if (options.transport === "streamable-http") {
+    warnIfExposed(options.streamableHttpHost, accessMode);
+  }
 
   const factory = () => createServer(accessMode);
   switch (options.transport) {

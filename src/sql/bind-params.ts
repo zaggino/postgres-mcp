@@ -1,5 +1,6 @@
 // biome-ignore lint/style/noExcessiveClassesPerFile: the visitors, SqlBindParams and the PgFloat value type belong together in bind-params.ts
 import { pyFloatStr } from "../py-format.ts";
+import { literal } from "./literal.ts";
 import { AstNode, isJsonObject, parseSql, Visitor } from "./pg-ast.ts";
 import type { SqlExecutor } from "./safe-sql.ts";
 import { SafeSqlDriver } from "./safe-sql.ts";
@@ -127,7 +128,7 @@ export class ColumnCollector extends Visitor {
       }
       const refIndex = groupItem.number("tleSortGroupRef") ?? 0;
       if (this.targetList && refIndex <= this.targetList.length) {
-        // 1-based; `at` keeps Python's negative indexing for a zero ref.
+        // 1-based; `at` keeps negative indexing for a zero ref.
         const targetEntry = this.targetList.at(refIndex - 1);
         this.visit(targetEntry?.node("val"));
       }
@@ -292,6 +293,12 @@ export class PgFloat {
 }
 
 type StatValue = string | number | bigint | PgFloat | null;
+
+/** SQL text written by this module, not read from the database. */
+interface ReadySql {
+  readonly sql: string;
+}
+type Bound = StatValue | ReadySql;
 type ColumnStats = Record<string, unknown>;
 type TableColumns = ReadonlyMap<string, Iterable<string>>;
 
@@ -315,6 +322,23 @@ function hasParam(text: string): boolean {
 /** Python's `str()` of a parsed array element. */
 function pyStr(value: StatValue): string {
   return value === null ? "None" : String(value);
+}
+
+/**
+ * SQL text for a statistics value. Anything but a number comes from table data
+ * and is quoted as a literal.
+ */
+function statSql(value: Bound): string {
+  if (value === null) {
+    return pyStr(value);
+  }
+  if (typeof value === "string") {
+    return literal(value);
+  }
+  if (typeof value === "object" && "sql" in value) {
+    return value.sql;
+  }
+  return pyStr(value);
 }
 
 function toStatValue(value: unknown): StatValue {
@@ -476,7 +500,7 @@ function histogramBound(bounds: StatValue[], isLower: boolean): StatValue {
 }
 
 /** Very conservative defaults as a last resort. */
-function defaultBound(dataType: string, isLower: boolean): StatValue {
+function defaultBound(dataType: string, isLower: boolean): Bound {
   if (
     dataType.includes("int") ||
     ["smallint", "integer", "bigint"].includes(dataType)
@@ -491,16 +515,16 @@ function defaultBound(dataType: string, isLower: boolean): StatValue {
     return new PgFloat(isLower ? 10 : 20);
   }
   if (dataType.includes("date") || dataType.includes("time")) {
-    return isLower ? "'2023-01-01'" : "'2023-01-31'";
+    return { sql: isLower ? "'2023-01-01'" : "'2023-01-31'" };
   }
   if (dataType === "boolean") {
-    return "true";
+    return { sql: "true" };
   }
-  return isLower ? "'m'" : "'n'";
+  return { sql: isLower ? "'m'" : "'n'" };
 }
 
 /** Tight bound values for range queries based on column statistics. */
-function boundValues(stats: ColumnStats, isLower: boolean): StatValue {
+function boundValues(stats: ColumnStats, isLower: boolean): Bound {
   // Most common values are statistically the most relevant
   const commonVals = statList(stats.common_vals);
   const commonFreqs = statList(stats.common_freqs);
@@ -592,7 +616,7 @@ function stringReplacement(
   }
   const [sample] = commonVals ?? [];
   if (commonVals && commonVals.length > 0) {
-    return `'${pyStr(sample ?? null)}'`;
+    return literal(pyStr(sample ?? null));
   }
   return "'sample_value'";
 }
@@ -603,12 +627,12 @@ function numericReplacement(
   histogramBounds: StatValue[],
   context: { isEquality: boolean; isRange: boolean }
 ): string {
-  const first = (values: StatValue[]) => pyStr(values[0] ?? null);
+  const first = (values: StatValue[]) => statSql(values[0] ?? null);
   if (histogramBounds.length > 0 && context.isRange) {
     // For range queries, use a value in the middle
     if (histogramBounds.length > 1) {
       const middle = histogramBounds[Math.floor(histogramBounds.length / 2)];
-      return pyStr(middle ?? null);
+      return statSql(middle ?? null);
     }
   } else if (commonVals.length > 0 && context.isEquality) {
     return first(commonVals);
@@ -707,8 +731,8 @@ export class SqlBindParams {
       );
 
       // Default numeric bounds if statistics not available
-      let lowerBound: StatValue = 10;
-      let upperBound: StatValue = 100;
+      let lowerBound: Bound = 10;
+      let upperBound: Bound = 100;
       if (tableName && colName) {
         const stats = await this.getColumnStatistics(tableName, colName);
         if (stats) {
@@ -718,8 +742,8 @@ export class SqlBindParams {
       }
 
       // Replace both parameters in the BETWEEN clause
-      const lower = pyStr(lowerBound);
-      const upper = pyStr(upperBound);
+      const lower = statSql(lowerBound);
+      const upper = statSql(upperBound);
       result = result
         .replace(new RegExp(String.raw`\$${first}`, "gu"), () => lower)
         .replace(new RegExp(String.raw`\$${second}`, "gu"), () => upper);

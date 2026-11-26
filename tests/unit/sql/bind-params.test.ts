@@ -143,3 +143,21 @@ test("a small pg_stats float is bound in Python's exponent notation", async () =
     await bind.replaceParameters("SELECT id FROM t WHERE t.price = $1")
   ).toBe("SELECT id FROM t WHERE t.price = 2e-05");
 });
+
+test("a quote in a pg_stats text value cannot end the bound string literal", async () => {
+  const bind = new SqlBindParams(
+    statsDriver({
+      data_type: "text",
+      common_vals: "{x'; DROP TABLE t; --}",
+      common_freqs: "{0.5}",
+      histogram_bounds: null,
+    })
+  );
+
+  const result = await bind.replaceParameters(
+    "SELECT id FROM t WHERE t.name = $1"
+  );
+
+  expect(result).toContain("'x''; DROP TABLE t; --'");
+  expect((await parseSql(result)).stmts).toHaveLength(1);
+});

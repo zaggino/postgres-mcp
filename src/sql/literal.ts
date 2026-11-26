@@ -45,7 +45,8 @@ export function literal(value: unknown): string {
     if (typeof value === "number" && !Number.isFinite(value)) {
       return pg.escapeLiteral(String(value));
     }
-    return String(value);
+    // A leading space keeps `x -{}` from turning into a `--` comment.
+    return value < 0 ? ` ${String(value)}` : String(value);
   }
   if (typeof value === "string") {
     return pg.escapeLiteral(value);
@@ -67,7 +68,7 @@ export function paramSqlToQuery(
   params: readonly unknown[]
 ): string {
   let next = 0;
-  // Surplus parameters are ignored, as Python's str.format does.
+  // Surplus parameters are ignored.
   return query.replaceAll(PLACEHOLDER_TOKEN, (token) => {
     if (token === "{{") {
       return "{";

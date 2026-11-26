@@ -22,6 +22,7 @@
     "build": "tsdown",
     "check": "ultracite check",
     "fix": "ultracite fix",
+    "prepack": "pnpm build",
     "test:integration": "vitest run --project integration",
     "test:unit": "vitest run --project unit",
     "typecheck": "tsc --noEmit"

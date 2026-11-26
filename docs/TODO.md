@@ -104,7 +104,7 @@ Regexes in `src/sql/bind-params.ts` use `\w`, which in JavaScript matches ASCII 
 
 ## 2026-11-26 · Minor · Bug · BETWEEN replacement inserts statistics values literally
 
-`replaceParameters` in `src/sql/bind-params.ts` inserts stat values as replacement text. Upstream processed backslash escapes in them and raised on invalid ones; here they are used as-is.
+`replaceParameters` in `src/sql/bind-params.ts` inserts stat values as replacement text. Upstream processed backslash escapes in them and raised on invalid ones; here text values are quoted as SQL literals and numbers are inserted as text, so no escapes are processed.
 
 ## 2026-11-26 · Minor · Bug · `pg_stats` integers above 2^53 lose precision
 
@@ -189,3 +189,43 @@ The zod schema in `src/server.ts` accepts only an array, while the Python tool a
 ## 2026-11-26 · Minor · Security · Non-loopback HTTP binds have no Host or Origin checks
 
 `hostGuard` in `src/server.ts` enables DNS-rebinding protection only for loopback hosts. A server bound to another address accepts any `Host` and `Origin` and has no authentication.
+
+## 2026-11-26 · Minor · Bug · `getPostgresVersion` rejects pre-release versions
+
+`getPostgresVersion` in `src/sql/extension-utils.ts` cannot parse server versions such as `17beta1`, so the version lookup fails on a pre-release server.
+
+## 2026-11-26 · Minor · Bug · `explain_query` splits a string `columns` value into characters
+
+`toColumnList` in `src/explain/explain-plan.ts` treats a string `columns` value as an iterable and splits it into characters. The zod schema in `src/server.ts` also leaves hypothetical index entries untyped, so nothing rejects the bad shape.
+
+## 2026-11-26 · Minor · Bug · Missing or non-numeric costs and NULL counters become 0
+
+Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt-base.ts` and `src/database-health/vacuum-health-calc.ts`, so a missing or non-numeric value silently turns into 0 instead of being reported.
+
+## 2026-11-26 · Major · Security · Publish workflow has no approval gate and uses mutable action tags
+
+`.github/workflows/publish.yml` publishes without a protected environment and references actions by mutable tag. Add an environment with required reviewers, pin actions by commit SHA, and prefer npm trusted publishing over `NPM_TOKEN`.
+
+## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
+
+The session maps in `src/server.ts` grow with every client that initializes and are cleaned up only when the client closes. Add a session limit and an idle timeout.
+
+## 2026-11-26 · Minor · Security · Full SQL text is included in error messages and logs
+
+Error messages returned to the client and written to stderr include the full SQL text (`src/sql/sql-driver.ts`, `src/sql/safe-sql.ts`), which can contain sensitive literals.
+
+## 2026-11-26 · Minor · Bug · A failed query destroys its pooled connection
+
+`SqlDriver.executeQuery` in `src/sql/sql-driver.ts` calls `client.release(true)` after any failure, so a user's syntax error discards a healthy connection.
+
+## 2026-11-26 · Minor · Cleanup · `ALLOWED_EXTENSIONS` is unreachable in restricted mode
+
+`CREATE EXTENSION` cannot run in a read-only transaction, so the allowlist in `src/sql/allowlists.ts` never takes effect. Trim it or document why it stays.
+
+## 2026-11-26 · Minor · Chore · Index advisor integration tests can mask a regression
+
+`tests/integration/dta-calc.test.ts` skips when no recommendation is produced and retries twice, so a regression that stops recommendations can pass.
+
+## 2026-11-26 · Minor · Bug · Sequence health treats `smallint` sequences as `bigint`
+
+`src/database-health/sequence-health-calc.ts` computes the maximum value of every sequence as if it were `bigint`, so `smallint` sequences are never reported as near exhaustion.

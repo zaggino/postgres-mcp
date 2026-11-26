@@ -134,3 +134,26 @@ test("connectionUrl can be read and replaced", () => {
     "postgresql://newuser:newpass@otherhost/otherdb"
   );
 });
+
+test("concurrent poolConnect calls on an invalid pool build one new pool and end the old one once", async () => {
+  const first = createFakePool();
+  const second = createFakePool();
+  const factory = vi
+    .fn<PoolFactory>()
+    .mockReturnValueOnce(first.pool)
+    .mockReturnValueOnce(second.pool);
+  const dbPool = new DbConnPool(URL, factory);
+  await dbPool.poolConnect();
+  dbPool.markInvalid(new Error("boom"));
+
+  const [a, b] = await Promise.all([
+    dbPool.poolConnect(),
+    dbPool.poolConnect(),
+  ]);
+
+  expect(a).toBe(second.pool);
+  expect(b).toBe(second.pool);
+  expect(factory).toHaveBeenCalledTimes(2);
+  expect(first.end).toHaveBeenCalledTimes(1);
+  expect(second.end).not.toHaveBeenCalled();
+});

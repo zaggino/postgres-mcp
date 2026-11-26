@@ -16,7 +16,7 @@ interface ReplicationMetrics {
 type Feature = "replication_lag" | "replication_slots" | "replicating";
 
 function describeSlot(slot: ReplicationSlot): string {
-  // Physical slots have no database; keep the NULL spelling used by the Python original.
+  // Physical slots have no database; it is reported as "None".
   const database =
     slot.database === null || slot.database === undefined
       ? "None"

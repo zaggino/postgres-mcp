@@ -544,7 +544,7 @@ export abstract class IndexTuningBase implements DtaTracer {
           totalCost += cost * weight;
           validQueries += 1;
         } catch (error) {
-          throw new Error(`Error executing explain for query: ${queryText}`, {
+          throw new Error('Error executing explain for a workload query', {
             cause: error,
           });
         }
@@ -659,13 +659,13 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     const topPlan = planData.Plan;
     if (!isJsonObject(topPlan) || Object.keys(topPlan).length === 0) {
-      logError(`No top plan found in plan data: ${JSON.stringify(planData)}`);
+      logError('No top plan found in plan data');
       return Number.POSITIVE_INFINITY;
     }
 
     const totalCost = topPlan['Total Cost'];
     if (totalCost === null || totalCost === undefined) {
-      logError(`Total Cost not found in top plan: ${JSON.stringify(topPlan)}`);
+      logError('Total Cost not found in top plan');
       return Number.POSITIVE_INFINITY;
     }
 

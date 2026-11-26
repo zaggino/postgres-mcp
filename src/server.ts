@@ -14,7 +14,7 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
-import { exitOnCliError, HELP, parseCli } from './cli.ts';
+import { exitOnCliError, HELP, httpOptions, parseCli } from './cli.ts';
 import { resolveConfig } from './config.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
 import { DatabaseAccessError, DatabaseRegistry } from './database-registry.ts';
@@ -27,6 +27,9 @@ import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
+import type { HttpServerOptions } from './transports/request-guard.ts';
+import { guardRequests, LOOPBACK_HOSTS } from './transports/request-guard.ts';
+import { SessionStore } from './transports/sessions.ts';
 
 const SERVER_NAME = 'postgres-mcp';
 const SERVER_VERSION = packageJson.version;
@@ -654,12 +657,6 @@ export function createServer(registry: DatabaseRegistry): McpServer {
 type ServerFactory = () => McpServer;
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
-
-interface HostGuard {
-  allowedHosts?: string[];
-  enableDnsRebindingProtection?: boolean;
-}
 
 /** A running HTTP transport: the bound port and a way to stop it. */
 export interface HttpServerHandle {
@@ -667,37 +664,12 @@ export interface HttpServerHandle {
   port: number;
 }
 
-/**
- * A server bound to loopback only accepts requests addressed to loopback, so
- * a web page cannot reach it through a DNS name it controls.
- */
-function hostGuard(host: string, port: number): HostGuard {
-  if (!LOOPBACK_HOSTS.has(host)) {
-    return {};
-  }
-  return {
-    enableDnsRebindingProtection: true,
-    allowedHosts: [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`],
-  };
-}
-
-/** The message for a request whose Host header the guard rejects, if any. */
-function hostViolation(guard: HostGuard, req: IncomingMessage): string | null {
-  if (!(guard.enableDnsRebindingProtection && guard.allowedHosts)) {
-    return null;
-  }
-  const hostHeader = req.headers.host;
-  if (hostHeader && guard.allowedHosts.includes(hostHeader)) {
-    return null;
-  }
-  return `Invalid Host header: ${hostHeader}`;
-}
-
-function warnIfExposed(host: string, accessMode: string): void {
-  if (!LOOPBACK_HOSTS.has(host)) {
+function warnIfExposed(http: HttpServerOptions, accessMode: string): void {
+  if (!LOOPBACK_HOSTS.has(http.host)) {
+    const hostChecks = http.allowedHosts === 'any' ? ' Host checks are disabled by --allowed-hosts=*.' : '';
     log(
       'WARNING',
-      `Listening on ${host}: the server is reachable from the network with no authentication and no Host or Origin checks. Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
+      `Listening on ${http.host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
     );
   }
 }
@@ -809,11 +781,47 @@ async function runStdio(createMcpServer: ServerFactory, onClientGone: () => void
 
 const SSE_SESSION_PARAM = 'sessionId';
 
+function logCloseFailure(what: string): (error: unknown) => void {
+  return (error) => {
+    log('ERROR', `Error closing ${what}: ${errorMessage(error)}`);
+  };
+}
+
+/** Keeps the session's idle timer stopped until the response closes. */
+function holdSession<T extends { close: () => Promise<void> }>(
+  store: SessionStore<T>,
+  id: string,
+  res: ServerResponse
+): void {
+  store.begin(id);
+  res.once('close', () => {
+    store.end(id);
+  });
+}
+
+/**
+ * Listens, then serves requests that pass the Host and Origin check. The handler
+ * attaches after listening because the default allow-list names the bound port.
+ */
+async function listenGuarded(
+  label: string,
+  path: string,
+  options: HttpServerOptions,
+  handler: (req: IncomingMessage, res: ServerResponse) => void
+): Promise<{ httpServer: ReturnType<typeof createHttpServer>; port: number }> {
+  const httpServer = createHttpServer();
+  const port = await listen(httpServer, options.host, options.port);
+  httpServer.on('request', guardRequests(options, port, handler));
+  log('INFO', `${label} listening on http://${options.host}:${port}${path}`);
+  return { httpServer, port };
+}
+
+// oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
+type SseSessions = SessionStore<SSEServerTransport>;
+
 async function handleSseRequest(
   createMcpServer: ServerFactory,
-  // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-  sessions: Map<string, SSEServerTransport>,
-  guard: HostGuard,
+  store: SseSessions,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
@@ -824,25 +832,24 @@ async function handleSseRequest(
   }
   const path = url.pathname;
   if (req.method === 'GET' && path === '/sse') {
-    const violation = hostViolation(guard, req);
-    if (violation) {
-      res.writeHead(403).end(violation);
+    if (store.full) {
+      res.writeHead(503).end('Too many sessions');
       return;
     }
     // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-    const transport = new SSEServerTransport('/messages', res, guard);
-    sessions.set(transport.sessionId, transport);
+    const transport = new SSEServerTransport('/messages', res);
     const mcpServer = createMcpServer();
+    store.add(transport.sessionId, transport);
     res.on('close', () => {
-      sessions.delete(transport.sessionId);
-      void mcpServer.close();
+      store.remove(transport.sessionId);
+      mcpServer.close().catch(logCloseFailure(`SSE session ${transport.sessionId}`));
     });
     await mcpServer.connect(transport);
     return;
   }
   if (req.method === 'POST' && path === '/messages') {
     const sessionId = url.searchParams.get(SSE_SESSION_PARAM);
-    const transport = sessionId ? sessions.get(sessionId) : undefined;
+    const transport = sessionId ? store.get(sessionId) : undefined;
     if (!transport) {
       res.writeHead(sessionId ? 404 : 400).end('Could not find session');
       return;
@@ -856,70 +863,80 @@ async function handleSseRequest(
 /** Serve MCP over SSE and resolve once listening. */
 export async function startSseServer(
   createMcpServer: ServerFactory,
-  host: string,
-  port: number
+  options: HttpServerOptions
 ): Promise<HttpServerHandle> {
   // oxlint-disable-next-line typescript/no-deprecated -- the SSE transport is part of the upstream CLI surface
-  const sessions = new Map<string, SSEServerTransport>();
-  const state: { guard: HostGuard } = { guard: {} };
+  const store: SseSessions = new SessionStore<SSEServerTransport>(options);
 
-  const httpServer = createHttpServer((req, res) => {
-    handleSseRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+  const { httpServer, port } = await listenGuarded('SSE server', '/sse', options, (req, res) => {
+    handleSseRequest(createMcpServer, store, req, res).catch((error: unknown) => {
       log('ERROR', `SSE request failed: ${errorMessage(error)}`);
       if (!res.headersSent) {
         res.writeHead(500).end('Internal Server Error');
       }
     });
   });
-
-  const boundPort = await listen(httpServer, host, port);
-  state.guard = hostGuard(host, boundPort);
-  log('INFO', `SSE server listening on http://${host}:${boundPort}/sse`);
-  return { port: boundPort, close: () => closeHttpServer(httpServer) };
+  return {
+    port,
+    close: async () => {
+      await store.closeAll();
+      await closeHttpServer(httpServer);
+    },
+  };
 }
 
-type McpSessions = Map<string, StreamableHTTPServerTransport>;
+type McpSessions = SessionStore<StreamableHTTPServerTransport>;
 
 async function startMcpSession(
   createMcpServer: ServerFactory,
-  sessions: McpSessions,
-  guard: HostGuard,
+  store: McpSessions,
   req: IncomingMessage,
   res: ServerResponse,
   body: unknown
 ): Promise<void> {
-  const transport = new StreamableHTTPServerTransport({
-    ...guard,
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (id) => {
-      sessions.set(id, transport);
-    },
-  });
+  // The id is chosen up front so the session counts against the cap before the first await.
+  const id = randomUUID();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => id });
   transport.onclose = () => {
-    if (transport.sessionId) {
-      sessions.delete(transport.sessionId);
-    }
+    store.remove(id);
   };
-  await createMcpServer().connect(transport);
-  await transport.handleRequest(req, res, body);
+  store.add(id, transport);
+  holdSession(store, id, res);
+  let initialized = false;
+  try {
+    await createMcpServer().connect(transport);
+    await transport.handleRequest(req, res, body);
+    initialized = transport.sessionId === id && res.statusCode >= 200 && res.statusCode < 300;
+  } finally {
+    if (!initialized) {
+      store.remove(id);
+      transport.close().catch(logCloseFailure(`session ${id}`));
+    }
+  }
 }
 
 async function handleMcpRequest(
   createMcpServer: ServerFactory,
-  sessions: McpSessions,
-  guard: HostGuard,
+  store: McpSessions,
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
   const sessionId = headerValue(req, 'mcp-session-id');
-  const existing = sessionId ? sessions.get(sessionId) : undefined;
+  const existing = sessionId ? store.get(sessionId) : undefined;
+  if (sessionId && existing) {
+    holdSession(store, sessionId, res);
+  }
 
   if (req.method === 'POST') {
     const body = await readBody(req);
     if (existing) {
       await existing.handleRequest(req, res, body);
     } else if (!sessionId && isInitializeRequest(body)) {
-      await startMcpSession(createMcpServer, sessions, guard, req, res, body);
+      if (store.full) {
+        sendJsonRpcError(res, 503, -32_000, 'Too many sessions');
+        return;
+      }
+      await startMcpSession(createMcpServer, store, req, res, body);
     } else {
       sendMissingSession(res, sessionId);
     }
@@ -949,13 +966,11 @@ function sendMissingSession(res: ServerResponse, sessionId: string | undefined):
 /** Serve MCP over streamable HTTP and resolve once listening. */
 export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
-  host: string,
-  port: number
+  options: HttpServerOptions
 ): Promise<HttpServerHandle> {
-  const sessions: McpSessions = new Map();
-  const state: { guard: HostGuard } = { guard: {} };
+  const store: McpSessions = new SessionStore(options);
 
-  const httpServer = createHttpServer((req, res) => {
+  const { httpServer, port } = await listenGuarded('Streamable HTTP server', '/mcp', options, (req, res) => {
     const path = parseRequestUrl(req)?.pathname;
     if (path === undefined) {
       res.writeHead(400).end('Bad Request');
@@ -965,7 +980,7 @@ export async function startStreamableHttpServer(
       res.writeHead(404).end('Not Found');
       return;
     }
-    handleMcpRequest(createMcpServer, sessions, state.guard, req, res).catch((error: unknown) => {
+    handleMcpRequest(createMcpServer, store, req, res).catch((error: unknown) => {
       log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
       if (error instanceof RangeError) {
         sendBodyTooLarge(req, res);
@@ -980,25 +995,21 @@ export async function startStreamableHttpServer(
       );
     });
   });
-
-  const boundPort = await listen(httpServer, host, port);
-  state.guard = hostGuard(host, boundPort);
-  log('INFO', `Streamable HTTP server listening on http://${host}:${boundPort}/mcp`);
   return {
-    port: boundPort,
+    port,
     close: async () => {
-      await Promise.all([...sessions.values()].map((transport) => transport.close()));
+      await store.closeAll();
       await closeHttpServer(httpServer);
     },
   };
 }
 
-async function runSse(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
-  await startSseServer(createMcpServer, host, port);
+async function runSse(createMcpServer: ServerFactory, options: HttpServerOptions): Promise<void> {
+  await startSseServer(createMcpServer, options);
 }
 
-async function runStreamableHttp(createMcpServer: ServerFactory, host: string, port: number): Promise<void> {
-  await startStreamableHttpServer(createMcpServer, host, port);
+async function runStreamableHttp(createMcpServer: ServerFactory, options: HttpServerOptions): Promise<void> {
+  await startStreamableHttpServer(createMcpServer, options);
 }
 
 /** Replaceable seams so tests can observe which transport ran. */
@@ -1068,30 +1079,19 @@ export async function main(argv: string[]): Promise<void> {
 
   installSignalHandlers(registry);
 
-  if (options.transport === 'sse') {
-    warnIfExposed(options.sseHost, accessMode);
-  } else if (options.transport === 'streamable-http') {
-    warnIfExposed(options.streamableHttpHost, accessMode);
+  const http = httpOptions(options);
+  if (http) {
+    warnIfExposed(http, accessMode);
   }
 
   const factory = () => createServer(registry);
-  switch (options.transport) {
-    case 'stdio': {
-      await runners.runStdio(factory, () => {
-        void shutdown(registry);
-      });
-      break;
-    }
-    case 'sse': {
-      await runners.runSse(factory, options.sseHost, options.ssePort);
-      break;
-    }
-    case 'streamable-http': {
-      await runners.runStreamableHttp(factory, options.streamableHttpHost, options.streamableHttpPort);
-      break;
-    }
-    default: {
-      break;
-    }
+  if (http === undefined) {
+    await runners.runStdio(factory, () => {
+      void shutdown(registry);
+    });
+  } else if (options.transport === 'sse') {
+    await runners.runSse(factory, http);
+  } else {
+    await runners.runStreamableHttp(factory, http);
   }
 }

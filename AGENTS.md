@@ -29,9 +29,11 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 
 `src/index.ts` is the bin entry and only calls `main()` in `src/server.ts`.
 
-**`src/server.ts`** holds the whole MCP surface: the nine tool registrations plus `list_databases` with their zod schemas (`createServer(registry)`), the three transports (stdio, SSE, streamable HTTP, all on `node:http` with a Host-header guard), and shutdown. Every tool except `list_databases` takes a required `database` argument and runs through `registry.use(name, ...)`; the server `instructions` say so. Startup makes no database connection; an unreachable or unconfigured database is reported by the tool call or `list_databases`.
+**`src/server.ts`** holds the whole MCP surface: the nine tool registrations plus `list_databases` with their zod schemas (`createServer(registry)`), the three transports (stdio, SSE, streamable HTTP, all on `node:http`), and shutdown.
 
-**`src/cli.ts`** owns CLI parsing: the flags (`parseCli`), `USAGE` and `HELP`, `CliError` and `exitOnCliError`.
+**`src/transports/`** holds the HTTP plumbing shared by the SSE and streamable HTTP servers: `request-guard.ts` (loopback hosts, `HttpServerOptions`, the `--allowed-hosts`/`--allowed-origins` allow-lists and their validation, the Host and Origin check on every request) and `sessions.ts` (`SessionStore`: session cap, idle timer paused while a request is in flight). Every tool except `list_databases` takes a required `database` argument and runs through `registry.use(name, ...)`; the server `instructions` say so. Startup makes no database connection; an unreachable or unconfigured database is reported by the tool call or `list_databases`.
+
+**`src/cli.ts`** owns CLI parsing: the flags (`parseCli`), `USAGE` and `HELP`, `CliError` and `exitOnCliError`, and `httpOptions`, the one mapping from flags to `HttpServerOptions`.
 
 **`src/config.ts`** turns the CLI flags (`--database`, `--config`, `--idle-minutes`, `--access-mode`) and the optional JSON config file (zod, strict) into `DatabaseRegistry` options. `${VAR}` expansion happens there; an unset variable becomes a per-entry error, not a startup failure.
 

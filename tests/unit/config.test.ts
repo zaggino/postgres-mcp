@@ -60,6 +60,31 @@ describe(parseCli, () => {
   it('rejects a negative --idle-minutes', () => {
     expect(() => parseCli(['--database', 'a', '--idle-minutes=-1'])).toThrow(/--idle-minutes: must be between 0 and/u);
   });
+
+  it('rejects --max-sessions below 1', () => {
+    expect(() => parseCli(['--database', 'a', '--max-sessions=0'])).toThrow(/--max-sessions: must be at least 1/u);
+  });
+
+  it('refuses a non-loopback HTTP bind without --allowed-hosts and accepts it with one', () => {
+    const args = ['--database', 'a', '--transport=sse', '--sse-host=0.0.0.0'];
+
+    expect(() => parseCli(args)).toThrow(/--allowed-hosts/u);
+    expect(parseCli([...args, '--allowed-hosts=*'])?.allowedHosts).toBe('any');
+  });
+
+  it.each([
+    ['--allowed-hosts=::1', /--allowed-hosts: an IPv6 address must be written in brackets/u],
+    ['--allowed-origins=app.example', /--allowed-origins: expected scheme:\/\/host/u],
+    ['--allowed-hosts=*,a.example', /--allowed-hosts: '\*' cannot be combined/u],
+  ])('rejects %s', (flag, message) => {
+    expect(() => parseCli(['--database', 'a', flag])).toThrow(message);
+  });
+
+  it('rejects an empty --allowed-origins entry', () => {
+    expect(() => parseCli(['--database', 'a', '--allowed-origins=https://a.example,'])).toThrow(
+      /--allowed-origins: empty entry/u
+    );
+  });
 });
 
 describe('config file', () => {

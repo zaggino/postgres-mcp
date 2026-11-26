@@ -40,10 +40,6 @@ Its agent instructions require the file itself to be updated in the same change 
 
 `getTableSize` in `src/index/index-opt-base.ts` runs `pg_total_relation_size(quote_ident({}))`; the placeholder is expanded to a string literal and `quote_ident` returns text, which `pg_total_relation_size` does not accept. The query always fails and `estimateTableSize` supplies the fallback, so index-size limits use a wrong table size.
 
-## 2026-11-26 · Major · Security · Index advisor builds `IN ('…')` lists without escaping
-
-`src/index/dta-calc.ts` (the column type query around `tablesArray` and `columnsArray`) interpolates table and column names into `IN ('…')` lists with plain quoting. Names containing a single quote break the query and can inject SQL. Quote them with the literal helper in `src/sql/literal.ts`.
-
 ## 2026-11-26 · Minor · Bug · Replication health check returns nothing in restricted mode
 
 `ReplicationCalc` in `src/database-health/replication-calc.ts` uses WAL functions such as `pg_last_wal_receive_lsn()` that are not in the function allowlist in `src/sql/allowlists.ts`. In restricted mode the lag query is rejected and the check reports nothing.
@@ -59,10 +55,6 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 ## 2026-11-26 · Minor · Bug · Workload SQL is lowercased wholesale
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
-
-## 2026-11-26 · Minor · Security · Raw connection error may contain the password
-
-`DbConnPool` in `src/sql/sql-driver.ts` stores the unfiltered message in `lastError`; only the thrown error is passed through `obfuscatePassword`. Anything that reads `lastError` directly can leak credentials.
 
 ## 2026-11-26 · Minor · Bug · A zero-column SELECT is reported as "no result set"
 
@@ -148,10 +140,6 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 The slot formatter in `src/database-health/replication-calc.ts` prints the database as `None` for physical slots, which have no database. The spelling is kept from the Python original.
 
-## 2026-11-26 · Minor · Security · `fracThreshold` is interpolated into SQL text
-
-`TopQueriesCalc.getTopResourceQueries` in `src/top-queries/top-queries-calc.ts` writes the threshold into the query string. Current callers pass a number, but it should be a bound parameter.
-
 ## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
 
 `src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant. The text is kept from upstream.
@@ -196,10 +184,6 @@ Costs and sizes are formatted with `toFixed` (for example in `src/index/index-op
 
 The zod schema in `src/server.ts` accepts only an array, while the Python tool accepted `None`. Clients that send `null` get a validation error.
 
-## 2026-11-26 · Minor · Security · Non-loopback HTTP binds have no Host or Origin checks
-
-`hostGuard` in `src/server.ts` enables DNS-rebinding protection only for loopback hosts. A server bound to another address accepts any `Host` and `Origin` and has no authentication.
-
 ## 2026-11-26 · Minor · Bug · `getPostgresVersion` rejects pre-release versions
 
 `getPostgresVersion` in `src/sql/extension-utils.ts` cannot parse server versions such as `17beta1`, so the version lookup fails on a pre-release server.
@@ -215,14 +199,6 @@ Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt
 ## 2026-11-26 · Minor · Security · Publishing has no approval gate
 
 The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Required reviewers cannot simply be added to `main`: the `release-please` job uses it too and would then wait for approval on every push. Move the `publish` job to its own environment (and the npm trusted publisher with it) with required reviewers, "Prevent self-review" on and admin bypass off, or the person who triggers a run can approve it alone. (Creating `v*` tags, which the publish guard trusts, is already limited to admins by the "release tags: creation" ruleset.)
-
-## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
-
-The session maps in `src/server.ts` grow with every client that initializes and are cleaned up only when the client closes. Add a session limit and an idle timeout.
-
-## 2026-11-26 · Minor · Security · Full SQL text is included in error messages and logs
-
-Error messages returned to the client and written to stderr include the full SQL text (`src/sql/sql-driver.ts`, `src/sql/safe-sql.ts`), which can contain sensitive literals.
 
 ## 2026-11-26 · Minor · Bug · A failed query destroys its pooled connection
 
@@ -242,7 +218,7 @@ Error messages returned to the client and written to stderr include the full SQL
 
 ## 2026-11-26 · Major · Refactor · Split `src/server.ts`
 
-`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, HTTP plumbing for three transports, and startup and shutdown (CLI parsing moved to `src/cli.ts`). Split the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
+`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, the SSE and streamable HTTP servers with their request handling, stdio, and startup and shutdown (CLI parsing is in `src/cli.ts`; `src/transports/` holds only the request guard and the session store so far). Move the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
 
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
@@ -323,7 +299,7 @@ Eight handlers in `src/server.ts` each wrap their body in `try { … } catch { l
 
 ## 2026-11-26 · Minor · Refactor · Small cleanups left over from the multi-database review
 
-`parsePort` and `parseIdleMinutes` in `src/cli.ts` repeat the same integer validation and error text; one `parseIntFlag(flag, value)` would serve both. `MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
+`MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
 
 ## 2026-11-26 · Minor · Refactor · Server URIs are validated in two places
 
@@ -344,3 +320,11 @@ When an explicit database fails to connect, `DbConnPool.close` drops the pool an
 ## 2026-11-26 · Minor · Tests · Gaps in the multi-database tests
 
 Untested so far: `--idle-minutes` and config `idleMinutes` above 35791 are rejected; `list_databases` shows `open` with a counting-down `idle_seconds_left` after a successful call; a server whose `${VAR}` is unset shows the error in `servers[].error` and its databases are unknown; an invalid `--database` name, a duplicate name, an unreadable config file. Add one case each to `tests/unit/config.test.ts` and `tests/unit/database-registry.test.ts`.
+
+## 2026-11-26 · Minor · Bug · An SSE session can be closed during a tool call longer than the idle time
+
+On SSE, `POST /messages` returns 202 before the tool runs and the result travels over the `GET /sse` stream, so `SessionStore` (`src/transports/sessions.ts`) sees no request in flight while a tool call runs. A call longer than `--session-idle-minutes` with no other message from the client closes the session and the result is lost. Streamable HTTP is unaffected: its response carries the result and keeps the session held. Fix by tracking pending tool calls per SSE session (for example through the McpServer request handlers).
+
+## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
+
+`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both.

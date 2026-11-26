@@ -2,6 +2,9 @@ import { parseArgs } from 'node:util';
 
 import type { AccessMode } from './sql/driver-factory.ts';
 import { ACCESS_MODES } from './sql/driver-factory.ts';
+import type { AllowList, HttpServerOptions } from './transports/request-guard.ts';
+import { hostEntryProblem, LOOPBACK_HOSTS, originEntryProblem } from './transports/request-guard.ts';
+import { DEFAULT_MAX_SESSIONS, DEFAULT_SESSION_IDLE_MINUTES } from './transports/sessions.ts';
 
 export class CliError extends Error {}
 
@@ -24,7 +27,27 @@ export interface CliOptions {
   ssePort: number;
   streamableHttpHost: string;
   streamableHttpPort: number;
+  allowedHosts: AllowList | undefined;
+  allowedOrigins: AllowList | undefined;
+  maxSessions: number | undefined;
+  sessionIdleMinutes: number | undefined;
   transport: Transport;
+}
+
+/** The HTTP transport's options, or undefined for stdio. Session limits and allow-lists default where they are used. */
+export function httpOptions(options: CliOptions): HttpServerOptions | undefined {
+  if (options.transport === 'stdio') {
+    return undefined;
+  }
+  const sse = options.transport === 'sse';
+  return {
+    host: sse ? options.sseHost : options.streamableHttpHost,
+    port: sse ? options.ssePort : options.streamableHttpPort,
+    allowedHosts: options.allowedHosts,
+    allowedOrigins: options.allowedOrigins,
+    maxSessions: options.maxSessions,
+    sessionIdleMinutes: options.sessionIdleMinutes,
+  };
 }
 
 const PROG = 'postgres-mcp';
@@ -33,6 +56,8 @@ const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
                     [--sse-host SSE_HOST] [--sse-port SSE_PORT]
                     [--streamable-http-host STREAMABLE_HTTP_HOST]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
+                    [--allowed-hosts HOSTS] [--allowed-origins ORIGINS]
+                    [--max-sessions N] [--session-idle-minutes N]
                     [--database NAME] [--config FILE] [--idle-minutes N]`;
 
 export const HELP = `${USAGE}
@@ -61,6 +86,22 @@ options:
                         localhost)
   --streamable-http-port STREAMABLE_HTTP_PORT
                         Port for streamable HTTP server (default: 8000)
+  --allowed-hosts HOSTS
+                        Comma-separated Host header values the HTTP transports
+                        accept, in addition to loopback on a loopback bind. An
+                        entry without a port matches any port; '*' accepts any
+                        Host. Write IPv6 addresses in brackets. Required when
+                        the bind host is not loopback
+  --allowed-origins ORIGINS
+                        Comma-separated Origin header values (scheme://host[:port])
+                        the HTTP transports accept, in addition to loopback on a
+                        loopback bind; '*' accepts any Origin. Requests without
+                        an Origin header are not checked
+  --max-sessions N      Most concurrent sessions the HTTP transports hold;
+                        further ones get 503 (default: ${DEFAULT_MAX_SESSIONS})
+  --session-idle-minutes N
+                        Close an HTTP session after N minutes without a request
+                        (default: ${DEFAULT_SESSION_IDLE_MINUTES}, 0 = never)
 `;
 
 /** The matching choice, or `undefined` when the flag is absent. */
@@ -77,30 +118,90 @@ function choice<T extends string>(flag: string, value: string | undefined, choic
   return match;
 }
 
+const DEFAULT_PORT = 8000;
 const INT_PATTERN = /^[+-]?\d+$/u;
 
-function parsePort(flag: string, value: string | undefined): number {
-  if (value === undefined) {
-    return 8000;
+function rangeText(range: { max?: number; min?: number }): string {
+  const { min, max } = range;
+  if (min !== undefined && max !== undefined) {
+    return `must be between ${min} and ${max}`;
   }
-  if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument ${flag}: invalid int value: '${value}'`);
+  if (min !== undefined) {
+    return `must be at least ${min}`;
   }
-  return Number.parseInt(value, 10);
+  if (max !== undefined) {
+    return `must be at most ${max}`;
+  }
+  return 'must be a safe integer';
 }
 
-function parseIdleMinutes(value: string | undefined): number | undefined {
+/** The integer value of a flag within `range`, or `undefined` when the flag is absent. */
+function parseIntFlag(
+  flag: string,
+  value: string | undefined,
+  range: { max?: number; min?: number } = {}
+): number | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument --idle-minutes: invalid int value: '${value}'`);
+    throw new CliError(`argument ${flag}: invalid int value: '${value}'`);
   }
-  const minutes = Number.parseInt(value, 10);
-  if (minutes < 0 || minutes > MAX_IDLE_MINUTES) {
-    throw new CliError(`argument --idle-minutes: must be between 0 and ${MAX_IDLE_MINUTES}: '${value}'`);
+  const parsed = Number.parseInt(value, 10);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    (range.min !== undefined && parsed < range.min) ||
+    (range.max !== undefined && parsed > range.max)
+  ) {
+    throw new CliError(`argument ${flag}: ${rangeText(range)}: '${value}'`);
   }
-  return minutes;
+  return parsed;
+}
+
+/** The comma-separated entries, `undefined` when the flag is absent. */
+function parseList(flag: string, value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const entries = value.split(',').map((entry) => entry.trim());
+  if (entries.some((entry) => entry === '')) {
+    throw new CliError(`argument ${flag}: empty entry in '${value}'`);
+  }
+  return entries;
+}
+
+/** `'*'` alone becomes `'any'`; every other entry must pass `problemWith`. */
+function parseAllowList(
+  flag: string,
+  value: string | undefined,
+  problemWith: (entry: string) => string | null
+): AllowList | undefined {
+  const entries = parseList(flag, value);
+  if (entries === undefined) {
+    return undefined;
+  }
+  if (entries.includes('*')) {
+    if (entries.length > 1) {
+      throw new CliError(`argument ${flag}: '*' cannot be combined with other entries: '${value}'`);
+    }
+    return 'any';
+  }
+  for (const entry of entries) {
+    const problem = problemWith(entry);
+    if (problem !== null) {
+      throw new CliError(`argument ${flag}: ${problem}: '${entry}'`);
+    }
+  }
+  return entries;
+}
+
+function requireAllowedHosts(options: CliOptions): void {
+  const http = httpOptions(options);
+  if (http && !LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
+    throw new CliError(
+      `binding ${http.host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
+    );
+  }
 }
 
 function parseRaw(argv: string[]) {
@@ -119,6 +220,10 @@ function parseRaw(argv: string[]) {
         'sse-port': { type: 'string' },
         'streamable-http-host': { type: 'string' },
         'streamable-http-port': { type: 'string' },
+        'allowed-hosts': { type: 'string' },
+        'allowed-origins': { type: 'string' },
+        'max-sessions': { type: 'string' },
+        'session-idle-minutes': { type: 'string' },
       },
     });
   } catch (error) {
@@ -136,17 +241,26 @@ export function parseCli(argv: string[]): CliOptions | null {
     throw new CliError(`unrecognized arguments: ${positionals.join(' ')}`);
   }
 
-  return {
+  const options: CliOptions = {
     accessMode: choice('--access-mode', values['access-mode'], ACCESS_MODES),
     databases: values.database ?? [],
     configPath: values.config,
-    idleMinutes: parseIdleMinutes(values['idle-minutes']),
+    idleMinutes: parseIntFlag('--idle-minutes', values['idle-minutes'], { min: 0, max: MAX_IDLE_MINUTES }),
     transport: choice('--transport', values.transport, TRANSPORTS) ?? 'stdio',
     sseHost: values['sse-host'] ?? 'localhost',
-    ssePort: parsePort('--sse-port', values['sse-port']),
+    ssePort: parseIntFlag('--sse-port', values['sse-port']) ?? DEFAULT_PORT,
     streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
-    streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
+    streamableHttpPort: parseIntFlag('--streamable-http-port', values['streamable-http-port']) ?? DEFAULT_PORT,
+    allowedHosts: parseAllowList('--allowed-hosts', values['allowed-hosts'], hostEntryProblem),
+    allowedOrigins: parseAllowList('--allowed-origins', values['allowed-origins'], originEntryProblem),
+    maxSessions: parseIntFlag('--max-sessions', values['max-sessions'], { min: 1 }),
+    sessionIdleMinutes: parseIntFlag('--session-idle-minutes', values['session-idle-minutes'], {
+      min: 0,
+      max: MAX_IDLE_MINUTES,
+    }),
   };
+  requireAllowedHosts(options);
+  return options;
 }
 
 export function exitOnCliError<T>(run: () => T): T {

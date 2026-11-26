@@ -155,7 +155,7 @@ function validateValue(value: unknown, structType?: string): void {
 function validateStatement(raw: RawStmtJson): void {
   const inner = asWrappedNode(raw.stmt);
   if (!(inner && ALLOWED_STMT_TYPES.has(inner.type))) {
-    throw new Error(`${STMT_NOT_ALLOWED} raw statement: ${JSON.stringify(raw.stmt)}`);
+    throw new Error(`${STMT_NOT_ALLOWED} statement type: ${inner?.type ?? 'unknown'}`);
   }
   validateNode('RawStmt', raw);
 }
@@ -175,8 +175,14 @@ async function validateQuery(query: string): Promise<void> {
       validateStatement(stmt);
     }
   } catch (error) {
-    throw new Error(`Error validating query: ${query}`, { cause: error });
+    throw new Error(`Error validating query: ${errorMessage(error)}`, {
+      cause: error,
+    });
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Wraps an executor so only read-only, allowlisted SQL reaches the database. */
@@ -207,10 +213,10 @@ export class SafeSqlDriver implements SqlExecutor {
     if (!this.timeout) {
       return await run();
     }
-    return await this.runWithTimeout(run, query);
+    return await this.runWithTimeout(run);
   }
 
-  private async runWithTimeout(run: () => Promise<RowResult[] | null>, query: string): Promise<RowResult[] | null> {
+  private async runWithTimeout(run: () => Promise<RowResult[] | null>): Promise<RowResult[] | null> {
     const seconds = this.timeout;
     let timer: NodeJS.Timeout | undefined;
     let timedOut = false;
@@ -218,7 +224,7 @@ export class SafeSqlDriver implements SqlExecutor {
       timer = setTimeout(
         () => {
           timedOut = true;
-          logWarning(`Query execution timed out after ${seconds} seconds: ${query.slice(0, 100)}...`);
+          logWarning(`Query execution timed out after ${seconds} seconds`);
           reject(
             new Error(
               `Query execution timed out after ${seconds} seconds in restricted mode. Consider simplifying your query or increasing the timeout.`

@@ -1,4 +1,5 @@
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
+import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
@@ -138,6 +139,7 @@ export class TopQueriesCalc {
       const pgVersion = await getPostgresVersion(this.sqlDriver);
       const cols = getPgStatStatementsColumns(pgVersion);
 
+      const threshold = literal(fracThreshold);
       const query = `
                 WITH resource_fractions AS (
                     SELECT
@@ -181,15 +183,15 @@ export class TopQueriesCalc {
                     wal_bytes
                 FROM resource_fractions
                 WHERE
-                    total_exec_time_frac > ${fracThreshold}
-                    OR shared_blks_accessed_frac > ${fracThreshold}
-                    OR shared_blks_read_frac > ${fracThreshold}
-                    OR shared_blks_dirtied_frac > ${fracThreshold}
-                    OR total_wal_bytes_frac > ${fracThreshold}
+                    total_exec_time_frac > ${threshold}
+                    OR shared_blks_accessed_frac > ${threshold}
+                    OR shared_blks_read_frac > ${threshold}
+                    OR shared_blks_dirtied_frac > ${threshold}
+                    OR total_wal_bytes_frac > ${threshold}
                 ORDER BY total_exec_time DESC
             `;
 
-      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query);
+      const slowQueryRows = await this.sqlDriver.executeQuery(query);
       const resourceQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
 
       return rowsToJson(resourceQueries);

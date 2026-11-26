@@ -871,7 +871,7 @@ export class SqlBindParams {
       }
       return this.extractStmtColumns(stmt);
     } catch {
-      logWarning(`Error extracting columns from query: ${query}`);
+      logWarning('Error extracting columns from query');
       return new Map();
     }
   }

@@ -606,6 +606,17 @@ describe(SafeSqlDriver, () => {
     expect(cause.includes('pg_read_file') || cause.includes('pg_ls_dir')).toBe(true);
   });
 
+  it('does not echo the query or its literals in the rejection', async () => {
+    const { message, cause } = await rejection("SELECT pg_read_file('s3cr3t')");
+    expect(message).toContain('Error validating query');
+    expect(message).not.toContain('s3cr3t');
+    expect(cause).not.toContain('s3cr3t');
+
+    const statement = await rejection("INSERT INTO t VALUES ('s3cr3t')");
+    expect(statement.message).not.toContain('s3cr3t');
+    expect(statement.cause).toContain('statement type: InsertStmt');
+  });
+
   it('validates column definition lists inside ROWS FROM', async () => {
     // ColumnDef is not an allowed node type, so this is rejected just like the
     // ordinary `AS t(a int)` alias form.

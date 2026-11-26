@@ -153,6 +153,15 @@ describe(TopQueriesCalc, () => {
     expect(query).toContain('0 AS wal_bytes');
   });
 
+  it('applies the given threshold to every resource fraction', async () => {
+    const { driver, executeQuery } = createDriver(13);
+
+    await new TopQueriesCalc(driver).getTopResourceQueries(0.25);
+
+    const query = executedQuery(executeQuery);
+    expect(query.match(/_frac > 0\.25/gu)).toHaveLength(5);
+  });
+
   it('uses the PostgreSQL 13 columns and wal_bytes in resource queries', async () => {
     const { driver, executeQuery } = createDriver(13);
 

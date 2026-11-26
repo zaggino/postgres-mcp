@@ -7,6 +7,7 @@ import { afterEach, expect, it as test, vi } from 'vitest';
 
 import type { HttpServerHandle } from '../../src/server.ts';
 import { createServer, startSseServer, startStreamableHttpServer } from '../../src/server.ts';
+import type { HttpServerOptions } from '../../src/transports/request-guard.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
 const HOST = '127.0.0.1';
@@ -25,16 +26,16 @@ function factory() {
   return createServer(createTestRegistry(['app']).registry);
 }
 
-async function startStreamable(): Promise<HttpServerHandle> {
+async function startStreamable(options: Partial<HttpServerOptions> = {}): Promise<HttpServerHandle> {
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-  const handle = await startStreamableHttpServer(factory, HOST, 0);
+  const handle = await startStreamableHttpServer(factory, { host: HOST, port: 0, ...options });
   cleanups.push(handle.close);
   return handle;
 }
 
-async function startSse(): Promise<HttpServerHandle> {
+async function startSse(options: Partial<HttpServerOptions> = {}): Promise<HttpServerHandle> {
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-  const handle = await startSseServer(factory, HOST, 0);
+  const handle = await startSseServer(factory, { host: HOST, port: 0, ...options });
   cleanups.push(handle.close);
   return handle;
 }
@@ -144,4 +145,200 @@ test('a foreign Host header is rejected with 403 on GET /sse', async () => {
   const status = await statusOf(port, { method: 'GET', headers: { Host: 'evil.example' } }, '/sse');
 
   expect(status).toBe(403);
+});
+
+test('a Host header outside --allowed-hosts is rejected and a listed one is accepted, port optional', async () => {
+  const { port } = await startSse({ allowedHosts: ['example.test'] });
+  const post = (host: string) => statusOf(port, { method: 'POST', headers: { Host: host } }, '/messages');
+
+  await expect(post('evil.test')).resolves.toBe(403);
+  await expect(post(`Example.Test:${port}`)).resolves.toBe(400);
+});
+
+test('a foreign Origin header is rejected and the server own origin is accepted', async () => {
+  const { port } = await startSse();
+  const post = (origin: string) => statusOf(port, { method: 'POST', headers: { Origin: origin } }, '/messages');
+
+  await expect(post('http://evil.example')).resolves.toBe(403);
+  await expect(post(`http://${HOST}:${port}`)).resolves.toBe(400);
+});
+
+test('streamable HTTP rejects a foreign Origin with 403 and accepts a listed Host without a port', async () => {
+  const { port } = await startStreamable({ allowedHosts: ['example.test'] });
+  const post = (headers: Record<string, string>) =>
+    statusOf(port, { method: 'POST', body: INITIALIZE, headers: { ...MCP_HEADERS, ...headers } }, '/mcp');
+
+  await expect(post({ Origin: 'http://evil.example' })).resolves.toBe(403);
+  await expect(post({ Host: 'example.test' })).resolves.not.toBe(403);
+});
+
+test('--allowed-origins and --allowed-hosts set to any accept any Origin and Host', async () => {
+  const { port } = await startSse({ allowedHosts: 'any', allowedOrigins: 'any' });
+
+  const status = await statusOf(
+    port,
+    { method: 'POST', headers: { Host: 'anything.test', Origin: 'http://anything.test' } },
+    '/messages'
+  );
+
+  expect(status).toBe(400);
+});
+
+const MCP_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+
+/** Raw `initialize` against /mcp: the status and the session id the server assigned. */
+function initializeSession(port: number): Promise<{ sessionId: string | undefined; status: number }> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: HOST, port, path: '/mcp', method: 'POST', headers: MCP_HEADERS }, (res) => {
+      res.resume();
+      const id = res.headers['mcp-session-id'];
+      resolve({ status: res.statusCode ?? 0, sessionId: Array.isArray(id) ? id[0] : id });
+    });
+    req.on('error', reject);
+    req.end(INITIALIZE);
+  });
+}
+
+test('streamable HTTP refuses an initialize beyond --max-sessions with 503', async () => {
+  const { port } = await startStreamable({ maxSessions: 1 });
+
+  const first = await initializeSession(port);
+  const second = await initializeSession(port);
+
+  expect(first.status).toBe(200);
+  expect(second.status).toBe(503);
+});
+
+test('SSE refuses GET /sse beyond --max-sessions with 503', async () => {
+  const { port } = await startSse({ maxSessions: 1 });
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  // oxlint-disable-next-line typescript/no-deprecated -- the server still offers the SSE transport
+  await listToolsThrough(client, new SSEClientTransport(new URL(`http://${HOST}:${port}/sse`)));
+
+  const status = await statusOf(port, { method: 'GET' }, '/sse');
+
+  expect(status).toBe(503);
+});
+
+test('a streamable HTTP session idle past --session-idle-minutes is closed and its id gets 404', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startStreamable({ sessionIdleMinutes: 1 });
+  const { sessionId } = await initializeSession(port);
+  const post = () =>
+    statusOf(
+      port,
+      { method: 'POST', body: '{}', headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId ?? '' } },
+      '/mcp'
+    );
+
+  await vi.advanceTimersByTimeAsync(30_000);
+  const requestResetsTimer = await post();
+  await vi.advanceTimersByTimeAsync(45_000);
+  const stillOpen = await post();
+  await vi.advanceTimersByTimeAsync(60_001);
+  const expired = await post();
+
+  expect(sessionId).toBeTruthy();
+  expect(requestResetsTimer).not.toBe(404);
+  expect(stillOpen).not.toBe(404);
+  expect(expired).toBe(404);
+});
+
+test('--session-idle-minutes=0 never closes an idle streamable HTTP session', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startStreamable({ sessionIdleMinutes: 0 });
+  const { sessionId } = await initializeSession(port);
+
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  const status = await statusOf(
+    port,
+    { method: 'POST', body: '{}', headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId ?? '' } },
+    '/mcp'
+  );
+
+  expect(sessionId).toBeTruthy();
+  expect(status).not.toBe(404);
+});
+
+/** Opens a raw SSE stream and resolves with the session id from its `endpoint` event. */
+function openSseSession(port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: HOST, port, path: '/sse', method: 'GET' }, (res) => {
+      let text = '';
+      res.setEncoding('utf-8');
+      res.on('data', (chunk: string) => {
+        text += chunk;
+        const match = /sessionId=(?<id>[\w-]+)/u.exec(text);
+        if (match?.groups?.id) {
+          resolve(match.groups.id);
+        }
+      });
+    });
+    req.on('error', reject);
+    cleanups.push(() => {
+      req.destroy();
+      return Promise.resolve();
+    });
+    req.end();
+  });
+}
+
+test('an SSE session idle past --session-idle-minutes is closed and its id gets 404', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startSse({ sessionIdleMinutes: 1 });
+  const sessionId = await openSseSession(port);
+  const post = () =>
+    statusOf(port, { method: 'POST', body: '{}', headers: MCP_HEADERS }, `/messages?sessionId=${sessionId}`);
+
+  const beforeExpiry = await post();
+  await vi.advanceTimersByTimeAsync(60_001);
+  const expired = await post();
+
+  expect(beforeExpiry).not.toBe(404);
+  expect(expired).toBe(404);
+});
+
+test('a streamable HTTP session with a request still open is not closed past --session-idle-minutes', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+    return Promise.resolve();
+  });
+  const { port } = await startStreamable({ sessionIdleMinutes: 1 });
+  const { sessionId } = await initializeSession(port);
+  const headers = { Accept: 'text/event-stream', 'Mcp-Session-Id': sessionId ?? '' };
+  // A listening GET stream stays open, and so counts as a request in flight.
+  const stream = await new Promise<ReturnType<typeof request>>((resolve, reject) => {
+    const req = request({ host: HOST, port, path: '/mcp', method: 'GET', headers }, (res) => {
+      res.resume();
+      resolve(req);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  cleanups.push(() => {
+    stream.destroy();
+    return Promise.resolve();
+  });
+
+  await vi.advanceTimersByTimeAsync(120_000);
+  const status = await statusOf(
+    port,
+    { method: 'POST', body: '{}', headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId ?? '' } },
+    '/mcp'
+  );
+
+  expect(status).not.toBe(404);
 });

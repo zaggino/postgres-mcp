@@ -181,15 +181,21 @@ export class TopQueriesCalc {
                     wal_bytes
                 FROM resource_fractions
                 WHERE
-                    total_exec_time_frac > ${fracThreshold}
-                    OR shared_blks_accessed_frac > ${fracThreshold}
-                    OR shared_blks_read_frac > ${fracThreshold}
-                    OR shared_blks_dirtied_frac > ${fracThreshold}
-                    OR total_wal_bytes_frac > ${fracThreshold}
+                    total_exec_time_frac > {}
+                    OR shared_blks_accessed_frac > {}
+                    OR shared_blks_read_frac > {}
+                    OR shared_blks_dirtied_frac > {}
+                    OR total_wal_bytes_frac > {}
                 ORDER BY total_exec_time DESC
             `;
 
-      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query);
+      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [
+        fracThreshold,
+        fracThreshold,
+        fracThreshold,
+        fracThreshold,
+        fracThreshold,
+      ]);
       const resourceQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
 
       return rowsToJson(resourceQueries);

@@ -1,5 +1,6 @@
 import { pyFloatStr } from '../py-format.ts';
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
+import { literal } from '../sql/literal.ts';
 import { AstNode, isJsonObject, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
@@ -530,10 +531,9 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       }
     }
 
-    // The values are embedded without escaping
     const pairs = [...tableColumns.values()];
-    const tablesArray = pairs.map(([table]) => `'${table}'`).join(',');
-    const columnsArray = pairs.map(([, col]) => `'${col}'`).join(',');
+    const tablesArray = pairs.map(([table]) => literal(table)).join(',');
+    const columnsArray = pairs.map(([, col]) => literal(col)).join(',');
 
     // Column types and their length limits from the catalog
     const typeQuery = `

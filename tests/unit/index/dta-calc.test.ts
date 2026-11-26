@@ -368,6 +368,17 @@ test('filter long text columns drops candidates containing long text columns', a
   ]);
 });
 
+test('filterLongTextColumns quotes table and column names in the catalog lookup', async () => {
+  const driver = createDriver();
+  const dta = createAdvisor(driver);
+
+  await dta.filterLongTextColumns([new IndexRecommendation("o'brien", ["it's"])], 100);
+
+  const query = String(driver.executeQuery.mock.calls[0]?.[0]);
+  expect(query).toContain("c.table_name IN ('o''brien')");
+  expect(query).toContain("c.column_name IN ('it''s')");
+});
+
 test('basic workload analysis recommends indexes for the queried columns', async () => {
   const dta = new DatabaseTuningAdvisor(
     createDriver(

@@ -148,7 +148,7 @@ async function executeWithClient(
         logError(`Error rolling back transaction: ${errorMessage(rollbackError)}`);
       }
     }
-    logError(`Error executing query (${query}): ${errorMessage(error)}`);
+    logError(`Error executing query: ${errorMessage(error)}`);
     throw error;
   }
 }
@@ -221,7 +221,7 @@ export class DbConnPool {
       return pool;
     } catch (error) {
       this.isValid = false;
-      this.lastError = errorMessage(error);
+      this.lastError = obfuscatePassword(errorMessage(error)) ?? '';
       await this.close();
       throw new Error(`Connection attempt failed: ${obfuscatePassword(errorMessage(error))}`, {
         cause: error,
@@ -244,7 +244,7 @@ export class DbConnPool {
 
   markInvalid(error: unknown): void {
     this.isValid = false;
-    this.lastError = errorMessage(error);
+    this.lastError = obfuscatePassword(errorMessage(error)) ?? '';
   }
 }
 

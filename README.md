@@ -16,6 +16,8 @@ Differences from upstream:
 - Restricted mode runs statements in an enforced read-only transaction.
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
+- The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
+- Error messages and stderr logs do not include SQL text or parse trees. Upstream included the full query.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - HTTP transports bound to a loopback address reject requests with a foreign `Host` header, and request bodies are limited to 4 MB.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.

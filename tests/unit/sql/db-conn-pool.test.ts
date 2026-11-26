@@ -48,7 +48,8 @@ test('poolConnect failure closes the pool, marks it invalid and obfuscates the t
   );
 
   expect(dbPool.isValid).toBe(false);
-  expect(dbPool.lastError).toContain('hunter2');
+  expect(dbPool.lastError).not.toContain('hunter2');
+  expect(dbPool.lastError).toContain('user:****@localhost');
   expect(dbPool.pool).toBeNull();
   expect(fake.end).toHaveBeenCalledOnce();
 });

@@ -40,10 +40,6 @@ Its agent instructions require the file itself to be updated in the same change 
 
 `getTableSize` in `src/index/index-opt-base.ts` runs `pg_total_relation_size(quote_ident({}))`; the placeholder is expanded to a string literal and `quote_ident` returns text, which `pg_total_relation_size` does not accept. The query always fails and `estimateTableSize` supplies the fallback, so index-size limits use a wrong table size.
 
-## 2026-11-26 · Major · Security · Index advisor builds `IN ('…')` lists without escaping
-
-`src/index/dta-calc.ts` (the column type query around `tablesArray` and `columnsArray`) interpolates table and column names into `IN ('…')` lists with plain quoting. Names containing a single quote break the query and can inject SQL. Quote them with the literal helper in `src/sql/literal.ts`.
-
 ## 2026-11-26 · Minor · Bug · Replication health check returns nothing in restricted mode
 
 `ReplicationCalc` in `src/database-health/replication-calc.ts` uses WAL functions such as `pg_last_wal_receive_lsn()` that are not in the function allowlist in `src/sql/allowlists.ts`. In restricted mode the lag query is rejected and the check reports nothing.
@@ -59,10 +55,6 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 ## 2026-11-26 · Minor · Bug · Workload SQL is lowercased wholesale
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
-
-## 2026-11-26 · Minor · Security · Raw connection error may contain the password
-
-`DbConnPool` in `src/sql/sql-driver.ts` stores the unfiltered message in `lastError`; only the thrown error is passed through `obfuscatePassword`. Anything that reads `lastError` directly can leak credentials.
 
 ## 2026-11-26 · Minor · Bug · A zero-column SELECT is reported as "no result set"
 
@@ -148,10 +140,6 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 The slot formatter in `src/database-health/replication-calc.ts` prints the database as `None` for physical slots, which have no database. The spelling is kept from the Python original.
 
-## 2026-11-26 · Minor · Security · `fracThreshold` is interpolated into SQL text
-
-`TopQueriesCalc.getTopResourceQueries` in `src/top-queries/top-queries-calc.ts` writes the threshold into the query string. Current callers pass a number, but it should be a bound parameter.
-
 ## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
 
 `src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant. The text is kept from upstream.
@@ -219,10 +207,6 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 ## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
 
 The session maps in `src/server.ts` grow with every client that initializes and are cleaned up only when the client closes. Add a session limit and an idle timeout.
-
-## 2026-11-26 · Minor · Security · Full SQL text is included in error messages and logs
-
-Error messages returned to the client and written to stderr include the full SQL text (`src/sql/sql-driver.ts`, `src/sql/safe-sql.ts`), which can contain sensitive literals.
 
 ## 2026-11-26 · Minor · Bug · A failed query destroys its pooled connection
 

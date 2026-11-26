@@ -25,7 +25,7 @@ import { DbConnPool, obfuscatePassword, SqlDriver } from './sql/sql-driver.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 
 const SERVER_NAME = 'postgres-mcp';
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.4.0'; // x-release-please-version
 const PG_STAT_STATEMENTS = 'pg_stat_statements';
 const RESTRICTED_TIMEOUT_SECONDS = 30;
 

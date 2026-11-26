@@ -53,7 +53,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - **Dependencies are pinned exactly** (`saveExact: true` in `pnpm-workspace.yaml`); Dependabot opens one grouped PR at a time.
 - **Lint config.** Linting is type-aware (`options.typeAware`, run by the `oxlint-tsgolint` engine against `tsconfig.json`). `oxlint.config.ts` switches off about 40 preset rules, each with its reason in a comment; a targeted exception is an inline `oxlint-disable-next-line <rule> -- <reason>`. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
 - TypeScript is strict with `noUncheckedIndexedAccess`, `verbatimModuleSyntax` and `.ts` import extensions; no `any` and no non-null assertions.
-- Releases: pushing a `v*` tag runs `.github/workflows/publish.yml`, which needs the `NPM_TOKEN` secret.
+- Releases: release-please (`.github/workflows/release-please.yml`, `release-please-config.json`) keeps a release PR open on `main` whose version and `CHANGELOG.md` come from the Conventional Commits; merging it tags `v<version>` and creates the GitHub release. A read-only job then checks, tests and packs the tarball, and a separate job publishes it to npm through trusted publishing (OIDC), installing nothing. Both privileged jobs run in the `main` environment, which holds the `GH_TOKEN` secret release-please needs. A failed publish is retried by dispatching the workflow from `main` with `publish`. `SERVER_VERSION` in `src/server.ts` is bumped through its `x-release-please-version` marker.
 
 ## Follow-ups
 

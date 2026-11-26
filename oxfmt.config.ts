@@ -9,5 +9,6 @@ export default defineConfig({
   // Keep the existing wrapping.
   proseWrap: 'preserve',
   singleQuote: true,
-  ignorePatterns: [...(ultracite.ignorePatterns ?? []), '.claude', '.github'],
+  // CHANGELOG.md is written by release-please, which formats it its own way.
+  ignorePatterns: [...(ultracite.ignorePatterns ?? []), '.claude', '.github', 'CHANGELOG.md'],
 });

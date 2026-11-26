@@ -49,6 +49,8 @@ export function asWrappedNode(value: unknown): WrappedNode | undefined {
   return isJsonObject(fields) ? { type, fields } : undefined;
 }
 
+const UNKNOWN_NODE_TYPE = "";
+
 function collectNodes(
   value: unknown,
   structType: string | undefined,
@@ -135,7 +137,19 @@ export class AstNode {
     const out: AstNode[] = [];
     const structTypes = STRUCT_FIELD_TYPES.get(this.type);
     for (const [name, value] of Object.entries(this.fields)) {
-      collectNodes(value, structTypes?.get(name), out);
+      const structType = structTypes?.get(name);
+      const before = out.length;
+      collectNodes(value, structType, out);
+      // pglast exposes every bare struct as a node, listed or not; an unlisted
+      // one is an untyped node that dispatches no visit method.
+      if (
+        out.length === before &&
+        structType === undefined &&
+        isJsonObject(value) &&
+        Object.keys(value).length > 0
+      ) {
+        out.push(new AstNode(UNKNOWN_NODE_TYPE, value));
+      }
     }
     return out;
   }
@@ -162,10 +176,10 @@ export class Visitor {
     }));
     // for-of over an array also visits elements appended during iteration.
     for (const { node, ancestors } of queue) {
-      const method: unknown = Reflect.get(
-        this,
-        `visit${node.type.replaceAll("_", "")}`
-      );
+      const method: unknown =
+        node.type === UNKNOWN_NODE_TYPE
+          ? undefined
+          : Reflect.get(this, `visit${node.type.replaceAll("_", "")}`);
       if (typeof method === "function") {
         Reflect.apply(method, this, [ancestors, node]);
       }

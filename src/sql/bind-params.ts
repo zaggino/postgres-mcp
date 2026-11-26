@@ -1,4 +1,5 @@
 // biome-ignore lint/style/noExcessiveClassesPerFile: the visitors, SqlBindParams and the PgFloat value type belong together in bind-params.ts
+import { pyFloatStr } from "../py-format.ts";
 import { AstNode, isJsonObject, parseSql, Visitor } from "./pg-ast.ts";
 import type { SqlExecutor } from "./safe-sql.ts";
 import { SafeSqlDriver } from "./safe-sql.ts";
@@ -278,29 +279,19 @@ export class ColumnCollector extends Visitor {
 // --- Parameter replacement ---
 
 /** A pg_stats array element that Python parsed as a float. */
-class PgFloat {
+export class PgFloat {
   readonly value: number;
 
   constructor(value: number) {
     this.value = value;
   }
 
-  /** Python's `str(float)` for the values that occur here. */
   toString(): string {
-    if (Number.isNaN(this.value)) {
-      return "nan";
-    }
-    if (!Number.isFinite(this.value)) {
-      return this.value > 0 ? "inf" : "-inf";
-    }
-    if (Number.isInteger(this.value) && Math.abs(this.value) < 1e16) {
-      return this.value.toFixed(1);
-    }
-    return String(this.value);
+    return pyFloatStr(this.value);
   }
 }
 
-type StatValue = string | number | PgFloat | null;
+type StatValue = string | number | bigint | PgFloat | null;
 type ColumnStats = Record<string, unknown>;
 type TableColumns = ReadonlyMap<string, Iterable<string>>;
 
@@ -337,7 +328,7 @@ function toStatValue(value: unknown): StatValue {
     return Number.isInteger(value) ? value : new PgFloat(value);
   }
   if (typeof value === "bigint") {
-    return Number(value);
+    return value;
   }
   return String(value);
 }
@@ -370,7 +361,12 @@ function parsePgArrayValue(raw: string): StatValue {
   if (value.includes(".")) {
     return FLOAT_PATTERN.test(value) ? new PgFloat(Number(value)) : value;
   }
-  return INT_PATTERN.test(value) ? Number(value) : value;
+  if (!INT_PATTERN.test(value)) {
+    return value;
+  }
+  // Python ints are exact; keep what a double cannot hold as a bigint.
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : BigInt(value);
 }
 
 function includesAny(text: string, needles: readonly string[]): boolean {
@@ -459,11 +455,12 @@ function commonValueBound(mostCommon: StatValue, isLower: boolean): StatValue {
   if (mostCommon instanceof PgFloat) {
     return new PgFloat(adjustBound(mostCommon.value, isLower));
   }
-  if (typeof mostCommon === "number") {
-    return Math.trunc(adjustBound(mostCommon, isLower));
+  // `int(float)` prints the exact value of the double, hence BigInt.
+  if (typeof mostCommon === "number" || typeof mostCommon === "bigint") {
+    return BigInt(Math.trunc(adjustBound(Number(mostCommon), isLower)));
   }
   if (typeof mostCommon === "string" && DIGITS_PATTERN.test(mostCommon)) {
-    return String(Math.trunc(adjustBound(Number(mostCommon), isLower)));
+    return String(BigInt(Math.trunc(adjustBound(Number(mostCommon), isLower))));
   }
   return mostCommon;
 }

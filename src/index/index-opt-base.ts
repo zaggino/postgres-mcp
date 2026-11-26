@@ -53,16 +53,6 @@ export function formatPercent(value: number): string {
   return `${formatFixed(value * 100, 2)}%`;
 }
 
-/** Python's `str(float)` for the values that occur in traces. */
-export function pyFloatStr(value: number): string {
-  if (Number.isInteger(value) && Math.abs(value) < 1e16) {
-    return value.toFixed(1);
-  }
-  return Number.isFinite(value) || Number.isNaN(value)
-    ? String(value)
-    : formatFixed(value, 1);
-}
-
 /** `humanize.naturalsize` (decimal units): "1 Byte", "999 Bytes", "1.0 kB", "10.5 MB". */
 export function naturalSize(value: number): string {
   const absolute = Math.abs(value);

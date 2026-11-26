@@ -1,4 +1,5 @@
 // biome-ignore-all lint/style/noExcessiveClassesPerFile: the advisor and its condition collector are specified to live together in dta-calc.ts
+import { pyFloatStr } from "../py-format.ts";
 import { ColumnCollector, TableAliasVisitor } from "../sql/bind-params.ts";
 import {
   AstNode,
@@ -16,7 +17,6 @@ import {
   IndexRecommendation,
   IndexTuningBase,
   naturalSize,
-  pyFloatStr,
 } from "./index-opt-base.ts";
 
 const MEGABYTE = 1024 * 1024;
@@ -874,7 +874,7 @@ export class ConditionColumnCollector extends ColumnCollector {
   readonly conditionColumns = new Map<string, Set<string>>();
   inCondition: boolean;
   private readonly conditionScopes: ConditionScope[] = [];
-  private readonly conditionAliases = new Map<string, ColumnAliasInfo>();
+  readonly conditionAliases = new Map<string, ColumnAliasInfo>();
   private conditionQueryLevel = 0;
 
   constructor() {

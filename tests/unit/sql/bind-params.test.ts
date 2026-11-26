@@ -101,3 +101,45 @@ test("$n placeholders are ignored and the compared columns are collected", async
     columns: { users: ["id", "status"] },
   });
 });
+
+function statsDriver(cells: Record<string, unknown>): SqlExecutor {
+  return { executeQuery: () => Promise.resolve([{ cells }]) };
+}
+
+test("columns inside bare SQL/JSON structs are collected", async () => {
+  expect(
+    await analyse("SELECT json_value(t.col, '$.a') FROM t WHERE t.id = 1")
+  ).toEqual({
+    tables: ["t"],
+    aliases: {},
+    columns: { t: ["col", "id"] },
+  });
+});
+
+test("a pg_stats integer beyond 2^53 is bound with every digit", async () => {
+  const bind = new SqlBindParams(
+    statsDriver({
+      data_type: "bigint",
+      common_vals: "{1234567890123456789}",
+      common_freqs: "{0.5}",
+      histogram_bounds: null,
+    })
+  );
+  expect(await bind.replaceParameters("SELECT id FROM t WHERE t.id = $1")).toBe(
+    "SELECT id FROM t WHERE t.id = 1234567890123456789"
+  );
+});
+
+test("a small pg_stats float is bound in Python's exponent notation", async () => {
+  const bind = new SqlBindParams(
+    statsDriver({
+      data_type: "double",
+      common_vals: "{0.00002}",
+      common_freqs: "{0.5}",
+      histogram_bounds: null,
+    })
+  );
+  expect(
+    await bind.replaceParameters("SELECT id FROM t WHERE t.price = $1")
+  ).toBe("SELECT id FROM t WHERE t.price = 2e-05");
+});

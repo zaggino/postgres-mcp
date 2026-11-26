@@ -229,3 +229,27 @@ Error messages returned to the client and written to stderr include the full SQL
 ## 2026-11-26 · Minor · Bug · Sequence health treats `smallint` sequences as `bigint`
 
 `src/database-health/sequence-health-calc.ts` computes the maximum value of every sequence as if it were `bigint`, so `smallint` sequences are never reported as near exhaustion.
+
+## 2026-11-26 · Major · Cleanup · Split `src/server.ts`
+
+`src/server.ts` is about 1,200 lines and holds the tool handlers, tool registration, HTTP plumbing for three transports, CLI parsing, and startup and shutdown. Split it into `src/cli.ts`, `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable test seams (`deps`, `runners`, `dbConnection`) with parameters, for example `createServer(accessMode, getDriver)`. The nine tool handlers repeat one try/catch envelope that a single wrapper would cover.
+
+## 2026-11-26 · Major · Cleanup · `ConditionColumnCollector` inherits from a class it does not use
+
+`ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
+
+## 2026-11-26 · Major · Cleanup · Cross-cutting helpers are redeclared per module
+
+`errorMessage` is defined in six modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. Give each one home (`src/log.ts`, `src/errors.ts`, `src/py-format.ts`) while keeping stderr output unchanged.
+
+## 2026-11-26 · Major · Cleanup · AST struct-shape table lives in the security allowlist file
+
+`STRUCT_FIELD_TYPES` in `src/sql/allowlists.ts` describes parse-tree shape, not policy, and `src/sql/pg-ast.ts` imports it from there. Move it next to the parser, add `IndexStmt.relation`, and expose one value classifier that both the visitor traversal (`pg-ast.ts`) and the validator (`src/sql/safe-sql.ts`) use, so the two walkers cannot disagree.
+
+## 2026-11-26 · Minor · Cleanup · Python-shaped data contracts
+
+`RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.
+
+## 2026-11-26 · Minor · Chore · Lint suppressions encode project-wide decisions
+
+About thirty inline `biome-ignore` comments in `src/` cover three rules (`noAwaitInLoops`, `useThisInClassMethods`, `noExcessiveClassesPerFile`). Decide each rule once in `biome.jsonc` or restructure the code, and remove the inline comments.

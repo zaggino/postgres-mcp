@@ -53,7 +53,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - **Dependencies are pinned exactly** (`saveExact: true` in `pnpm-workspace.yaml`); Dependabot opens one grouped PR at a time.
 - **Lint config.** Linting is type-aware (`options.typeAware`, run by the `oxlint-tsgolint` engine against `tsconfig.json`). `oxlint.config.ts` switches off about 40 preset rules, each with its reason in a comment; a targeted exception is an inline `oxlint-disable-next-line <rule> -- <reason>`. Vitest preset rules can only be switched off through `disabledVitestRules` there, not through a top-level `rules` entry.
 - TypeScript is strict with `noUncheckedIndexedAccess`, `verbatimModuleSyntax` and `.ts` import extensions; no `any` and no non-null assertions.
-- Releases: pushing a `v*` tag runs `.github/workflows/publish.yml`, which needs the `NPM_TOKEN` secret.
+- Releases come from release-please (`.github/workflows/release-please.yml`, `release-please-config.json`): Conventional Commits on `main` drive the version and `CHANGELOG.md` of an open release PR, and merging it tags and publishes. Never tag or bump the version by hand; `SERVER_VERSION` is read from `package.json`. A failed npm publish is retried by dispatching the workflow from `main` with `publish`.
 
 ## Follow-ups
 

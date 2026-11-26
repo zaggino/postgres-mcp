@@ -2,18 +2,6 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
-## 2026-11-26 · Major · Infra · Releases are tagged by hand and there is no changelog
-
-The version in `package.json` is bumped manually and `.github/workflows/publish.yml` runs on a pushed `v*` tag, only checking that the tag matches. Release-please (as in `zaggino/z-schema`) would produce the version bump, `CHANGELOG.md`, tag and GitHub release from the Conventional Commits history. It needs a personal access token stored as a secret of a `main` environment. Set it up before the first npm publish so the changelog starts at the first release.
-
-## 2026-11-26 · Major · Security · The publish job installs dependencies while holding the npm credentials
-
-The single job in `.github/workflows/publish.yml` runs `pnpm install`, the checks and the build with `NPM_TOKEN` and `id-token: write` available, so a compromised dependency's install script could publish. Split it: a read-only job builds, tests and packs the tarball; a second job with `id-token: write` downloads the tarball and publishes it with `--ignore-scripts`, with no checkout and no install. Switch to npm trusted publishing (OIDC) and drop the `NPM_TOKEN` secret; the first publish may still have to be manual, because a trusted publisher is configured on an existing package.
-
-## 2026-11-26 · Minor · Security · GitHub Actions are referenced by tag, not by commit
-
-`.github/workflows/build.yml` and `publish.yml` use `actions/checkout@v7`, `pnpm/action-setup@v6` and `actions/setup-node@v7`. A moved tag would run different code with the workflow's permissions. Pin each action to a commit sha with the version in a trailing comment.
-
 ## 2026-11-26 · Minor · Dependencies · Dependabot does not cover GitHub Actions and has no cooldown
 
 `.github/dependabot.yml` only has the `npm` ecosystem. Add the `github-actions` ecosystem (needed once actions are pinned by sha) and `cooldown: default-days: 7` on both, so a freshly published version is not proposed before it has had a week to be found malicious. Keep the single grouped npm PR.
@@ -236,10 +224,6 @@ Costs and sizes are formatted with `toFixed` (for example in `src/index/index-op
 
 The zod schema in `src/server.ts` accepts only an array, while the Python tool accepted `None`. Clients that send `null` get a validation error.
 
-## 2026-11-26 · Minor · Tooling · `SERVER_VERSION` is hard-coded
-
-`SERVER_VERSION` in `src/server.ts` duplicates `package.json` and can drift from it. Read it from `package.json` at build time.
-
 ## 2026-11-26 · Minor · Security · Non-loopback HTTP binds have no Host or Origin checks
 
 `hostGuard` in `src/server.ts` enables DNS-rebinding protection only for loopback hosts. A server bound to another address accepts any `Host` and `Origin` and has no authentication.
@@ -256,9 +240,9 @@ The zod schema in `src/server.ts` accepts only an array, while the Python tool a
 
 Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt-base.ts` and `src/database-health/vacuum-health-calc.ts`, so a missing or non-numeric value silently turns into 0 instead of being reported.
 
-## 2026-11-26 · Major · Security · Publish workflow has no approval gate and uses mutable action tags
+## 2026-11-26 · Minor · Security · Publishing has no approval gate
 
-`.github/workflows/publish.yml` publishes without a protected environment and references actions by mutable tag. Add an environment with required reviewers, pin actions by commit SHA, and prefer npm trusted publishing over `NPM_TOKEN`.
+The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Add required reviewers to the environment, and a tag ruleset that limits who can create `v*` tags, since the publish guard trusts any `v<version>` tag.
 
 ## 2026-11-26 · Minor · Security · HTTP sessions are unbounded and never expire
 
@@ -340,3 +324,7 @@ The two agree for strings and numbers, but not for the parsed `json`/`jsonb` obj
 ## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
 
 `SSEServerTransport` (used in `src/server.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. Each use carries an inline `typescript/no-deprecated` disable, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision. Once the planned `src/transports/` split (see "Split `src/server.ts`") is done, one file-level disable in the SSE module can replace the per-line ones.
+
+## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
+
+`.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of 0.4.0 will fail; publish 0.4.0 by hand from the `v0.4.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.

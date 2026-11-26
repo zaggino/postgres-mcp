@@ -2,8 +2,8 @@
   "mcpServers": {
     "postgres": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@zaggino/postgres-mcp", "--access-mode=restricted"],
+      "command": "node",
+      "args": ["/path/to/postgres-mcp/dist/index.js", "--access-mode=restricted"],
       "env": {
         "DATABASE_URI": "${DATABASE_URI}"
       }

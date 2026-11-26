@@ -92,7 +92,7 @@ You can also open it from the `Settings` menu in Claude Desktop.
 
 When running from source, use `"command": "node"` and `"args": ["/path/to/postgres-mcp/dist/index.js", "--access-mode=unrestricted"]`.
 
-For Claude Code, copy [.mcp.example.json](.mcp.example.json) to `.mcp.json` in your project root. It runs the server in restricted mode and reads the connection URI from the `DATABASE_URI` environment variable of the shell that starts Claude Code, so no credentials are stored in the file.
+For Claude Code, copy [.mcp.example.json](.mcp.example.json) to `.mcp.json` in your project root and replace `/path/to/postgres-mcp` with the path of your clone (run `pnpm install && pnpm build` there first). It runs the server from source in restricted mode and reads the connection URI from the `DATABASE_URI` environment variable of the shell that starts Claude Code, so no credentials are stored in the file.
 
 ### Access modes
 

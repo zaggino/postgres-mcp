@@ -38,10 +38,6 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
 
-## 2026-11-26 · Minor · Feature · LLM index tuning method was not ported
-
-Upstream's experimental `method="llm"` (Optimization by LLM) is not available; `methodSchema` in `src/server.ts` accepts only `"dta"`. Port it if the feature is wanted.
-
 ## 2026-11-26 · Minor · Chore · `devenv.lock` not regenerated after removing Python from `devenv.nix`
 
 `devenv.lock` still pins inputs from the Python-based setup. Run `devenv update` to regenerate it.

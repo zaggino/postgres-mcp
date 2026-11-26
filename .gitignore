@@ -7,8 +7,3 @@ coverage/
 .mcp.json
 .claude/temp/
 .claude/worktrees/
-
-# Devenv
-.devenv*
-devenv.local.nix
-.direnv

@@ -38,10 +38,6 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
 
-## 2026-11-26 · Minor · Tooling · `devenv.lock` not regenerated after removing Python from `devenv.nix`
-
-`devenv.lock` still pins inputs from the Python-based setup. Run `devenv update` to regenerate it.
-
 ## 2026-11-26 · Minor · Security · Raw connection error may contain the password
 
 `DbConnPool` in `src/sql/sql-driver.ts` stores the unfiltered message in `lastError`; only the thrown error is passed through `obfuscatePassword`. Anything that reads `lastError` directly can leak credentials.

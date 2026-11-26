@@ -280,6 +280,10 @@ export class SqlDriver {
     throw new Error('Connection not established. Either conn or engineUrl must be provided');
   }
 
+  get pool(): DbConnPool | undefined {
+    return this.conn ?? undefined;
+  }
+
   async executeQuery(
     query: string,
     params?: readonly unknown[] | null,

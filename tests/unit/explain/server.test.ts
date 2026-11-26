@@ -1,8 +1,9 @@
 import { afterEach, expect, it as test, vi } from 'vitest';
 
-import { AccessMode, createServer, deps } from '../../../src/server.ts';
+import { createServer, deps } from '../../../src/server.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
+import { createTestRegistry } from '../../support/registry.ts';
 
 const EXECUTION_ERROR = /^Error: .*Error executing query/u;
 
@@ -34,8 +35,8 @@ function useExplainDriver(planData: unknown) {
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
-  const client = await connectClient(createServer(AccessMode.UNRESTRICTED));
-  return await callToolText(client, 'explain_query', args);
+  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+  return await callToolText(client, 'explain_query', { database: 'app', ...args });
 }
 
 afterEach(() => {
@@ -43,7 +44,7 @@ afterEach(() => {
 });
 
 test('registers the explain_query tool', async () => {
-  const client = await connectClient(createServer(AccessMode.UNRESTRICTED));
+  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
 
   const { tools } = await client.listTools();
 

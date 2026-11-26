@@ -6,13 +6,9 @@ Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-
 
 The server ignores the client's `notifications/cancelled`, and unrestricted mode has no call timeout at all, so a statement runs in postgres to its end. `zaggino/lazy-pg-mcp` works around this from outside by removing the backend and terminating its sessions. Do it in the server: cancel the running statement when the tool call's abort signal fires, and add a configurable call timeout that applies in both access modes. The restricted-mode side (the 30 s timeout that leaves the statement running) is the entry "Restricted-mode timeout is client-side only"; fix the two together.
 
-## 2026-11-26 · Major · Feature · One server process serves only one database
-
-Each database needs its own server process, which is why `zaggino/lazy-pg-mcp` exists as a proxy in front of many of them. A native multi-database mode would take several named database URLs, open a pool on the first call to a database and close it after an idle period, add a required `database` argument to every tool and offer a `list_databases` tool with each pool's state. It must be opt-in: with a single database the tool schemas stay identical to upstream (`tests/unit/server-surface.test.ts`). This is the largest divergence from upstream so far and needs a decision before work starts.
-
 ## 2026-11-26 · Minor · Feature · The server sends no `instructions` at initialize
 
-`createServer` in `src/server.ts` sets no server instructions, so a model has no guidance on the server's behaviour. Add a short text: the access mode in effect, that a result starting with `Error:` comes from the query and not from the server, what to check when the database cannot be reached, and where to report a server bug.
+`serverInstructions` in `src/server.ts` only tells the model that every tool except `list_databases` needs a `database` argument and which databases exist, so a model has no other guidance on the server's behaviour. Extend the text: the access mode in effect, that a result starting with `Error:` comes from the query and not from the server, what to check when the database cannot be reached, and where to report a server bug.
 
 ## 2026-11-26 · Minor · Observability · Connections carry no `application_name`
 
@@ -35,10 +31,6 @@ Its agent instructions require the file itself to be updated in the same change 
 ## 2026-11-26 · Major · Bug · Connection pool is invalidated after any query error
 
 `SqlDriver` in `src/sql/sql-driver.ts` calls `markInvalid` on any failure, including a user's syntax error, so the next call reconnects the whole pool. Only connection-level failures should invalidate it.
-
-## 2026-11-26 · Minor · Bug · `DATABASE_URI` overrides the positional database URL
-
-`main` in `src/server.ts` reads `process.env.DATABASE_URI ?? options.databaseUrl`, so the environment variable wins over an explicit argument, and an empty `DATABASE_URI` also wins and fails with "No database URL provided". The explicit argument should take precedence, and an empty variable should count as unset.
 
 ## 2026-11-26 · Major · Bug · Restricted-mode timeout is client-side only
 
@@ -250,7 +242,7 @@ Error messages returned to the client and written to stderr include the full SQL
 
 ## 2026-11-26 · Major · Refactor · Split `src/server.ts`
 
-`src/server.ts` is about 1,200 lines and holds the tool handlers, tool registration, HTTP plumbing for three transports, CLI parsing, and startup and shutdown. Split it into `src/cli.ts`, `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable test seams (`deps`, `runners`, `dbConnection`) with parameters, for example `createServer(accessMode, getDriver)`. The nine tool handlers repeat one try/catch envelope that a single wrapper would cover.
+`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, HTTP plumbing for three transports, and startup and shutdown (CLI parsing moved to `src/cli.ts`). Split the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
 
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
@@ -258,7 +250,7 @@ Error messages returned to the client and written to stderr include the full SQL
 
 ## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
 
-`errorMessage` is defined in six modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. Give each one home (`src/log.ts`, `src/errors.ts`, `src/py-format.ts`) while keeping stderr output unchanged.
+`errorMessage` is defined in 9 modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. Give each one home (`src/log.ts`, `src/errors.ts`, `src/py-format.ts`) while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
@@ -308,3 +300,47 @@ The two agree for strings and numbers, but not for the parsed `json`/`jsonb` obj
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
 `.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of 0.4.0 will fail; publish 0.4.0 by hand from the `v0.4.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.
+
+## 2026-11-26 · Minor · Feature · Server discovery needs a URL-form server URI
+
+Discovery of the databases on a config `servers` entry builds each database URI by replacing the path of the server URL (`#discoverSource` in `src/database-registry.ts`), so the server `uri` must be a `postgres://` or `postgresql://` URL. Key/value DSNs and `dbname=` query parameters are not supported and are reported as an error for that server. Support them by rewriting the `dbname` of a DSN or query string.
+
+## 2026-11-26 · Minor · Feature · Discovered databases with reserved characters in their names cannot be used
+
+`pg-connection-string` decodes the URL path with `decodeURI`, which leaves `%2F`, `%3F`, `%23` and the other reserved escapes in place, so `databaseUri` in `src/database-registry.ts` reports a discovered database named like `a/b` as an error instead of connecting (it would otherwise reach a database literally named `a%2Fb`). Support such names by passing the database name through the pool config instead of the URL.
+
+## 2026-11-26 · Minor · Performance · Unknown database names rerun discovery and open pools have no cap
+
+`DatabaseRegistry.use` in `src/database-registry.ts` reruns discovery on every server for each unknown `database` value, so a model looping over wrong names queries every server each time. Each database used gets its own pool (up to 5 connections) that stays open for `idleMinutes`, with no limit on how many are open at once, so a server with many databases can reach `max_connections`. Add a short negative cache for unknown names, and a cap on open pools.
+
+## 2026-11-26 · Minor · Refactor · `deps.getSqlDriver` duplicates the registry's driver factory
+
+`DatabaseRegistry` takes a `getSqlDriver` option, yet `src/server.ts` still exports the mutable `deps` object, and `main` and `tests/support/registry.ts` bridge the two with the same lambda (so the test helper imports the whole server module). Delete `deps`, give `createTestRegistry` a `getSqlDriver` option, and move the four `vi.spyOn(deps, 'getSqlDriver')` sites in `tests/unit/explain/` to it.
+
+## 2026-11-26 · Minor · Refactor · Tool handlers repeat the same try/catch envelope
+
+Eight handlers in `src/server.ts` each wrap their body in `try { … } catch { log('ERROR', …); return formatError(…) }`, while `onDatabase` in `createServer` already wraps every call. Give `onDatabase` a log label and let it own the catch, which also handles `DatabaseAccessError` in one place. `analyze_db_health` has no envelope today and its errors reach the MCP SDK; it needs an opt-out to stay behaviour-identical. Do it together with one `registerDatabaseTool(name, config, (sqlDriver, args) => …)` helper that adds the `database` schema and the wrapping, so the nine registrations stop repeating both (a generic helper over the SDK's `registerTool` needed casts the first time; try typing it against `z.ZodRawShape` again).
+
+## 2026-11-26 · Minor · Refactor · Small cleanups left over from the multi-database review
+
+`parsePort` and `parseIdleMinutes` in `src/cli.ts` repeat the same integer validation and error text; one `parseIntFlag(flag, value)` would serve both. `MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
+
+## 2026-11-26 · Minor · Refactor · Server URIs are validated in two places
+
+`configServer` in `src/config.ts` checks a server `uri` only when it has no `${VAR}`, so `#discoverSource` in `src/database-registry.ts` checks it again after expansion on every discovery run, and `config.ts` imports `isPostgresUrl` and `NOT_A_POSTGRES_URL` from the registry for that. Validate once in `config.ts` after expansion (a fatal `CliError` for a literal URI, a `{ error }` spec for an expanded one), seed `SourceState.error` and the source pool in the registry constructor, and drop the re-check, the lazy pool creation inside the `try` and the dead `'error' in source.uri` ternary in `list()`.
+
+## 2026-11-26 · Minor · Refactor · `SqlExecutor.pool` exists only to key the version cache
+
+`getPostgresVersion` in `src/sql/extension-utils.ts` keys its cache by `sqlDriver.pool ?? sqlDriver`, because `DatabaseRegistry.use` builds a new driver on every call; that put an optional `pool` member on `SqlExecutor` with pass-through getters on `SafeSqlDriver` and `SqlDriver`, and the key of an `engineUrl` driver changes between the read and the write. Let `IdlePool` hold one driver per connection, key the cache by the driver, and remove `pool` from the interface.
+
+## 2026-11-26 · Minor · Refactor · Pool retirement is tracked in two places
+
+`IdlePool` in `src/database-registry.ts` has `#retired` and `isFinished`, and the registry keeps its own `#retired` set that `#retireStalePools` sweeps only on the next discovery. Let `retire()` return a promise that settles once the pool has drained and closed, and remove the pool from the set when it settles; `isFinished` and the sweep go.
+
+## 2026-11-26 · Minor · Observability · `list_databases` does not show why a database cannot connect
+
+When an explicit database fails to connect, `DbConnPool.close` drops the pool and `list_databases` reports it as `closed` with no error, the same as an idle pool. `DbConnPool.lastError` has the reason, but `SqlDriver.executeQuery` also sets it on every SQL error (the entry "Connection pool is invalidated after any query error"), so showing it now would mark a database as broken after a typo. Fix that entry first, then add a masked `last_error` to each database in `list_databases`.
+
+## 2026-11-26 · Minor · Tests · Gaps in the multi-database tests
+
+Untested so far: `--idle-minutes` and config `idleMinutes` above 35791 are rejected; `list_databases` shows `open` with a counting-down `idle_seconds_left` after a successful call; a server whose `${VAR}` is unset shows the error in `servers[].error` and its databases are unknown; an invalid `--database` name, a duplicate name, an unreadable config file. Add one case each to `tests/unit/config.test.ts` and `tests/unit/database-registry.test.ts`.

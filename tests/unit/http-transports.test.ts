@@ -6,10 +6,11 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, expect, it as test, vi } from 'vitest';
 
 import type { HttpServerHandle } from '../../src/server.ts';
-import { AccessMode, createServer, startSseServer, startStreamableHttpServer } from '../../src/server.ts';
+import { createServer, startSseServer, startStreamableHttpServer } from '../../src/server.ts';
+import { createTestRegistry } from '../support/registry.ts';
 
 const HOST = '127.0.0.1';
-const TOOL_COUNT = 9;
+const TOOL_COUNT = 10;
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -21,7 +22,7 @@ afterEach(async () => {
 });
 
 function factory() {
-  return createServer(AccessMode.UNRESTRICTED);
+  return createServer(createTestRegistry(['app']).registry);
 }
 
 async function startStreamable(): Promise<HttpServerHandle> {
@@ -81,7 +82,7 @@ const INITIALIZE = JSON.stringify({
   },
 });
 
-test('streamable HTTP serves the nine tools to the SDK client', async () => {
+test('streamable HTTP serves the ten tools to the SDK client', async () => {
   const { port } = await startStreamable();
 
   const tools = await listToolsThrough(
@@ -92,7 +93,7 @@ test('streamable HTTP serves the nine tools to the SDK client', async () => {
   expect(tools).toHaveLength(TOOL_COUNT);
 });
 
-test('SSE serves the nine tools to the SDK client', async () => {
+test('SSE serves the ten tools to the SDK client', async () => {
   const { port } = await startSse();
 
   const tools = await listToolsThrough(

@@ -1,5 +1,6 @@
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
+import type { DbConnPool } from './sql-driver.ts';
 
 export type MessageType = 'plain' | 'markdown';
 
@@ -13,13 +14,17 @@ export interface ExtensionStatus {
 
 const INTEGER = /^\s*[+-]?\d+\s*$/u;
 
-// Single global PostgreSQL version cache.
-// TODO: If we support multiple connections in the future, this should be connection-specific
-let postgresVersion: number | null = null;
+// Major version per connection pool; an executor without a pool is its own key.
+let versions = new WeakMap<DbConnPool | SqlExecutor, number>();
+
+/** Read it after the first query too: a driver built from a URL creates its pool lazily. */
+function cacheKey(sqlDriver: SqlExecutor): DbConnPool | SqlExecutor {
+  return sqlDriver.pool ?? sqlDriver;
+}
 
 /** Reset the PostgreSQL version cache. Primarily used for testing. */
 export function resetPostgresVersionCache(): void {
-  postgresVersion = null;
+  versions = new WeakMap();
 }
 
 /**
@@ -27,8 +32,9 @@ export function resetPostgresVersionCache(): void {
  * Returns 0 if the version cannot be determined.
  */
 export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number> {
-  if (postgresVersion !== null) {
-    return postgresVersion;
+  const cached = versions.get(cacheKey(sqlDriver));
+  if (cached !== undefined) {
+    return cached;
   }
 
   try {
@@ -47,7 +53,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
     }
     const version = Number.parseInt(majorVersion, 10);
 
-    postgresVersion = version;
+    versions.set(cacheKey(sqlDriver), version);
     return version;
   } catch (error) {
     throw new Error('Error determining PostgreSQL version', { cause: error });

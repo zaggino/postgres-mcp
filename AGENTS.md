@@ -23,15 +23,21 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 - On Windows, start Vitest from a path with an uppercase drive letter (`/D/dev/...`). From a lowercase one it fails with "failed to find the current suite".
 - `pnpm install` installs lefthook git hooks (`lefthook.yml`): pre-commit runs `ultracite check` on the staged files, pre-push runs typecheck and build.
 - CI (`.github/workflows/build.yml`) runs check, typecheck, build, unit, integration, in that order.
-- Run from source: `pnpm build && node dist/index.js "postgresql://..." --access-mode=restricted`.
+- Run from source: `pnpm build && MCP_APP_DATABASE_URI=postgresql://... node dist/index.js --database=app --access-mode=restricted`.
 
 ## Architecture
 
 `src/index.ts` is the bin entry and only calls `main()` in `src/server.ts`.
 
-**`src/server.ts`** holds the whole MCP surface: the nine tool registrations with their zod schemas (`createServer(accessMode)`), CLI parsing (`parseCli`), the three transports (stdio, SSE, streamable HTTP, all on `node:http` with a Host-header guard), and shutdown. It owns one module-level `DbConnPool` (`dbConnection`). The server starts even when the database is unreachable; tools then return the connection error.
+**`src/server.ts`** holds the whole MCP surface: the nine tool registrations plus `list_databases` with their zod schemas (`createServer(registry)`), the three transports (stdio, SSE, streamable HTTP, all on `node:http` with a Host-header guard), and shutdown. Every tool except `list_databases` takes a required `database` argument and runs through `registry.use(name, ...)`; the server `instructions` say so. Startup makes no database connection; an unreachable or unconfigured database is reported by the tool call or `list_databases`.
 
-**Access modes decide the driver.** `getSqlDriver()` returns a plain `SqlDriver` in unrestricted mode and a `SafeSqlDriver` wrapping it in restricted mode. Every tool goes through it, so restricted mode constrains the health, explain and index tools too, not just `execute_sql`.
+**`src/cli.ts`** owns CLI parsing: the flags (`parseCli`), `USAGE` and `HELP`, `CliError` and `exitOnCliError`.
+
+**`src/config.ts`** turns the CLI flags (`--database`, `--config`, `--idle-minutes`, `--access-mode`) and the optional JSON config file (zod, strict) into `DatabaseRegistry` options. `${VAR}` expansion happens there; an unset variable becomes a per-entry error, not a startup failure.
+
+**`src/database-registry.ts`** is the `DatabaseRegistry`, which owns the access mode and builds every driver: tools call `registry.use(name, fn(sqlDriver))`, and `main` wires `deps.getSqlDriver` into it. It holds a lazily created `DbConnPool` per database, closed after `idleMinutes` with no call in flight, plus discovery of databases on config `servers` (`pg_database` query, include/exclude globs, prefix). Discovery re-runs on `list_databases` and on an unknown name.
+
+**Access modes decide the driver.** `getSqlDriver()` (`src/sql/driver-factory.ts`) returns a plain `SqlDriver` in unrestricted mode and a `SafeSqlDriver` wrapping it in restricted mode. Every tool goes through it, so restricted mode constrains the health, explain and index tools too, not just `execute_sql`.
 
 **Restricted mode** (`src/sql/safe-sql.ts`, `src/sql/allowlists.ts`) parses each statement with `libpg-query` and walks the JSON tree default-deny: statement types, node types, functions and extensions must all be on an allowlist. Accepted SQL is prefixed with `/* postgres-mcp */` and run in `BEGIN TRANSACTION READ ONLY` with a 30 s client-side timeout. The allowlists are copied verbatim from upstream; a node type or function missing from them is rejected by design, so adding SQL to an internal query can make it fail in restricted mode only.
 
@@ -41,11 +47,11 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 
 **Index advisor** (`src/index/`). `IndexTuningBase` (`index-opt-base.ts`) gathers the workload (from `pg_stat_statements` or given queries), costs configurations with `hypopg` hypothetical indexes and `EXPLAIN`, and produces the result; `DatabaseTuningAdvisor` (`dta-calc.ts`) supplies candidate generation and the greedy search; `presentation.ts` turns the result into the tool's JSON. Hypothetical indexes are named `postgres_mcp_idx_*`. The `method` tool parameter accepts only `"dta"`.
 
-**Other tools.** `src/database-health/` has one calculator per health area, combined by `database-health.ts`. `src/explain/explain-plan.ts` and `src/artifacts.ts` build and diff explain plans. `src/top-queries/` reads `pg_stat_statements`, with column names that differ by server version (`src/sql/extension-utils.ts` caches the version).
+**Other tools.** `src/database-health/` has one calculator per health area, combined by `database-health.ts`. `src/explain/explain-plan.ts` and `src/artifacts.ts` build and diff explain plans. `src/top-queries/` reads `pg_stat_statements`, with column names that differ by server version (`src/sql/extension-utils.ts` caches the version per connection pool).
 
 ## Conventions specific to this repo
 
-- **The tool surface is a contract.** Tool names, parameter names (snake_case), defaults, descriptions and CLI flags match upstream, and another project caches these schemas. `tests/unit/server-surface.test.ts` pins them. Do not rename or drop any of them without being asked.
+- **The tool surface is a contract.** Tool names, parameter names (snake_case), defaults, descriptions and CLI flags match upstream, and another project caches these schemas. `tests/unit/server-surface.test.ts` pins them. Do not rename or drop any of them without being asked. The required `database` parameter on every tool and the `list_databases` tool are a deliberate divergence from upstream and are pinned there too.
 - **Faithful port.** Behaviour, messages and SQL text follow the Python original, including its defects. A defect inherited from upstream is recorded in `docs/TODO.md` (see Follow-ups below), not fixed in passing. `docs/TODO.md` also lists deferred structural refactors.
 - **Keep "Differences from upstream" current.** With every change, check the "Differences from upstream" section of `README.md`: a change that makes this fork differ from upstream in a new way, or removes a difference, updates that section in the same change.
 - **Output format.** Structured tool results are JSON; prose outputs keep upstream's wording. Number formatting that upstream did with Python format specs goes through `src/py-format.ts` and the helpers at the top of `src/index/index-opt-base.ts` (`naturalSize` is base 1000).

@@ -3,9 +3,15 @@
     "postgres": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/postgres-mcp/dist/index.js", "--access-mode=restricted"],
+      "args": [
+        "/path/to/postgres-mcp/dist/index.js",
+        "--access-mode=restricted",
+        "--database=app",
+        "--database=analytics"
+      ],
       "env": {
-        "DATABASE_URI": "${DATABASE_URI}"
+        "MCP_APP_DATABASE_URI": "${MCP_APP_DATABASE_URI}",
+        "MCP_ANALYTICS_DATABASE_URI": "${MCP_ANALYTICS_DATABASE_URI}"
       }
     }
   }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { AccessMode, dbConnection, getSqlDriver, main, runners } from '../../src/server.ts';
+import { main, runners } from '../../src/server.ts';
+import { AccessMode, getSqlDriver } from '../../src/sql/driver-factory.ts';
 import { SafeSqlDriver } from '../../src/sql/safe-sql.ts';
 import { DbConnPool, SqlDriver } from '../../src/sql/sql-driver.ts';
 import { connectClient } from '../support/mcp-client.ts';
@@ -38,14 +39,10 @@ describe(getSqlDriver, () => {
 
 describe('command line access mode', () => {
   it('--access-mode=restricted serves the read-only execute_sql tool', async () => {
-    vi.stubEnv('DATABASE_URI', undefined);
-    vi.spyOn(dbConnection, 'poolConnect').mockResolvedValue({
-      connect: vi.fn(),
-      end: vi.fn(),
-    });
+    vi.stubEnv('MCP_APP_DATABASE_URI', 'postgresql://user:password@localhost/db');
     const runStdio = vi.spyOn(runners, 'runStdio').mockResolvedValue();
 
-    await main(['postgresql://user:password@localhost/db', '--access-mode=restricted']);
+    await main(['--database=app', '--access-mode=restricted']);
 
     const factory = runStdio.mock.calls[0]?.[0];
     if (!factory) {

@@ -1,0 +1,16 @@
+{
+  "accessMode": "restricted",
+  "idleMinutes": 10,
+  "databases": {
+    "app": { "uri": "${APP_DATABASE_URI}" },
+    "analytics": { "uri": "${ANALYTICS_DATABASE_URI}" }
+  },
+  "servers": [
+    {
+      "uri": "${STAGING_SERVER_URI}",
+      "prefix": "staging-",
+      "include": ["*"],
+      "exclude": ["postgres", "rdsadmin"]
+    }
+  ]
+}

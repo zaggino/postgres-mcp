@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer as createHttpServer } from 'node:http';
 import { constants as osConstants } from 'node:os';
-import { parseArgs } from 'node:util';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -14,31 +14,23 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { ErrorResult, ExplainPlanArtifact } from './artifacts.ts';
+import { exitOnCliError, HELP, parseCli } from './cli.ts';
+import { resolveConfig } from './config.ts';
 import { DatabaseHealthTool, HEALTH_TYPES } from './database-health/database-health.ts';
+import { DatabaseAccessError, DatabaseRegistry } from './database-registry.ts';
 import { ExplainPlanTool } from './explain/explain-plan.ts';
 import { DatabaseTuningAdvisor } from './index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from './index/index-opt-base.ts';
 import { TextPresentation } from './index/presentation.ts';
+import { AccessMode, getSqlDriver } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
-import { DbConnPool, obfuscatePassword, SqlDriver } from './sql/sql-driver.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 
 const SERVER_NAME = 'postgres-mcp';
 const SERVER_VERSION = packageJson.version;
 const PG_STAT_STATEMENTS = 'pg_stat_statements';
-const RESTRICTED_TIMEOUT_SECONDS = 30;
-
-const ACCESS_MODES = ['unrestricted', 'restricted'] as const;
-export type AccessMode = (typeof ACCESS_MODES)[number];
-export const AccessMode = {
-  UNRESTRICTED: 'unrestricted',
-  RESTRICTED: 'restricted',
-} as const satisfies Record<string, AccessMode>;
-
-const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
-export type Transport = (typeof TRANSPORTS)[number];
 
 function log(level: string, message: string): void {
   process.stderr.write(`${level}: ${message}\n`);
@@ -46,18 +38,6 @@ function log(level: string, message: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export const dbConnection = new DbConnPool();
-
-/** Get the appropriate SQL driver for the access mode. */
-export function getSqlDriver(accessMode: AccessMode, conn: DbConnPool = dbConnection): SqlExecutor {
-  const baseDriver = new SqlDriver({ conn });
-
-  if (accessMode === AccessMode.RESTRICTED) {
-    return new SafeSqlDriver(baseDriver, RESTRICTED_TIMEOUT_SECONDS);
-  }
-  return baseDriver;
 }
 
 /** Replaceable seam so tests can supply a driver without a database. */
@@ -102,6 +82,8 @@ const HEALTH_DESCRIPTION =
   '- all - runs all checks\n' +
   "You can optionally specify a single health check or a comma-separated list of health checks. The default is 'all' checks.";
 
+const databaseSchema = z.string().describe('Name of the database to run against (see list_databases)');
+
 const objectTypeSchema = z
   .string()
   .default('table')
@@ -111,9 +93,8 @@ const methodSchema = z.enum(['dta']).default('dta').describe('Method to use for 
 
 const maxIndexSizeSchema = z.number().int().default(10_000).describe('Max index size in MB');
 
-async function listSchemas(accessMode: AccessMode): Promise<CallToolResult> {
+async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const rows = await sqlDriver.executeQuery(
       `
             SELECT
@@ -136,9 +117,8 @@ async function listSchemas(accessMode: AccessMode): Promise<CallToolResult> {
   }
 }
 
-async function listObjects(accessMode: AccessMode, schemaName: string, objectType: string): Promise<CallToolResult> {
+async function listObjects(sqlDriver: SqlExecutor, schemaName: string, objectType: string): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     let objects: unknown[];
 
     if (objectType === 'table' || objectType === 'view') {
@@ -282,13 +262,12 @@ async function tableDetails(
 }
 
 async function getObjectDetails(
-  accessMode: AccessMode,
+  sqlDriver: SqlExecutor,
   schemaName: string,
   objectName: string,
   objectType: string
 ): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     let result: unknown;
 
     if (objectType === 'table' || objectType === 'view') {
@@ -343,13 +322,12 @@ async function getObjectDetails(
 }
 
 async function explainQuery(
-  accessMode: AccessMode,
+  sqlDriver: SqlExecutor,
   sql: string,
   analyze: boolean,
   hypotheticalIndexes: Record<string, unknown>[]
 ): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const explainTool = new ExplainPlanTool(sqlDriver);
     let result: ExplainPlanArtifact | ErrorResult;
 
@@ -382,9 +360,8 @@ async function explainQuery(
   }
 }
 
-async function executeSql(accessMode: AccessMode, sql: string): Promise<CallToolResult> {
+async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const rows = await sqlDriver.executeQuery(sql);
     if (rows === null) {
       return formatTextResponse('No results');
@@ -396,9 +373,8 @@ async function executeSql(accessMode: AccessMode, sql: string): Promise<CallTool
   }
 }
 
-async function analyzeWorkloadIndexes(accessMode: AccessMode, maxIndexSizeMb: number): Promise<CallToolResult> {
+async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: number): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
     const dtaTool = new TextPresentation(sqlDriver, indexTuning);
     const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
@@ -410,7 +386,7 @@ async function analyzeWorkloadIndexes(accessMode: AccessMode, maxIndexSizeMb: nu
 }
 
 async function analyzeQueryIndexes(
-  accessMode: AccessMode,
+  sqlDriver: SqlExecutor,
   queries: string[],
   maxIndexSizeMb: number
 ): Promise<CallToolResult> {
@@ -422,7 +398,6 @@ async function analyzeQueryIndexes(
   }
 
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
     const dtaTool = new TextPresentation(sqlDriver, indexTuning);
     const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
@@ -433,14 +408,13 @@ async function analyzeQueryIndexes(
   }
 }
 
-async function analyzeDbHealth(accessMode: AccessMode, healthType: string): Promise<CallToolResult> {
-  const healthTool = new DatabaseHealthTool(deps.getSqlDriver(accessMode));
+async function analyzeDbHealth(sqlDriver: SqlExecutor, healthType: string): Promise<CallToolResult> {
+  const healthTool = new DatabaseHealthTool(sqlDriver);
   return formatTextResponse(await healthTool.health(healthType));
 }
 
-async function getTopQueries(accessMode: AccessMode, sortBy: string, limit: number): Promise<CallToolResult> {
+async function getTopQueries(sqlDriver: SqlExecutor, sortBy: string, limit: number): Promise<CallToolResult> {
   try {
-    const sqlDriver = deps.getSqlDriver(accessMode);
     const topQueriesTool = new TopQueriesCalc(sqlDriver);
 
     if (sortBy === 'resources') {
@@ -458,18 +432,48 @@ async function getTopQueries(accessMode: AccessMode, sortBy: string, limit: numb
   }
 }
 
-/** Build an MCP server with every tool registered for the given access mode. */
-export function createServer(accessMode: AccessMode): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+function serverInstructions(registry: DatabaseRegistry): string {
+  const { explicit, serverCount } = registry.describe();
+  return `Every tool except list_databases requires a "database" argument.${
+    explicit.length > 0 ? ` Configured databases: ${explicit.join(', ')}.` : ''
+  }${
+    serverCount > 0
+      ? ` More databases are discovered on ${serverCount} server(s); call list_databases to see them all.`
+      : " Call list_databases to see each database's connection state."
+  }`;
+}
+
+/** Build an MCP server with every tool registered against the registry's databases and access mode. */
+export function createServer(registry: DatabaseRegistry): McpServer {
+  const server = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions: serverInstructions(registry) }
+  );
+
+  /** Run a tool body against a named database; access failures become tool errors. */
+  const onDatabase = async (
+    database: string,
+    fn: (sqlDriver: SqlExecutor) => Promise<CallToolResult>
+  ): Promise<CallToolResult> => {
+    try {
+      return await registry.use(database, fn);
+    } catch (error) {
+      // Errors thrown by the tool body keep their own handling; only access failures are reported here.
+      if (error instanceof DatabaseAccessError) {
+        return formatError(error.message);
+      }
+      throw error;
+    }
+  };
 
   server.registerTool(
     'list_schemas',
     {
       description: 'List all schemas in the database',
-      inputSchema: {},
+      inputSchema: { database: databaseSchema },
       annotations: { title: 'List Schemas', readOnlyHint: true },
     },
-    () => listSchemas(accessMode)
+    ({ database }) => onDatabase(database, (sqlDriver) => listSchemas(sqlDriver))
   );
 
   server.registerTool(
@@ -477,12 +481,14 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: 'List objects in a schema',
       inputSchema: {
+        database: databaseSchema,
         schema_name: z.string().describe('Schema name'),
         object_type: objectTypeSchema,
       },
       annotations: { title: 'List Objects', readOnlyHint: true },
     },
-    ({ schema_name, object_type }) => listObjects(accessMode, schema_name, object_type)
+    ({ database, schema_name, object_type }) =>
+      onDatabase(database, (sqlDriver) => listObjects(sqlDriver, schema_name, object_type))
   );
 
   server.registerTool(
@@ -490,13 +496,15 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: 'Show detailed information about a database object',
       inputSchema: {
+        database: databaseSchema,
         schema_name: z.string().describe('Schema name'),
         object_name: z.string().describe('Object name'),
         object_type: objectTypeSchema,
       },
       annotations: { title: 'Get Object Details', readOnlyHint: true },
     },
-    ({ schema_name, object_name, object_type }) => getObjectDetails(accessMode, schema_name, object_name, object_type)
+    ({ database, schema_name, object_name, object_type }) =>
+      onDatabase(database, (sqlDriver) => getObjectDetails(sqlDriver, schema_name, object_name, object_type))
   );
 
   server.registerTool(
@@ -505,6 +513,7 @@ export function createServer(accessMode: AccessMode): McpServer {
       description:
         'Explains the execution plan for a SQL query, showing how the database will execute it and provides detailed cost estimates.',
       inputSchema: {
+        database: databaseSchema,
         sql: z.string().describe('SQL query to explain'),
         analyze: z
           .boolean()
@@ -520,7 +529,8 @@ export function createServer(accessMode: AccessMode): McpServer {
       },
       annotations: { title: 'Explain Query', readOnlyHint: true },
     },
-    ({ sql, analyze, hypothetical_indexes }) => explainQuery(accessMode, sql, analyze, hypothetical_indexes)
+    ({ database, sql, analyze, hypothetical_indexes }) =>
+      onDatabase(database, (sqlDriver) => explainQuery(sqlDriver, sql, analyze, hypothetical_indexes))
   );
 
   server.registerTool(
@@ -528,12 +538,14 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: 'Analyze frequently executed queries in the database and recommend optimal indexes',
       inputSchema: {
+        database: databaseSchema,
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
       annotations: { title: 'Analyze Workload Indexes', readOnlyHint: true },
     },
-    ({ max_index_size_mb }) => analyzeWorkloadIndexes(accessMode, max_index_size_mb)
+    ({ database, max_index_size_mb }) =>
+      onDatabase(database, (sqlDriver) => analyzeWorkloadIndexes(sqlDriver, max_index_size_mb))
   );
 
   server.registerTool(
@@ -541,13 +553,15 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: 'Analyze a list of (up to 10) SQL queries and recommend optimal indexes',
       inputSchema: {
+        database: databaseSchema,
         queries: z.array(z.string()).describe('List of Query strings to analyze'),
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
       annotations: { title: 'Analyze Query Indexes', readOnlyHint: true },
     },
-    ({ queries, max_index_size_mb }) => analyzeQueryIndexes(accessMode, queries, max_index_size_mb)
+    ({ database, queries, max_index_size_mb }) =>
+      onDatabase(database, (sqlDriver) => analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb))
   );
 
   server.registerTool(
@@ -555,6 +569,7 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: HEALTH_DESCRIPTION,
       inputSchema: {
+        database: databaseSchema,
         health_type: z
           .string()
           .default('all')
@@ -562,7 +577,7 @@ export function createServer(accessMode: AccessMode): McpServer {
       },
       annotations: { title: 'Analyze Database Health', readOnlyHint: true },
     },
-    ({ health_type }) => analyzeDbHealth(accessMode, health_type)
+    ({ database, health_type }) => onDatabase(database, (sqlDriver) => analyzeDbHealth(sqlDriver, health_type))
   );
 
   server.registerTool(
@@ -570,6 +585,7 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       description: `Reports the slowest or most resource-intensive queries using data from the '${PG_STAT_STATEMENTS}' extension.`,
       inputSchema: {
+        database: databaseSchema,
         sort_by: z
           .string()
           .default('resources')
@@ -585,12 +601,12 @@ export function createServer(accessMode: AccessMode): McpServer {
       },
       annotations: { title: 'Get Top Queries', readOnlyHint: true },
     },
-    ({ sort_by, limit }) => getTopQueries(accessMode, sort_by, limit)
+    ({ database, sort_by, limit }) => onDatabase(database, (sqlDriver) => getTopQueries(sqlDriver, sort_by, limit))
   );
 
   // execute_sql is described according to the access mode
   const executeSqlConfig =
-    accessMode === AccessMode.UNRESTRICTED
+    registry.accessMode === AccessMode.UNRESTRICTED
       ? {
           description: 'Execute any SQL query',
           annotations: { title: 'Execute SQL', destructiveHint: true },
@@ -607,10 +623,29 @@ export function createServer(accessMode: AccessMode): McpServer {
     {
       ...executeSqlConfig,
       inputSchema: {
+        database: databaseSchema,
         sql: z.string().default('all').describe('SQL to run'),
       },
     },
-    ({ sql }) => executeSql(accessMode, sql)
+    ({ database, sql }) => onDatabase(database, (sqlDriver) => executeSql(sqlDriver, sql))
+  );
+
+  server.registerTool(
+    'list_databases',
+    {
+      description:
+        'List the databases this server can query, with the state of each connection pool and any configuration errors.',
+      inputSchema: {},
+      annotations: { title: 'List Databases', readOnlyHint: true },
+    },
+    async () => {
+      try {
+        return formatTextResponse(toJson(await registry.list()));
+      } catch (error) {
+        log('ERROR', `Error listing databases: ${errorMessage(error)}`);
+        return formatError(errorMessage(error));
+      }
+    }
   );
 
   return server;
@@ -755,20 +790,20 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function runStdio(createMcpServer: ServerFactory): Promise<void> {
+async function runStdio(createMcpServer: ServerFactory, onClientGone: () => void): Promise<void> {
   const server = createMcpServer();
   let closing = false;
-  const onClientGone = () => {
+  const handleClientGone = () => {
     if (closing) {
       return;
     }
     closing = true;
-    void shutdown();
+    onClientGone();
   };
   // StdioServerTransport does not report stdin EOF through onclose.
-  server.server.onclose = onClientGone;
-  process.stdin.once('end', onClientGone);
-  process.stdin.once('close', onClientGone);
+  server.server.onclose = handleClientGone;
+  process.stdin.once('end', handleClientGone);
+  process.stdin.once('close', handleClientGone);
   await server.connect(new StdioServerTransport());
 }
 
@@ -969,120 +1004,10 @@ async function runStreamableHttp(createMcpServer: ServerFactory, host: string, p
 /** Replaceable seams so tests can observe which transport ran. */
 export const runners = { runStdio, runSse, runStreamableHttp };
 
-export interface CliOptions {
-  accessMode: AccessMode;
-  databaseUrl: string | undefined;
-  sseHost: string;
-  ssePort: number;
-  streamableHttpHost: string;
-  streamableHttpPort: number;
-  transport: Transport;
-}
-
-export class CliError extends Error {}
-
-const PROG = 'postgres-mcp';
-const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
-                    [--transport {${TRANSPORTS.join(',')}}]
-                    [--sse-host SSE_HOST] [--sse-port SSE_PORT]
-                    [--streamable-http-host STREAMABLE_HTTP_HOST]
-                    [--streamable-http-port STREAMABLE_HTTP_PORT]
-                    [database_url]`;
-
-const HELP = `${USAGE}
-
-PostgreSQL MCP Server
-
-positional arguments:
-  database_url          Database connection URL
-
-options:
-  -h, --help            show this help message and exit
-  --access-mode {${ACCESS_MODES.join(',')}}
-                        Set SQL access mode: unrestricted (unrestricted) or
-                        restricted (read-only with protections)
-  --transport {${TRANSPORTS.join(',')}}
-                        Select MCP transport: stdio (default), sse, or
-                        streamable-http
-  --sse-host SSE_HOST   Host to bind SSE server to (default: localhost)
-  --sse-port SSE_PORT   Port for SSE server (default: 8000)
-  --streamable-http-host STREAMABLE_HTTP_HOST
-                        Host to bind streamable HTTP server to (default:
-                        localhost)
-  --streamable-http-port STREAMABLE_HTTP_PORT
-                        Port for streamable HTTP server (default: 8000)
-`;
-
-function choice<T extends string>(flag: string, value: string | undefined, choices: readonly T[], fallback: T): T {
-  if (value === undefined) {
-    return fallback;
-  }
-  const match = choices.find((item) => item === value);
-  if (!match) {
-    throw new CliError(
-      `argument ${flag}: invalid choice: '${value}' (choose from ${choices.map((c) => `'${c}'`).join(', ')})`
-    );
-  }
-  return match;
-}
-
-const INT_PATTERN = /^[+-]?\d+$/u;
-
-function parsePort(flag: string, value: string | undefined): number {
-  if (value === undefined) {
-    return 8000;
-  }
-  if (!INT_PATTERN.test(value.trim())) {
-    throw new CliError(`argument ${flag}: invalid int value: '${value}'`);
-  }
-  return Number.parseInt(value, 10);
-}
-
-function parseRaw(argv: string[]) {
-  try {
-    return parseArgs({
-      args: argv,
-      allowPositionals: true,
-      options: {
-        help: { type: 'boolean', short: 'h' },
-        'access-mode': { type: 'string' },
-        transport: { type: 'string' },
-        'sse-host': { type: 'string' },
-        'sse-port': { type: 'string' },
-        'streamable-http-host': { type: 'string' },
-        'streamable-http-port': { type: 'string' },
-      },
-    });
-  } catch (error) {
-    throw new CliError(errorMessage(error), { cause: error });
-  }
-}
-
-/** Parse the command line; returns null when help was requested. */
-export function parseCli(argv: string[]): CliOptions | null {
-  const { values, positionals } = parseRaw(argv);
-  if (values.help) {
-    return null;
-  }
-  if (positionals.length > 1) {
-    throw new CliError(`unrecognized arguments: ${positionals.slice(1).join(' ')}`);
-  }
-
-  return {
-    databaseUrl: positionals[0],
-    accessMode: choice('--access-mode', values['access-mode'], ACCESS_MODES, AccessMode.UNRESTRICTED),
-    transport: choice('--transport', values.transport, TRANSPORTS, 'stdio'),
-    sseHost: values['sse-host'] ?? 'localhost',
-    ssePort: parsePort('--sse-port', values['sse-port']),
-    streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
-    streamableHttpPort: parsePort('--streamable-http-port', values['streamable-http-port']),
-  };
-}
-
 let shutdownInProgress = false;
 
 /** Clean shutdown of the server. */
-export async function shutdown(signal?: NodeJS.Signals): Promise<void> {
+export async function shutdown(registry: DatabaseRegistry, signal?: NodeJS.Signals): Promise<void> {
   if (shutdownInProgress) {
     log('WARNING', 'Forcing immediate exit');
     process.exit(1);
@@ -1094,7 +1019,7 @@ export async function shutdown(signal?: NodeJS.Signals): Promise<void> {
   }
 
   try {
-    await dbConnection.close();
+    await registry.closeAll();
     log('INFO', 'Closed database connections');
   } catch (error) {
     log('ERROR', `Error closing database connections: ${errorMessage(error)}`);
@@ -1103,60 +1028,45 @@ export async function shutdown(signal?: NodeJS.Signals): Promise<void> {
   process.exit(signal ? 128 + (osConstants.signals[signal] ?? 0) : 0);
 }
 
-let signalHandlersInstalled = false;
+const SHUTDOWN_SIGNALS = ['SIGTERM', 'SIGINT'] as const;
+let removeSignalHandlers: (() => void) | null = null;
 
-function installSignalHandlers(): void {
-  if (signalHandlersInstalled) {
-    return;
+/** Route SIGTERM/SIGINT to this registry's shutdown, replacing handlers from an earlier `main` call. */
+function installSignalHandlers(registry: DatabaseRegistry): void {
+  removeSignalHandlers?.();
+  const handler = (signal: NodeJS.Signals) => {
+    void shutdown(registry, signal);
+  };
+  for (const signal of SHUTDOWN_SIGNALS) {
+    process.on(signal, handler);
   }
-  signalHandlersInstalled = true;
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-    process.on(signal, () => {
-      void shutdown(signal);
-    });
-  }
+  removeSignalHandlers = () => {
+    for (const signal of SHUTDOWN_SIGNALS) {
+      process.off(signal, handler);
+    }
+  };
 }
 
 export async function main(argv: string[]): Promise<void> {
-  let options: CliOptions | null;
-  try {
-    options = parseCli(argv);
-  } catch (error) {
-    if (!(error instanceof CliError)) {
-      throw error;
-    }
-    process.stderr.write(`${USAGE}\n${PROG}: error: ${error.message}\n`);
-    process.exit(2);
-  }
+  const options = exitOnCliError(() => parseCli(argv));
   if (options === null) {
     process.stdout.write(HELP);
     process.exit(0);
   }
 
-  const { accessMode } = options;
-  log('INFO', `Starting PostgreSQL MCP Server in ${accessMode.toUpperCase()} mode`);
+  const resolved = exitOnCliError(() => resolveConfig(options, process.env, (path) => readFileSync(path, 'utf-8')));
 
-  // Get database URL from environment variable or command line
-  const databaseUrl = process.env.DATABASE_URI ?? options.databaseUrl;
-  if (!databaseUrl) {
-    throw new Error(
-      "Error: No database URL provided. Please specify via 'DATABASE_URI' environment variable or command-line argument."
-    );
-  }
+  const registry = new DatabaseRegistry({
+    ...resolved,
+    getSqlDriver: (mode, conn) => deps.getSqlDriver(mode, conn),
+  });
+  const { accessMode } = registry;
+  log(
+    'INFO',
+    `Starting PostgreSQL MCP Server in ${accessMode.toUpperCase()} mode with ${resolved.databases.length} configured database(s) and ${resolved.servers.length} server(s)`
+  );
 
-  // Initialize database connection pool
-  try {
-    await dbConnection.poolConnect(databaseUrl);
-    log('INFO', 'Successfully connected to database and initialized connection pool');
-  } catch (error) {
-    log('WARNING', `Could not connect to database: ${obfuscatePassword(errorMessage(error))}`);
-    log(
-      'WARNING',
-      'The MCP server will start but database operations will fail until a valid connection is established.'
-    );
-  }
-
-  installSignalHandlers();
+  installSignalHandlers(registry);
 
   if (options.transport === 'sse') {
     warnIfExposed(options.sseHost, accessMode);
@@ -1164,10 +1074,12 @@ export async function main(argv: string[]): Promise<void> {
     warnIfExposed(options.streamableHttpHost, accessMode);
   }
 
-  const factory = () => createServer(accessMode);
+  const factory = () => createServer(registry);
   switch (options.transport) {
     case 'stdio': {
-      await runners.runStdio(factory);
+      await runners.runStdio(factory, () => {
+        void shutdown(registry);
+      });
       break;
     }
     case 'sse': {

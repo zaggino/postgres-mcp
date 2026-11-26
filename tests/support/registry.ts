@@ -1,0 +1,45 @@
+import { DatabaseRegistry } from '../../src/database-registry.ts';
+import type { ExplicitDatabase, RegistryOptions } from '../../src/database-registry.ts';
+import { deps } from '../../src/server.ts';
+import { AccessMode } from '../../src/sql/driver-factory.ts';
+import type { QueryHandler } from './fake-pool.ts';
+import { createFakePool } from './fake-pool.ts';
+
+export type FakePool = ReturnType<typeof createFakePool>;
+
+/**
+ * A registry over explicitly named databases whose pools are fakes, created on first use.
+ * `fakes` holds one entry per database that has actually been connected to.
+ */
+export function createTestRegistry(
+  names: string[],
+  options: {
+    accessMode?: AccessMode;
+    handler?: QueryHandler;
+    servers?: RegistryOptions['servers'];
+    /** Extra entries, e.g. one whose URI failed to resolve. */
+    databases?: ExplicitDatabase[];
+  } = {}
+) {
+  const fakes = new Map<string, FakePool>();
+  const registry = new DatabaseRegistry({
+    accessMode: options.accessMode ?? AccessMode.UNRESTRICTED,
+    idleMinutes: 0,
+    databases: [
+      ...names.map((name): ExplicitDatabase => ({
+        name,
+        source: 'cli',
+        uri: { uri: `postgresql://u:p@h:5432/${name}` },
+      })),
+      ...(options.databases ?? []),
+    ],
+    servers: options.servers ?? [],
+    getSqlDriver: (mode, conn) => deps.getSqlDriver(mode, conn),
+    poolFactory: (url) => {
+      const fake = createFakePool(options.handler);
+      fakes.set(decodeURIComponent(new URL(url).pathname.slice(1)), fake);
+      return fake.pool;
+    },
+  });
+  return { registry, fakes };
+}

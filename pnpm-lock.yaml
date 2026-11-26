@@ -9,47 +9,47 @@ importers:
   .:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.32
+        specifier: 1.32.2
         version: 1.32.2(zod@4.6.7)
       diff:
-        specifier: ^9
+        specifier: 9.0.0
         version: 9.0.0
       libpg-query:
-        specifier: ^18.2
+        specifier: 18.2.5
         version: 18.2.5
       pg:
-        specifier: ^8.23
+        specifier: 8.23.1
         version: 8.23.1
       zod:
-        specifier: ^4
+        specifier: 4.6.7
         version: 4.6.7
     devDependencies:
       '@types/node':
-        specifier: ^26
+        specifier: 26.6.10
         version: 26.6.10
       '@types/pg':
-        specifier: ^8
+        specifier: 8.23.1
         version: 8.23.1
       oxfmt:
-        specifier: ^0.80.0
+        specifier: 0.80.0
         version: 0.80.0
       oxlint:
-        specifier: ^1.95.0
+        specifier: 1.95.0
         version: 1.95.0
       testcontainers:
-        specifier: ^12
+        specifier: 12.2.2
         version: 12.2.2(bare-buffer@3.7.3)
       tsdown:
-        specifier: ^0.23
+        specifier: 0.23.7
         version: 0.23.7(typescript@7.0.2)
       typescript:
-        specifier: ~7.0
+        specifier: 7.0.2
         version: 7.0.2
       ultracite:
-        specifier: ^8
+        specifier: 8.3.1
         version: 8.3.1(oxfmt@0.80.0)(oxlint@1.95.0)
       vitest:
-        specifier: ^5
+        specifier: 5.1.1
         version: 5.1.1(@types/node@26.6.10)(vite@8.3.8(@types/node@26.6.10)(yaml@2.9.1))
 
 packages:

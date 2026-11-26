@@ -30,7 +30,7 @@ Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-
 
 `src/sql/bind-params.ts` matches `kind === "AEXPR_OP"` before visiting a subselect on the right-hand side; the upstream comment describes the `IN` case, which is `AEXPR_IN`. Behaviour is kept from upstream, so `IN (SELECT ...)` is not handled as intended.
 
-## 2026-11-26 · Minor · Cleanup · `execute_sql`'s `sql` parameter defaults to `"all"`
+## 2026-11-26 · Minor · Bug · `execute_sql`'s `sql` parameter defaults to `"all"`
 
 The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so a call without it sends `all` to the database and returns a syntax error. The parameter should be required.
 
@@ -38,7 +38,7 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
 
-## 2026-11-26 · Minor · Chore · `devenv.lock` not regenerated after removing Python from `devenv.nix`
+## 2026-11-26 · Minor · Tooling · `devenv.lock` not regenerated after removing Python from `devenv.nix`
 
 `devenv.lock` still pins inputs from the Python-based setup. Run `devenv update` to regenerate it.
 
@@ -62,7 +62,7 @@ Rows in `src/sql/sql-driver.ts` are `Record<string, unknown>`, so `SELECT 1 AS a
 
 `SafeSqlDriver` in `src/sql/safe-sql.ts` finds no statements to reject in an empty or comment-only query and sends it to the database.
 
-## 2026-11-26 · Minor · Cleanup · Node allowlist contains planner-only node types
+## 2026-11-26 · Minor · Refactor · Node allowlist contains planner-only node types
 
 The node allowlist in `src/sql/allowlists.ts` includes types that appear only in planned or analysed trees, never in a raw parse tree from `libpg-query`. They are dead entries and obscure what is actually allowed.
 
@@ -70,7 +70,7 @@ The node allowlist in `src/sql/allowlists.ts` includes types that appear only in
 
 `executeWithClient` in `src/sql/sql-driver.ts` wraps every query in `BEGIN`/`COMMIT`, so `CREATE INDEX CONCURRENTLY`, `VACUUM` and similar fail. Upstream behaves the same through its implicit psycopg transaction.
 
-## 2026-11-26 · Minor · Cleanup · GROUP BY branch in the bind-parameter collector is dead
+## 2026-11-26 · Minor · Refactor · GROUP BY branch in the bind-parameter collector is dead
 
 `src/sql/bind-params.ts` checks `SortGroupClause` for GROUP BY items. That node type never occurs in a raw parse tree, so the branch never runs and grouped columns are collected by other paths only.
 
@@ -114,7 +114,7 @@ Statistics values in `src/sql/bind-params.ts` pass through `number`, so very lar
 
 The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so `ExplainPlanArtifact` in `src/artifacts.ts` cannot be created from it.
 
-## 2026-11-26 · Minor · Cleanup · Plan diff hunks can differ from upstream
+## 2026-11-26 · Minor · Other · Plan diff hunks can differ from upstream
 
 `src/artifacts.ts` uses `diff` (jsdiff) where upstream used `difflib`. Both produce valid diffs, but hunk alignment can differ, so output is not byte-identical to upstream.
 
@@ -134,7 +134,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 `TopQueriesCalc.getTopResourceQueries` in `src/top-queries/top-queries-calc.ts` writes the threshold into the query string. Current callers pass a number, but it should be a bound parameter.
 
-## 2026-11-26 · Minor · Cleanup · Error message prefix is missing a word
+## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
 
 `src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant. The text is kept from upstream.
 
@@ -150,7 +150,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 `src/index/presentation.ts` rebuilds recommendations as fresh objects without `potentialProblematicReason` or the size, so the long-text warning set in `src/index/dta-calc.ts` never reaches the output.
 
-## 2026-11-26 · Minor · Cleanup · Seed-column handling in the advisor is partly dead
+## 2026-11-26 · Minor · Refactor · Seed-column handling in the advisor is partly dead
 
 `seedColumnsCount` and `minColumnUsage` in `src/index/dta-calc.ts` are only partly used because the seed pass is commented out upstream.
 
@@ -158,7 +158,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` processes the quals of top-level `JoinExpr` items only, so index candidates from nested joins are missed.
 
-## 2026-11-26 · Minor · Cleanup · `workload` argument of `analyze_workload` is unused
+## 2026-11-26 · Minor · Refactor · `workload` argument of `analyze_workload` is unused
 
 `TextPresentation` in `src/index/presentation.ts` accepts the workload but never uses it.
 
@@ -178,7 +178,7 @@ Costs and sizes are formatted with `toFixed` (for example in `src/index/index-op
 
 The zod schema in `src/server.ts` accepts only an array, while the Python tool accepted `None`. Clients that send `null` get a validation error.
 
-## 2026-11-26 · Minor · Chore · `SERVER_VERSION` is hard-coded
+## 2026-11-26 · Minor · Tooling · `SERVER_VERSION` is hard-coded
 
 `SERVER_VERSION` in `src/server.ts` duplicates `package.json` and can drift from it. Read it from `package.json` at build time.
 
@@ -214,11 +214,11 @@ Error messages returned to the client and written to stderr include the full SQL
 
 `SqlDriver.executeQuery` in `src/sql/sql-driver.ts` calls `client.release(true)` after any failure, so a user's syntax error discards a healthy connection.
 
-## 2026-11-26 · Minor · Cleanup · `ALLOWED_EXTENSIONS` is unreachable in restricted mode
+## 2026-11-26 · Minor · Refactor · `ALLOWED_EXTENSIONS` is unreachable in restricted mode
 
 `CREATE EXTENSION` cannot run in a read-only transaction, so the allowlist in `src/sql/allowlists.ts` never takes effect. Trim it or document why it stays.
 
-## 2026-11-26 · Minor · Chore · Index advisor integration tests can mask a regression
+## 2026-11-26 · Minor · Tests · Index advisor integration tests can mask a regression
 
 `tests/integration/dta-calc.test.ts` skips when no recommendation is produced and retries twice, so a regression that stops recommendations can pass.
 
@@ -226,22 +226,22 @@ Error messages returned to the client and written to stderr include the full SQL
 
 `src/database-health/sequence-health-calc.ts` computes the maximum value of every sequence as if it were `bigint`, so `smallint` sequences are never reported as near exhaustion.
 
-## 2026-11-26 · Major · Cleanup · Split `src/server.ts`
+## 2026-11-26 · Major · Refactor · Split `src/server.ts`
 
 `src/server.ts` is about 1,200 lines and holds the tool handlers, tool registration, HTTP plumbing for three transports, CLI parsing, and startup and shutdown. Split it into `src/cli.ts`, `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable test seams (`deps`, `runners`, `dbConnection`) with parameters, for example `createServer(accessMode, getDriver)`. The nine tool handlers repeat one try/catch envelope that a single wrapper would cover.
 
-## 2026-11-26 · Major · Cleanup · `ConditionColumnCollector` inherits from a class it does not use
+## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
 
-## 2026-11-26 · Major · Cleanup · Cross-cutting helpers are redeclared per module
+## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
 
 `errorMessage` is defined in six modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. Give each one home (`src/log.ts`, `src/errors.ts`, `src/py-format.ts`) while keeping stderr output unchanged.
 
-## 2026-11-26 · Major · Cleanup · AST struct-shape table lives in the security allowlist file
+## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
 `STRUCT_FIELD_TYPES` in `src/sql/allowlists.ts` describes parse-tree shape, not policy, and `src/sql/pg-ast.ts` imports it from there. Move it next to the parser, add `IndexStmt.relation`, and expose one value classifier that both the visitor traversal (`pg-ast.ts`) and the validator (`src/sql/safe-sql.ts`) use, so the two walkers cannot disagree.
 
-## 2026-11-26 · Minor · Cleanup · Python-shaped data contracts
+## 2026-11-26 · Minor · Refactor · Python-shaped data contracts
 
 `RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.

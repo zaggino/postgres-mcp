@@ -25,18 +25,6 @@ in
     corepack.enable = true;
   };
 
-  languages.python = {
-    enable = true;
-    # version = "3.12";
-    uv = {
-      enable = true;
-      sync = {
-        enable = true;
-        allExtras = true;
-      };
-    };
-  };
-
   dotenv.enable = true;
 
   # https://devenv.sh/processes/
@@ -62,7 +50,7 @@ in
 
   enterShell = ''
     hello
-    echo "Crystal DBA Agent Development Environment"
+    echo "postgres-mcp Development Environment"
   '';
 
   # https://devenv.sh/tasks/

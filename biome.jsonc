@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core", "ultracite/biome/vitest"],
+  "files": {
+    "includes": [
+      "!dist",
+      "!src/postgres_mcp",
+      "!tests/**/*.py",
+      "!.mypy_cache",
+      "!.venv",
+      "!.claude",
+      "!**/*.md",
+      "!.github",
+      "!examples",
+      "!assets"
+    ]
+  }
+}

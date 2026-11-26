@@ -1,0 +1,53 @@
+{
+  "name": "@zaggino/postgres-mcp",
+  "version": "0.4.0",
+  "description": "PostgreSQL MCP server with index tuning, explain plans, health checks and safe SQL execution",
+  "homepage": "https://github.com/zaggino/postgres-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/zaggino/postgres-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zaggino/postgres-mcp.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "postgres-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "test:integration": "vitest run --project integration",
+    "test:unit": "vitest run --project unit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32",
+    "diff": "^9",
+    "libpg-query": "^18.2",
+    "pg": "^8.23",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2",
+    "@types/node": "^26",
+    "@types/pg": "^8",
+    "testcontainers": "^12",
+    "tsdown": "^0.23",
+    "typescript": "~7.0",
+    "ultracite": "^8",
+    "vitest": "^5"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=26"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

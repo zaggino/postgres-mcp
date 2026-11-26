@@ -2,6 +2,72 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
+## 2026-11-26 · Major · Tooling · Linting is not type-aware
+
+`oxlint.config.ts` runs the syntax-only rules. Setting `options.typeAware: true` with the `oxlint-tsgolint` engine (as in `zaggino/z-schema`) adds the rules that need types, such as floating promises and unsafe `any` flows, which matter most in an async server. The number of findings is unknown until it is switched on, so do it as its own change.
+
+## 2026-11-26 · Major · Infra · Releases are tagged by hand and there is no changelog
+
+The version in `package.json` is bumped manually and `.github/workflows/publish.yml` runs on a pushed `v*` tag, only checking that the tag matches. Release-please (as in `zaggino/z-schema`) would produce the version bump, `CHANGELOG.md`, tag and GitHub release from the Conventional Commits history. It needs a personal access token stored as a secret of a `main` environment. Set it up before the first npm publish so the changelog starts at the first release.
+
+## 2026-11-26 · Major · Security · The publish job installs dependencies while holding the npm credentials
+
+The single job in `.github/workflows/publish.yml` runs `pnpm install`, the checks and the build with `NPM_TOKEN` and `id-token: write` available, so a compromised dependency's install script could publish. Split it: a read-only job builds, tests and packs the tarball; a second job with `id-token: write` downloads the tarball and publishes it with `--ignore-scripts`, with no checkout and no install. Switch to npm trusted publishing (OIDC) and drop the `NPM_TOKEN` secret; the first publish may still have to be manual, because a trusted publisher is configured on an existing package.
+
+## 2026-11-26 · Minor · Security · GitHub Actions are referenced by tag, not by commit
+
+`.github/workflows/build.yml` and `publish.yml` use `actions/checkout@v7`, `pnpm/action-setup@v6` and `actions/setup-node@v7`. A moved tag would run different code with the workflow's permissions. Pin each action to a commit sha with the version in a trailing comment.
+
+## 2026-11-26 · Minor · Dependencies · Dependabot does not cover GitHub Actions and has no cooldown
+
+`.github/dependabot.yml` only has the `npm` ecosystem. Add the `github-actions` ecosystem (needed once actions are pinned by sha) and `cooldown: default-days: 7` on both, so a freshly published version is not proposed before it has had a week to be found malicious. Keep the single grouped npm PR.
+
+## 2026-11-26 · Minor · Tooling · No git hooks run the checks before commit or push
+
+Nothing stops an unformatted or failing commit from being pushed; CI is the first check. Add lefthook (installed through a `prepare` script): oxlint and oxfmt on pre-commit, build and typecheck on pre-push.
+
+## 2026-11-26 · Minor · Tooling · No `.gitattributes` to fix line endings
+
+The repository is developed on Windows and has no `.gitattributes`, so line endings depend on each clone's `core.autocrlf`. Add `* text=auto eol=lf`.
+
+## 2026-11-26 · Minor · Docs · No security policy or contribution templates
+
+There is no `SECURITY.md`, although the server executes SQL and restricted mode is a security boundary people will test; reporters have no private channel named. Add it, pointing to GitHub's private vulnerability reporting. `CODEOWNERS`, a pull request template and issue templates are optional additions in the same change.
+
+## 2026-11-26 · Minor · Tooling · `package.json` has no keywords and engines are not enforced on install
+
+`package.json` has no `keywords`, which npm search uses. `engines.node` is `>=26` but pnpm only warns on a mismatch; `engineStrict: true` in `pnpm-workspace.yaml` makes the install fail instead.
+
+## 2026-11-26 · Major · Feature · A cancelled or long-running tool call cannot be stopped
+
+The server ignores the client's `notifications/cancelled`, and unrestricted mode has no call timeout at all, so a statement runs in postgres to its end. `zaggino/lazy-pg-mcp` works around this from outside by removing the backend and terminating its sessions. Do it in the server: cancel the running statement when the tool call's abort signal fires, and add a configurable call timeout that applies in both access modes. The restricted-mode side (the 30 s timeout that leaves the statement running) is the entry "Restricted-mode timeout is client-side only"; fix the two together.
+
+## 2026-11-26 · Major · Feature · One server process serves only one database
+
+Each database needs its own server process, which is why `zaggino/lazy-pg-mcp` exists as a proxy in front of many of them. A native multi-database mode would take several named database URLs, open a pool on the first call to a database and close it after an idle period, add a required `database` argument to every tool and offer a `list_databases` tool with each pool's state. It must be opt-in: with a single database the tool schemas stay identical to upstream (`tests/unit/server-surface.test.ts`). This is the largest divergence from upstream so far and needs a decision before work starts.
+
+## 2026-11-26 · Minor · Feature · The server sends no `instructions` at initialize
+
+`createServer` in `src/server.ts` sets no server instructions, so a model has no guidance on the server's behaviour. Add a short text: the access mode in effect, that a result starting with `Error:` comes from the query and not from the server, what to check when the database cannot be reached, and where to report a server bug.
+
+## 2026-11-26 · Minor · Observability · Connections carry no `application_name`
+
+The pool in `src/sql/sql-driver.ts` sets no `application_name`, so the server's sessions cannot be told apart in `pg_stat_activity`. Default it to `postgres-mcp` when neither the URL nor `PGAPPNAME` sets one. Cancelling a call's statement (see "A cancelled or long-running tool call cannot be stopped") may also need it to find the sessions.
+
+## 2026-11-26 · Minor · Bug · Shutdown does not cover SIGHUP or a closed stdout
+
+`src/server.ts` installs handlers for SIGTERM and SIGINT and reacts to stdin closing, but not to SIGHUP. Whether a reply written after the client closed stdout (EPIPE) ends the process without closing the pool has not been checked; `zaggino/lazy-pg-mcp` records that failure for itself. Handle SIGHUP, and route a stdout `error` through `shutdown()` if the check shows the problem.
+
+## 2026-11-26 · Major · Bug · An unreachable database is reported as a query timeout in restricted mode
+
+`SafeSqlDriver.runWithTimeout` in `src/sql/safe-sql.ts` starts its 30 s timer before `SqlDriver.executeQuery` connects, so the timer also covers `poolConnect()` and `pool.connect()`. The pool's connection timeout in `src/sql/sql-driver.ts` is 30 s as well. When the database host does not answer, the query timer wins the race and the caller gets `Query execution timed out after 30 seconds in restricted mode. Consider simplifying your query or increasing the timeout.`, which points at the query although no statement ran; the connection error is lost. Found by reading the code, not reproduced; `zaggino/lazy-pg-mcp` records the same symptom for upstream 0.3.0. A refused connection fails at once and is not affected, and unrestricted mode has no query timer.
+
+The two cases must be told apart: a database that cannot be reached returns a connection error that names the cause, and only a statement that was sent and ran too long returns the query timeout. Start the query timer once a connection is held, and give connecting its own, shorter timeout.
+
+## 2026-11-26 · Minor · Docs · `AGENTS.md` lacks two rules that `zaggino/lazy-pg-mcp` has
+
+Its agent instructions require the file itself to be updated in the same change that makes a statement in it wrong, and a lesson to be recorded for any non-obvious pitfall, not only after a correction from the user. Its tests follow "one test file per behaviour". Decide which of these to adopt in `AGENTS.md`.
+
 ## 2026-11-26 · Major · Bug · Connection pool is invalidated after any query error
 
 `SqlDriver` in `src/sql/sql-driver.ts` calls `markInvalid` on any failure, including a user's syntax error, so the next call reconnects the whole pool. Only connection-level failures should invalidate it.

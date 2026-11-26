@@ -366,7 +366,7 @@ The two modes sit at opposite ends of the convenience and safety spectrum:
 
 ## Development
 
-Requirements: Node.js 26+ and pnpm 11.
+Requirements: Node.js 26+ and pnpm 12.
 
 ```bash
 git clone https://github.com/zaggino/postgres-mcp.git

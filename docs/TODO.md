@@ -2,26 +2,6 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
-## 2026-11-26 · Minor · Dependencies · Dependabot does not cover GitHub Actions and has no cooldown
-
-`.github/dependabot.yml` only has the `npm` ecosystem. Add the `github-actions` ecosystem (needed once actions are pinned by sha) and `cooldown: default-days: 7` on both, so a freshly published version is not proposed before it has had a week to be found malicious. Keep the single grouped npm PR.
-
-## 2026-11-26 · Minor · Tooling · No git hooks run the checks before commit or push
-
-Nothing stops an unformatted or failing commit from being pushed; CI is the first check. Add lefthook (installed through a `prepare` script): oxlint and oxfmt on pre-commit, build and typecheck on pre-push.
-
-## 2026-11-26 · Minor · Tooling · No `.gitattributes` to fix line endings
-
-The repository is developed on Windows and has no `.gitattributes`, so line endings depend on each clone's `core.autocrlf`. Add `* text=auto eol=lf`.
-
-## 2026-11-26 · Minor · Docs · No security policy or contribution templates
-
-There is no `SECURITY.md`, although the server executes SQL and restricted mode is a security boundary people will test; reporters have no private channel named. Add it, pointing to GitHub's private vulnerability reporting. `CODEOWNERS`, a pull request template and issue templates are optional additions in the same change.
-
-## 2026-11-26 · Minor · Tooling · `package.json` has no keywords and engines are not enforced on install
-
-`package.json` has no `keywords`, which npm search uses. `engines.node` is `>=26` but pnpm only warns on a mismatch; `engineStrict: true` in `pnpm-workspace.yaml` makes the install fail instead.
-
 ## 2026-11-26 · Major · Feature · A cancelled or long-running tool call cannot be stopped
 
 The server ignores the client's `notifications/cancelled`, and unrestricted mode has no call timeout at all, so a statement runs in postgres to its end. `zaggino/lazy-pg-mcp` works around this from outside by removing the backend and terminating its sessions. Do it in the server: cancel the running statement when the tool call's abort signal fires, and add a configurable call timeout that applies in both access modes. The restricted-mode side (the 30 s timeout that leaves the statement running) is the entry "Restricted-mode timeout is client-side only"; fix the two together.

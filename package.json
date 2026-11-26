@@ -2,6 +2,17 @@
   "name": "@zaggino/postgres-mcp",
   "version": "0.4.0",
   "description": "PostgreSQL MCP server with index tuning, explain plans, health checks and safe SQL execution",
+  "keywords": [
+    "database-health",
+    "explain",
+    "index-tuning",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "postgres",
+    "postgresql",
+    "sql"
+  ],
   "homepage": "https://github.com/zaggino/postgres-mcp#readme",
   "bugs": {
     "url": "https://github.com/zaggino/postgres-mcp/issues"
@@ -26,6 +37,7 @@
     "check": "ultracite check",
     "fix": "ultracite fix",
     "prepack": "pnpm build",
+    "prepare": "lefthook install",
     "test:integration": "vitest run --project integration",
     "test:unit": "vitest run --project unit",
     "typecheck": "tsc --noEmit"
@@ -40,6 +52,7 @@
   "devDependencies": {
     "@types/node": "26.6.10",
     "@types/pg": "8.23.1",
+    "lefthook": "2.2.2",
     "oxfmt": "0.80.0",
     "oxlint": "1.95.0",
     "oxlint-tsgolint": "7.0.2008",

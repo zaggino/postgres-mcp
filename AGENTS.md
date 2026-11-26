@@ -85,5 +85,3 @@ Do not record trivial items (cosmetic wording, speculative polish). Do not group
 ## Lessons learned
 
 When the user corrects a mistake you made — about this codebase, their preferences, or a general technical point — append one line to this section before continuing the task. Write it as a rule for future work, not as an account of what happened.
-
-- Feature work in this repo ends in a pull request: ask before planning whether it goes to a PR rather than defaulting to leaving changes uncommitted, and put deferred review findings to the user as questions instead of listing them in the summary.

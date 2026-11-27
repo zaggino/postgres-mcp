@@ -1,3 +1,5 @@
+import { errorMessage } from '../errors.ts';
+import { logLine } from '../log.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { BufferHealthCalc } from './buffer-health-calc.ts';
 import { ConnectionHealthCalc } from './connection-health-calc.ts';
@@ -103,8 +105,8 @@ export class DatabaseHealthTool {
 
       return result || 'No health checks were performed.';
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`Error calculating database health: ${message}\n`);
+      const message = errorMessage(error);
+      logLine(`Error calculating database health: ${message}`);
       return `Error calculating database health: ${message}`;
     }
   }

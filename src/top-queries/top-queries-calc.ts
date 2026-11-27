@@ -1,3 +1,5 @@
+import { errorMessage } from '../errors.ts';
+import { logLine } from '../log.ts';
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -59,10 +61,6 @@ function getPgStatStatementsColumns(pgVersion: number): PgStatStatementsColumns 
   };
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function rowsToJson(rows: readonly Record<string, unknown>[]): string {
   return JSON.stringify(rows, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
 }
@@ -84,7 +82,7 @@ export class TopQueriesCalc {
       const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
 
       if (!extensionStatus.isInstalled) {
-        process.stderr.write(`Extension ${PG_STAT_STATEMENTS} is not installed\n`);
+        logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
         // Return installation instructions if the extension is not installed
         return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
       }
@@ -116,7 +114,7 @@ export class TopQueriesCalc {
       return `Top ${slowQueries.length} slowest queries by ${criteria}:\n${rowsToJson(slowQueries)}`;
     } catch (error) {
       const message = errorMessage(error);
-      process.stderr.write(`Error getting slow queries: ${message}\n`);
+      logLine(`Error getting slow queries: ${message}`);
       return `Error getting slow queries: ${message}`;
     }
   }
@@ -130,7 +128,7 @@ export class TopQueriesCalc {
       const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
 
       if (!extensionStatus.isInstalled) {
-        process.stderr.write(`Extension ${PG_STAT_STATEMENTS} is not installed\n`);
+        logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
         // Return installation instructions if the extension is not installed
         return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
       }
@@ -197,7 +195,7 @@ export class TopQueriesCalc {
       return rowsToJson(resourceQueries);
     } catch (error) {
       const message = errorMessage(error);
-      process.stderr.write(`Error getting resource-intensive queries: ${message}\n`);
+      logLine(`Error getting resource-intensive queries: ${message}`);
       return `Error resource-intensive queries: ${message}`;
     }
   }

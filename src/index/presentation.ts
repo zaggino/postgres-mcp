@@ -1,8 +1,11 @@
 import { calculateImprovementMultiple, ExplainPlanArtifact } from '../artifacts.ts';
+import { errorMessage } from '../errors.ts';
+import { logLine } from '../log.ts';
+import { formatFixed, naturalSize } from '../py-format.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import type { IndexTuningResult } from './index-opt-base.ts';
-import { errorMessage, formatFixed, IndexTuningBase, naturalSize } from './index-opt-base.ts';
+import { IndexTuningBase } from './index-opt-base.ts';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -121,7 +124,7 @@ export class TextPresentation {
         ...langfuseTrace,
       };
     } catch (error) {
-      process.stderr.write(`Error analyzing queries: ${errorMessage(error)}\n`);
+      logLine(`Error analyzing queries: ${errorMessage(error)}`);
       return { error: `Error analyzing queries: ${errorMessage(error)}` };
     }
   }

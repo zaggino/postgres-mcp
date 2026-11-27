@@ -1,6 +1,8 @@
 import { parseArgs } from 'node:util';
 
 import { MAX_IDLE_MINUTES } from './database-registry.ts';
+import { errorMessage } from './errors.ts';
+import { logLine } from './log.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
 import { ACCESS_MODES, DEFAULT_ACCESS_MODE, MAX_STATEMENT_TIMEOUT_SECONDS } from './sql/driver-factory.ts';
 import type { AllowList, HttpServerOptions } from './transports/request-guard.ts';
@@ -11,10 +13,6 @@ export class CliError extends Error {}
 
 const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export interface CliOptions {
   accessMode: AccessMode | undefined;
@@ -283,7 +281,7 @@ export function exitOnCliError<T>(run: () => T): T {
     if (!(error instanceof CliError)) {
       throw error;
     }
-    process.stderr.write(`${USAGE}\n${PROG}: error: ${error.message}\n`);
+    logLine(`${USAGE}\n${PROG}: error: ${error.message}`);
     return process.exit(2);
   }
 }

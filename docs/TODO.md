@@ -136,7 +136,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 ## 2026-11-26 · Minor · Bug · Number formatting rounds half up instead of half to even
 
-Costs and sizes are formatted with `toFixed` (for example in `src/index/index-opt-base.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
+Costs and sizes are formatted with `toFixed` (for example in `src/py-format.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
 
 ## 2026-11-26 · Minor · Bug · Time limit is not hit immediately without `analyzeWorkload`
 
@@ -177,10 +177,6 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
-
-## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
-
-`errorMessage` is redefined in nine modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them; move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
@@ -318,3 +314,15 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 ## 2026-11-27 · Minor · Tests · Shutdown state is module-level
 
 `src/main.ts` keeps `shutdownInProgress` and `removeSignalHandlers` as module variables, so `shutdown` refuses to run twice per module load and `tests/unit/shutdown.test.ts` has to re-import `main.ts` after `vi.resetModules()` for every test. Hold that state in an object that `main` creates (and `shutdown` receives), so tests can run it without reloading the module.
+
+## 2026-11-27 · Minor · Refactor · Fork-authored stderr lines have no level prefix
+
+Some unprefixed `logLine` calls carry messages this fork added rather than text ported from upstream, for example the idle-pool close error in `src/database-registry.ts`, the cancel-request and idle-pool errors in `src/sql/sql-driver.ts`, and the fatal error in `src/index.ts`. Fork messages elsewhere use `log(level, ...)` with an `ERROR:`/`WARNING:` prefix, so stderr mixes both styles and the severity of these lines is lost. Check each `logLine` call site against upstream and move the fork-authored ones to `log(level, ...)`; that changes stderr output.
+
+## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
+
+`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN` where Python printed `inf` or `nan`. Route them through `formatFixed` after checking that each was a Python format spec upstream.
+
+## 2026-11-27 · Minor · Bug · Two bind-parameter log lines print `Error: ` before the message
+
+`src/sql/bind-params.ts` logs "Error extracting table aliases" and "Error getting column statistics" with `String(error)`, which prints the error class name before the message, where upstream's f-string printed only the message and the rest of the port uses `errorMessage` from `src/errors.ts`. Switch them to `errorMessage`; that changes stderr output.

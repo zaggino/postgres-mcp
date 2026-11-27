@@ -6,6 +6,7 @@ import type { CliOptions } from './cli.ts';
 import { CliError } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
 import { MAX_IDLE_MINUTES, NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
+import { errorMessage } from './errors.ts';
 import {
   ACCESS_MODES,
   DEFAULT_ACCESS_MODE,
@@ -57,10 +58,6 @@ function expandUri(raw: string, env: NodeJS.ProcessEnv): UriSpec {
     return value;
   });
   return missing === undefined ? { uri } : { error: `environment variable ${missing} is not set` };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function describeIssues(error: z.ZodError): string {

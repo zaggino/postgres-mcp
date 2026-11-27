@@ -1,3 +1,5 @@
+import { errorMessage } from './errors.ts';
+import { logLine } from './log.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
 import { getSqlDriver as defaultGetSqlDriver } from './sql/driver-factory.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
@@ -62,10 +64,6 @@ const DEFAULT_DATABASE = 'postgres';
 const DISCOVERY_QUERY = 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname';
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
 const REGEX_METACHARACTERS = /[.+^${}()|[\]\\]/gu;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Only host and port of the URI discovery connects with: user names and query parameters stay out of tool output.
@@ -223,7 +221,7 @@ class IdlePool {
     this.#detach()
       ?.close()
       .catch((error: unknown) => {
-        process.stderr.write(`Error closing idle connection pool: ${errorMessage(error)}\n`);
+        logLine(`Error closing idle connection pool: ${errorMessage(error)}`);
       });
   }
 

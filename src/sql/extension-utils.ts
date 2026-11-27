@@ -1,3 +1,4 @@
+import { logLine } from '../log.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
 import type { DbConnPool } from './sql-driver.ts';
@@ -41,7 +42,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
     const rows = await sqlDriver.executeQuery('SHOW server_version');
     const first = rows?.[0];
     if (!first) {
-      process.stderr.write('Could not determine PostgreSQL version\n');
+      logLine('Could not determine PostgreSQL version');
       return 0;
     }
 

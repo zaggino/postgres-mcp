@@ -3,6 +3,8 @@ import net from 'node:net';
 import type { CustomTypesConfig } from 'pg';
 import pg from 'pg';
 
+import { errorMessage } from '../errors.ts';
+import { logLine } from '../log.ts';
 import type { QueuedPool } from './connection-queue.ts';
 import { PoolClosedError, queuedPool } from './connection-queue.ts';
 
@@ -37,14 +39,6 @@ export interface PoolLike {
 }
 
 export type PoolFactory = (connectionString: string) => PoolLike;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function logError(message: string): void {
-  process.stderr.write(`${message}\n`);
-}
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -254,7 +248,7 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
     typeof backend.processID !== 'number' ||
     typeof backend.secretKey !== 'number'
   ) {
-    logError('Cannot cancel query: backend key unavailable');
+    logLine('Cannot cancel query: backend key unavailable');
     return Promise.resolve();
   }
   const { processID, secretKey } = backend;
@@ -275,7 +269,7 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
       socket.end(message);
     });
     socket.once('error', (error) => {
-      logError(`Error sending cancel request: ${error.message}`);
+      logLine(`Error sending cancel request: ${error.message}`);
       resolve();
     });
     socket.once('close', () => {
@@ -287,7 +281,7 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
 function pgPool(config: pg.PoolConfig): PoolLike {
   const pool = new pg.Pool(config);
   pool.on('error', (error) => {
-    logError(`Idle connection pool error: ${error.message}`);
+    logLine(`Idle connection pool error: ${error.message}`);
   });
   return {
     async connect() {
@@ -306,7 +300,7 @@ function pgPool(config: pg.PoolConfig): PoolLike {
           try {
             await sendCancelRequest(client);
           } catch (error) {
-            logError(`Error cancelling query: ${errorMessage(error)}`);
+            logLine(`Error cancelling query: ${errorMessage(error)}`);
           }
         },
       };
@@ -348,7 +342,7 @@ function mapExecutionError(error: unknown, { statementTimeoutSeconds, signal, qu
     queryStartedAt !== null &&
     performance.now() - queryStartedAt >= statementTimeoutSeconds * 1000
   ) {
-    logError(`Query execution timed out after ${statementTimeoutSeconds} seconds`);
+    logLine(`Query execution timed out after ${statementTimeoutSeconds} seconds`);
     return new QueryTimeoutError(statementTimeoutSeconds, { cause: error });
   }
   return error;
@@ -423,10 +417,10 @@ async function executeWithClient(
         await client.query('ROLLBACK');
       } catch (rollbackError) {
         reusable = false;
-        logError(`Error rolling back transaction: ${errorMessage(rollbackError)}`);
+        logLine(`Error rolling back transaction: ${errorMessage(rollbackError)}`);
       }
     }
-    logError(`Error executing query: ${errorMessage(error)}`);
+    logLine(`Error executing query: ${errorMessage(error)}`);
     const mapped = mapExecutionError(error, { statementTimeoutSeconds, signal, queryStartedAt });
     // Judged on the original error too: a cancel can mask a connection that died under BEGIN.
     if (
@@ -507,7 +501,7 @@ export class DbConnPool {
     this.#isValid = false;
     if (stale) {
       stale.end().catch((error: unknown) => {
-        logError(`Error closing connection pool: ${errorMessage(error)}`);
+        logLine(`Error closing connection pool: ${errorMessage(error)}`);
       });
     }
 
@@ -540,7 +534,7 @@ export class DbConnPool {
       try {
         await this.#pool.end();
       } catch (error) {
-        logError(`Error closing connection pool: ${errorMessage(error)}`);
+        logLine(`Error closing connection pool: ${errorMessage(error)}`);
       } finally {
         this.#pool = null;
         this.#isValid = false;

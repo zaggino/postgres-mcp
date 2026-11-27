@@ -306,3 +306,7 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 ## 2026-11-27 · Minor · Tests · Gaps in the cancellation and statement-timeout tests
 
 Untested: `cancel_query` in one session cannot list or cancel another session's calls; an explicit `statementTimeoutSeconds: 0` in restricted mode sends no `SET statement_timeout`; `--statement-timeout` reaches the registry and the server instructions through `main` (the config tests stop at `resolveConfig`).
+
+## 2026-11-27 · Minor · Performance · A cancelled call stays queued in the pool
+
+`SqlDriver` in `src/sql/sql-driver.ts` stops waiting for a connection as soon as a call is cancelled, but pg-pool has no way to withdraw a waiting `pool.connect()`, so the checkout stays in the pool's queue until a client frees up (and is then released at once) or the 30 s wait times out. Many cancelled calls against a full pool hold queue positions ahead of live calls. Fix by keeping our own wait queue in front of the pool, or a pool that accepts an abort signal.

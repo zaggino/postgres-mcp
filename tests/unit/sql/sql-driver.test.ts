@@ -108,6 +108,75 @@ test('a statement error whose rollback fails destroys the connection', async () 
   expect(fake.releases.at(-1)).toBe(true);
 });
 
+test('a FATAL report is connection-level by its SQLSTATE even when the severity is localized', async () => {
+  const { fake, conn, driver } = driverFor(({ text }) => {
+    if (text === 'SELECT 2') {
+      // databaseError leaves severity unset, as a check on the English word 'FATAL' would see a translated one.
+      throw databaseError('terminating connection due to administrator command', '57P01');
+    }
+    return [noRowsResult];
+  });
+
+  await expect(driver.executeQuery('SELECT 2')).rejects.toThrow('administrator command');
+
+  expect(conn.isValid).toBe(false);
+  expect(fake.releases.at(-1)).toBe(true);
+});
+
+test('a call cancelled before its statement is sent returns its connection to the pool', async () => {
+  const controller = new AbortController();
+  const fake = createFakePool(({ text }) => {
+    if (text === 'BEGIN') {
+      controller.abort();
+    }
+    return [noRowsResult];
+  });
+  const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
+  const driver = new SqlDriver({ conn, signal: controller.signal });
+
+  await expect(driver.executeQuery('SELECT 2')).rejects.toBeInstanceOf(QueryCancelledError);
+
+  expect(issued(fake)).toEqual(['BEGIN', 'ROLLBACK']);
+  expect(fake.releases.at(-1)).toBe(false);
+});
+
+test('a checkout failure is recorded without invalidating the pool, and a later cancel keeps it recorded', async () => {
+  const fake = createFakePool(({ text }) => (text === 'SELECT 2' ? fake.hang() : [noRowsResult]));
+  let checkouts = 0;
+  const pool: PoolLike = {
+    connect: () => {
+      checkouts += 1;
+      return checkouts === 2 ? Promise.reject(new Error('sorry, too many clients already')) : fake.pool.connect();
+    },
+    end: fake.end,
+  };
+  const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => pool);
+
+  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('too many clients');
+  expect(conn.isValid).toBe(true);
+  expect(conn.lastError).toBe('sorry, too many clients already');
+
+  const controller = new AbortController();
+  const cancelled = new SqlDriver({ conn, signal: controller.signal }).executeQuery('SELECT 2');
+  await expect.poll(() => fake.queries.some((q) => q.text === 'SELECT 2')).toBe(true);
+  controller.abort();
+  await expect(cancelled).rejects.toBeInstanceOf(QueryCancelledError);
+
+  expect(conn.lastError).toBe('sorry, too many clients already');
+});
+
+test('a recorded error masks every password of a connection URL it echoes', async () => {
+  const url = 'postgresql://user:first@secret@localhost/db?password=second';
+  const conn = new DbConnPool(url, () => {
+    // A message that starts with the URL takes obfuscatePassword's URL-only branch.
+    throw new Error(`${url}: connection refused`);
+  });
+
+  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
+
+  expect(conn.lastError).not.toMatch(/first|second/u);
+});
+
 test('cancelling a call that waits for a free connection rejects it at once and releases the late connection', async () => {
   const fake = createFakePool();
   let freeConnection = () => {};

@@ -2,7 +2,7 @@ import type { AccessMode } from './sql/driver-factory.ts';
 import { getSqlDriver as defaultGetSqlDriver } from './sql/driver-factory.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import type { PoolFactory } from './sql/sql-driver.ts';
-import { DbConnPool, defaultPoolFactory, obfuscatePassword } from './sql/sql-driver.ts';
+import { DbConnPool, defaultPoolFactory, maskError } from './sql/sql-driver.ts';
 
 export type UriSpec = { uri: string } | { error: string };
 
@@ -112,15 +112,6 @@ function databaseUri(serverUri: string, datname: string, name: string): UriSpec 
   return { uri: url.toString() };
 }
 
-/**
- * An error message with any password masked. An echo of `uri` itself is replaced as a whole first, because the
- * pattern-based masking can miss a password containing `@` or other unusual characters.
- */
-function maskError(error: unknown, uri: string): string {
-  const message = errorMessage(error).replaceAll(uri, String(obfuscatePassword(uri)));
-  return String(obfuscatePassword(message));
-}
-
 function globToRegExp(glob: string): RegExp {
   const pattern = glob
     .replaceAll(REGEX_METACHARACTERS, String.raw`\$&`)
@@ -175,9 +166,9 @@ class IdlePool {
     return this.#retired && this.#inFlight === 0;
   }
 
-  /** The connection-level error of the last finished call, kept after the pool closes; null after a success. */
+  /** Why the last call could not reach the database; kept from the closed pool until a new one is opened. */
   get lastError(): string | null {
-    return this.#lastError;
+    return this.#conn ? this.#conn.lastError : this.#lastError;
   }
 
   get secondsLeft(): number | null {
@@ -192,7 +183,6 @@ class IdlePool {
     try {
       return await fn(conn);
     } finally {
-      this.#lastError = conn.lastError;
       this.#inFlight -= 1;
       if (this.#inFlight === 0) {
         if (this.#retired) {
@@ -222,6 +212,9 @@ class IdlePool {
   #detach(): DbConnPool | null {
     const conn = this.#conn;
     this.#conn = null;
+    if (conn) {
+      this.#lastError = conn.lastError;
+    }
     return conn;
   }
 

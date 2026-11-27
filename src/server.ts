@@ -10,7 +10,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import pg from 'pg';
 import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
@@ -28,6 +27,7 @@ import { AccessMode } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
+import { isStatementError } from './sql/sql-driver.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 import type { HttpServerOptions } from './transports/request-guard.ts';
 import { guardRequests, LOOPBACK_HOSTS } from './transports/request-guard.ts';
@@ -55,12 +55,13 @@ function formatTextResponse(text: string): CallToolResult {
 
 /**
  * Upstream's `Error: ...` text. A failure Postgres raised for the statement keeps upstream's plain result; any other
- * failure (configuration, connection, restricted-mode rejection, timeout, argument check, internal) sets `isError`.
+ * failure (configuration, connection including a FATAL report, restricted-mode rejection, timeout, argument check,
+ * internal) sets `isError`.
  */
 function formatError(error: unknown): CallToolResult {
   const [message, cause] = error instanceof ErrorResult ? [error.toText(), error.cause] : [errorMessage(error), error];
   const result = formatTextResponse(`Error: ${message}`);
-  return cause instanceof pg.DatabaseError ? result : { ...result, isError: true };
+  return isStatementError(cause) ? result : { ...result, isError: true };
 }
 
 function cell(row: { cells: Record<string, unknown> }, name: string): unknown {

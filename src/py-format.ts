@@ -1,7 +1,7 @@
 const EXPONENT_NOTATION_BELOW = -4;
 const EXPONENT_NOTATION_FROM = 16;
 const MIN_EXPONENT_DIGITS = 2;
-const NATURAL_SIZE_SUFFIXES = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+const NATURAL_SIZE_SUFFIXES = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'] as const;
 const BYTES_BASE = 1000;
 
 /** Python's `f"{value:.{digits}f}"`, including its spelling of non-finite values. */

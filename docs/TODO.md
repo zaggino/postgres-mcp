@@ -285,7 +285,7 @@ On SSE, `POST /messages` returns 202 before the tool runs and the result travels
 
 ## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
 
-`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both.
+`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both, and would own `MAX_IDLE_MINUTES`, the `setTimeout` limit that bounds both timers and is defined next to `IdlePool` for now.
 
 ## 2026-11-27 · Minor · Refactor · Resolve each discovery server once instead of per discovery and per listing
 

@@ -135,7 +135,10 @@ export function isPostgresUrl(uri: string): boolean {
   }
 }
 
-/** The longest idle time an `IdlePool` timer can hold: setTimeout accepts at most 2^31 - 1 ms; larger values would fire at once. */
+/**
+ * The longest idle time a timer can hold (setTimeout accepts at most 2^31 - 1 ms; larger values would fire at once).
+ * It bounds both `IdlePool` here and the HTTP session timer in `src/transports/sessions.ts`.
+ */
 export const MAX_IDLE_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
 
 /** A lazily created pool that closes after it has been idle with no call in flight. */

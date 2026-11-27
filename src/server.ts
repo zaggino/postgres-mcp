@@ -8,7 +8,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import pg from 'pg';
@@ -455,40 +454,30 @@ export function createServer(registry: DatabaseRegistry): McpServer {
    * Register a tool that runs against a named database: adds the required `database` argument, tracks the call for
    * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except database access failures).
    */
-  const registerDatabaseTool = <Shape extends ZodRawShapeCompat>(
+  const registerDatabaseTool = <Shape extends z.ZodRawShape>(
     name: string,
     {
       errorLog,
       inputSchema,
       ...config
     }: { description: string; annotations: ToolAnnotations; errorLog: string; inputSchema: Shape },
-    body: (sqlDriver: SqlExecutor, args: ShapeOutput<Shape>) => Promise<CallToolResult>
+    body: (sqlDriver: SqlExecutor, args: z.output<z.ZodObject<Shape>>) => Promise<CallToolResult>
   ): void => {
-    const fullSchema = { database: databaseSchema, ...inputSchema };
-    server.registerTool<ZodRawShapeCompat, ZodRawShapeCompat>(
+    server.registerTool<z.ZodRawShape, z.ZodRawShape>(
       name,
-      { ...config, inputSchema: fullSchema },
+      { ...config, inputSchema: { database: databaseSchema, ...inputSchema } },
       async (validated, { signal }) => {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the SDK has parsed the arguments against fullSchema, but its callback type cannot follow a generic shape
-        const args = validated as ShapeOutput<typeof fullSchema>;
-        const run = async (sqlDriver: SqlExecutor): Promise<CallToolResult> => {
-          try {
-            return await body(sqlDriver, args);
-          } catch (error) {
-            log('ERROR', `${errorLog}: ${errorMessage(error)}`);
-            return formatError(error);
-          }
-        };
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the SDK has parsed the arguments against this inputSchema, but its callback type cannot follow a generic shape
+        const args = validated as { database: string } & z.output<z.ZodObject<Shape>>;
         try {
           return await calls.track(name, args.database, signal, (callSignal) =>
-            registry.use(args.database, run, { signal: callSignal })
+            registry.use(args.database, (sqlDriver) => body(sqlDriver, args), { signal: callSignal })
           );
         } catch (error) {
-          // Failures inside the tool body are handled by `run`; only access failures reach here.
-          if (error instanceof DatabaseAccessError) {
-            return formatError(error);
+          if (!(error instanceof DatabaseAccessError)) {
+            log('ERROR', `${errorLog}: ${errorMessage(error)}`);
           }
-          throw error;
+          return formatError(error);
         }
       }
     );
@@ -502,7 +491,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       annotations: { title: 'List Schemas', readOnlyHint: true },
       errorLog: 'Error listing schemas',
     },
-    (sqlDriver) => listSchemas(sqlDriver)
+    listSchemas
   );
 
   registerDatabaseTool(

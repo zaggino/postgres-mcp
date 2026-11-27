@@ -11,6 +11,9 @@ export class CliError extends Error {}
 /** The longest delay setTimeout accepts (2^31 - 1 ms); larger values would fire at once. */
 export const MAX_IDLE_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
 
+/** statement_timeout is an int of milliseconds, so the largest whole-second value is 2^31 - 1 ms / 1000. */
+export const MAX_STATEMENT_TIMEOUT_SECONDS = 2_147_483;
+
 const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
 
@@ -23,6 +26,7 @@ export interface CliOptions {
   databases: string[];
   configPath: string | undefined;
   idleMinutes: number | undefined;
+  statementTimeoutSeconds: number | undefined;
   sseHost: string;
   ssePort: number;
   streamableHttpHost: string;
@@ -58,7 +62,8 @@ const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
                     [--allowed-hosts HOSTS] [--allowed-origins ORIGINS]
                     [--max-sessions N] [--session-idle-minutes N]
-                    [--database NAME] [--config FILE] [--idle-minutes N]`;
+                    [--database NAME] [--config FILE] [--idle-minutes N]
+                    [--statement-timeout SECONDS]`;
 
 export const HELP = `${USAGE}
 
@@ -77,6 +82,10 @@ options:
                         discover databases on. Exclusive with --database
   --idle-minutes N      Close a database's pool after N idle minutes
                         (default: 10, 0 = never)
+  --statement-timeout SECONDS
+                        Cancel a statement in Postgres after SECONDS
+                        (default: 30 in restricted mode, 0 = none in
+                        unrestricted mode; 0 = no timeout)
   --transport {${TRANSPORTS.join(',')}}
                         Select MCP transport: stdio (default), sse, or
                         streamable-http
@@ -216,6 +225,7 @@ function parseRaw(argv: string[]) {
         database: { type: 'string', multiple: true },
         config: { type: 'string' },
         'idle-minutes': { type: 'string' },
+        'statement-timeout': { type: 'string' },
         transport: { type: 'string' },
         'sse-host': { type: 'string' },
         'sse-port': { type: 'string' },
@@ -247,6 +257,10 @@ export function parseCli(argv: string[]): CliOptions | null {
     databases: values.database ?? [],
     configPath: values.config,
     idleMinutes: parseIntFlag('--idle-minutes', values['idle-minutes'], { min: 0, max: MAX_IDLE_MINUTES }),
+    statementTimeoutSeconds: parseIntFlag('--statement-timeout', values['statement-timeout'], {
+      min: 0,
+      max: MAX_STATEMENT_TIMEOUT_SECONDS,
+    }),
     transport: choice('--transport', values.transport, TRANSPORTS) ?? 'stdio',
     sseHost: values['sse-host'] ?? 'localhost',
     ssePort: parseIntFlag('--sse-port', values['sse-port']) ?? DEFAULT_PORT,

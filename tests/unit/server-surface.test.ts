@@ -90,6 +90,13 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
     defaults: {},
     annotations: { title: 'List Databases', readOnlyHint: true },
   },
+  {
+    name: 'cancel_query',
+    params: ['call_id'],
+    required: [],
+    defaults: {},
+    annotations: { title: 'Cancel Query', readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  },
 ];
 
 function schemaDefaults(properties: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -102,7 +109,7 @@ function schemaDefaults(properties: Record<string, unknown> | undefined): Record
   return defaults;
 }
 
-test('unrestricted mode lists the ten tools in upstream order with their parameters and annotations', async () => {
+test('unrestricted mode lists the eleven tools in upstream order with their parameters and annotations', async () => {
   const client = await connectClient(createServer(createTestRegistry(['app']).registry));
 
   const { tools } = await client.listTools();
@@ -131,4 +138,14 @@ test('restricted mode rejects a DROP TABLE through execute_sql without sending i
   expect((fakes.get('app')?.queries ?? []).map((query) => query.text)).not.toContainEqual(
     expect.stringContaining('DROP TABLE')
   );
+});
+
+test('restricted mode does not offer cancel_query', async () => {
+  const client = await connectClient(
+    createServer(createTestRegistry(['app'], { accessMode: AccessMode.RESTRICTED }).registry)
+  );
+
+  const { tools } = await client.listTools();
+
+  expect(tools.map((tool) => tool.name)).not.toContain('cancel_query');
 });

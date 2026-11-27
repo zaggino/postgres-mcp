@@ -1,3 +1,5 @@
+import net from 'node:net';
+
 import type { CustomTypesConfig } from 'pg';
 import pg from 'pg';
 
@@ -21,6 +23,8 @@ export interface ClientLike {
   /** One result per statement; a single statement yields a one-element array. */
   query: (text: string, values?: readonly unknown[]) => Promise<QueryResultLike[]>;
   release: (destroy?: boolean) => void;
+  /** Asks Postgres to cancel whatever this client's backend is running. Never rejects. */
+  cancel: () => Promise<void>;
 }
 
 export interface PoolLike {
@@ -36,6 +40,28 @@ function errorMessage(error: unknown): string {
 
 function logError(message: string): void {
   process.stderr.write(`${message}\n`);
+}
+
+/** Raised when the caller's AbortSignal cancelled the statement. Deliberately not a pg.DatabaseError. */
+export class QueryCancelledError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('Query cancelled', options);
+    this.name = 'QueryCancelledError';
+  }
+}
+
+/** Raised when Postgres aborted the statement for exceeding statement_timeout. */
+export class QueryTimeoutError extends Error {
+  readonly seconds: number;
+
+  constructor(seconds: number, { restricted = false, cause }: { restricted?: boolean; cause?: unknown } = {}) {
+    super(
+      `Query execution timed out after ${seconds} seconds${restricted ? ' in restricted mode' : ''}. Consider simplifying your query or increasing the timeout.`,
+      { cause }
+    );
+    this.name = 'QueryTimeoutError';
+    this.seconds = seconds;
+  }
 }
 
 export function obfuscatePassword(text: string | null | undefined): string | null | undefined {
@@ -89,13 +115,67 @@ const customTypes: CustomTypesConfig = {
   }) as CustomTypesConfig['getTypeParser'],
 };
 
-export const defaultPoolFactory: PoolFactory = (connectionString) => {
-  const pool = new pg.Pool({
+const CANCEL_REQUEST_CODE = 80_877_102;
+const APPLICATION_NAME = 'postgres-mcp';
+
+/**
+ * Pool config for a connection string. pg lets a connection string's own parameters override config fields but
+ * lets config.application_name beat PGAPPNAME, so the default is set only when neither the URI nor PGAPPNAME has one.
+ */
+export function poolConfig(connectionString: string, env: NodeJS.ProcessEnv = process.env): pg.PoolConfig {
+  let uriHasApplicationName = false;
+  try {
+    uriHasApplicationName = new URL(connectionString).searchParams.has('application_name');
+  } catch {
+    // Not a URL; pg parses it its own way and any application_name in it still overrides ours.
+  }
+  return {
     connectionString,
     max: 5,
     connectionTimeoutMillis: 30_000,
     types: customTypes,
+    ...(uriHasApplicationName || env.PGAPPNAME ? {} : { application_name: APPLICATION_NAME }),
+  };
+}
+
+/** Sends a protocol CancelRequest for a backend on a fresh socket; resolves once the socket closes. */
+function sendCancelRequest(client: pg.PoolClient): Promise<void> {
+  // processID and secretKey are set on the client at runtime but missing from @types/pg, so they are read
+  // through this one narrow view; both are null until the backend has sent its key data.
+  const backend: object = client;
+  if (
+    !('processID' in backend) ||
+    !('secretKey' in backend) ||
+    typeof backend.processID !== 'number' ||
+    typeof backend.secretKey !== 'number'
+  ) {
+    return Promise.resolve();
+  }
+  const { processID, secretKey } = backend;
+  const message = Buffer.alloc(16);
+  message.writeInt32BE(16, 0);
+  message.writeInt32BE(CANCEL_REQUEST_CODE, 4);
+  message.writeInt32BE(processID, 8);
+  message.writeInt32BE(secretKey, 12);
+
+  const { host, port } = client;
+  return new Promise<void>((resolve) => {
+    const socket = host.startsWith('/') ? net.connect(`${host}/.s.PGSQL.${port}`) : net.connect(port, host);
+    socket.once('connect', () => {
+      socket.end(message);
+    });
+    socket.once('error', (error) => {
+      logError(`Error sending cancel request: ${error.message}`);
+      resolve();
+    });
+    socket.once('close', () => {
+      resolve();
+    });
   });
+}
+
+export const defaultPoolFactory: PoolFactory = (connectionString) => {
+  const pool = new pg.Pool(poolConfig(connectionString));
   pool.on('error', (error) => {
     logError(`Idle connection pool error: ${error.message}`);
   });
@@ -112,18 +192,69 @@ export const defaultPoolFactory: PoolFactory = (connectionString) => {
         release(destroy) {
           client.release(destroy);
         },
+        async cancel() {
+          try {
+            await sendCancelRequest(client);
+          } catch (error) {
+            logError(`Error cancelling query: ${errorMessage(error)}`);
+          }
+        },
       };
     },
     end: () => pool.end(),
   };
 };
 
+interface ExecutionOptions {
+  forceReadonly: boolean;
+  statementTimeoutSeconds: number;
+  signal: AbortSignal | undefined;
+}
+
+function mapExecutionError(error: unknown, { statementTimeoutSeconds, signal }: ExecutionOptions): unknown {
+  if (signal?.aborted) {
+    return new QueryCancelledError({ cause: error });
+  }
+  if (statementTimeoutSeconds > 0 && error instanceof pg.DatabaseError && error.code === '57014') {
+    logError(`Query execution timed out after ${statementTimeoutSeconds} seconds`);
+    return new QueryTimeoutError(statementTimeoutSeconds, { cause: error });
+  }
+  return error;
+}
+
+async function runUserQuery(
+  client: ClientLike,
+  query: string,
+  params: readonly unknown[] | null | undefined,
+  signal: AbortSignal | undefined
+): Promise<QueryResultLike[]> {
+  if (signal?.aborted) {
+    throw new QueryCancelledError();
+  }
+  const onAbort = () => {
+    void client.cancel();
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    const results = await (params && params.length > 0 ? client.query(query, params) : client.query(query));
+    // A cancel request sent as the query finished can still land on the backend's next statement, so a
+    // cancelled call fails here and its connection is destroyed instead of returning to the pool.
+    if (signal?.aborted) {
+      throw new QueryCancelledError();
+    }
+    return results;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 async function executeWithClient(
   client: ClientLike,
   query: string,
   params: readonly unknown[] | null | undefined,
-  forceReadonly: boolean
+  options: ExecutionOptions
 ): Promise<RowResult[] | null> {
+  const { forceReadonly, statementTimeoutSeconds, signal } = options;
   // node-postgres runs in autocommit, so a transaction is opened explicitly
   // for every query to keep the closing COMMIT/ROLLBACK meaningful.
   let transactionStarted = false;
@@ -131,7 +262,11 @@ async function executeWithClient(
     await client.query(forceReadonly ? 'BEGIN TRANSACTION READ ONLY' : 'BEGIN');
     transactionStarted = true;
 
-    const results = await (params && params.length > 0 ? client.query(query, params) : client.query(query));
+    if (statementTimeoutSeconds > 0) {
+      await client.query(`SET LOCAL statement_timeout = ${Math.round(statementTimeoutSeconds * 1000)}`);
+    }
+
+    const results = await runUserQuery(client, query, params, signal);
     const last = results.at(-1);
 
     const rows = last && last.fields.length > 0 ? last.rows : null;
@@ -149,7 +284,7 @@ async function executeWithClient(
       }
     }
     logError(`Error executing query: ${errorMessage(error)}`);
-    throw error;
+    throw mapExecutionError(error, options);
   }
 }
 
@@ -251,14 +386,22 @@ export class DbConnPool {
 export interface SqlDriverOptions {
   conn?: DbConnPool;
   engineUrl?: string;
+  /** Cancels the running statement in Postgres and fails later queries at once. */
+  signal?: AbortSignal;
+  /** Server-side statement_timeout per query; 0 or undefined means none. */
+  statementTimeoutSeconds?: number;
 }
 
 /** Adapter that runs queries through a DbConnPool and returns row objects. */
 export class SqlDriver {
   conn: DbConnPool | null;
   readonly engineUrl: string | undefined;
+  readonly signal: AbortSignal | undefined;
+  readonly statementTimeoutSeconds: number;
 
-  constructor({ conn, engineUrl }: SqlDriverOptions) {
+  constructor({ conn, engineUrl, signal, statementTimeoutSeconds }: SqlDriverOptions) {
+    this.signal = signal;
+    this.statementTimeoutSeconds = statementTimeoutSeconds ?? 0;
     if (conn) {
       this.conn = conn;
     } else if (engineUrl) {
@@ -289,6 +432,10 @@ export class SqlDriver {
     params?: readonly unknown[] | null,
     forceReadonly = false
   ): Promise<RowResult[] | null> {
+    // Checked before the try so a call cancelled before it started does not invalidate the pool.
+    if (this.signal?.aborted) {
+      throw new QueryCancelledError();
+    }
     try {
       const conn = this.conn ?? this.connect();
       const pool = await conn.poolConnect();
@@ -297,9 +444,17 @@ export class SqlDriver {
       const client = await pool.connect().catch((error: unknown) => {
         throw new Error(errorMessage(error), { cause: error });
       });
+      if (this.signal?.aborted) {
+        client.release();
+        throw new QueryCancelledError();
+      }
       let destroy = false;
       try {
-        return await executeWithClient(client, query, params, forceReadonly);
+        return await executeWithClient(client, query, params, {
+          forceReadonly,
+          statementTimeoutSeconds: this.statementTimeoutSeconds,
+          signal: this.signal,
+        });
       } catch (error) {
         destroy = true;
         throw error;

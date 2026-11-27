@@ -19,12 +19,14 @@ export function createTestRegistry(
     servers?: RegistryOptions['servers'];
     /** Extra entries, e.g. one whose URI failed to resolve. */
     databases?: ExplicitDatabase[];
+    statementTimeoutSeconds?: number;
   } = {}
 ) {
   const fakes = new Map<string, FakePool>();
   const registry = new DatabaseRegistry({
     accessMode: options.accessMode ?? AccessMode.UNRESTRICTED,
     idleMinutes: 0,
+    statementTimeoutSeconds: options.statementTimeoutSeconds,
     databases: [
       ...names.map((name): ExplicitDatabase => ({
         name,
@@ -34,7 +36,7 @@ export function createTestRegistry(
       ...(options.databases ?? []),
     ],
     servers: options.servers ?? [],
-    getSqlDriver: (mode, conn) => deps.getSqlDriver(mode, conn),
+    getSqlDriver: (mode, conn, driverOptions) => deps.getSqlDriver(mode, conn, driverOptions),
     poolFactory: (url) => {
       const fake = createFakePool(options.handler);
       fakes.set(decodeURIComponent(new URL(url).pathname.slice(1)), fake);

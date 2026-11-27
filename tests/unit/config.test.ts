@@ -9,7 +9,14 @@ const noFile = (): string => {
 };
 
 function cli(overrides: Partial<Parameters<typeof resolveConfig>[0]> = {}): Parameters<typeof resolveConfig>[0] {
-  return { accessMode: undefined, databases: [], configPath: undefined, idleMinutes: undefined, ...overrides };
+  return {
+    accessMode: undefined,
+    databases: [],
+    configPath: undefined,
+    idleMinutes: undefined,
+    statementTimeoutSeconds: undefined,
+    ...overrides,
+  };
 }
 
 function withConfig(
@@ -59,6 +66,19 @@ describe(parseCli, () => {
 
   it('rejects a negative --idle-minutes', () => {
     expect(() => parseCli(['--database', 'a', '--idle-minutes=-1'])).toThrow(/--idle-minutes: must be between 0 and/u);
+  });
+
+  it('rejects a negative or non-integer --statement-timeout', () => {
+    expect(() => parseCli(['--database', 'a', '--statement-timeout=-1'])).toThrow(
+      /--statement-timeout: must be between 0 and/u
+    );
+    expect(() => parseCli(['--database', 'a', '--statement-timeout=1.5'])).toThrow(
+      /--statement-timeout: invalid int value/u
+    );
+  });
+
+  it('reads --statement-timeout as whole seconds', () => {
+    expect(parseCli(['--database', 'a', '--statement-timeout=45'])?.statementTimeoutSeconds).toBe(45);
   });
 
   it('rejects --max-sessions below 1', () => {
@@ -138,6 +158,28 @@ describe('config file', () => {
     expect(result.servers).toEqual([
       { uri: { uri: 'postgres://h/postgres' }, prefix: '', include: ['*'], exclude: [] },
     ]);
+  });
+});
+
+describe('statement timeout', () => {
+  const databases = { a: { uri: 'postgres://h/d' } };
+
+  it('lets --statement-timeout override the config value', () => {
+    const result = withConfig({ statementTimeoutSeconds: 5, databases }, {}, { statementTimeoutSeconds: 0 });
+    expect(result.statementTimeoutSeconds).toBe(0);
+  });
+
+  it('uses the config value when the flag is absent', () => {
+    expect(withConfig({ statementTimeoutSeconds: 5, databases }).statementTimeoutSeconds).toBe(5);
+  });
+
+  it('defaults to 30 s in restricted mode and none in unrestricted mode', () => {
+    expect(withConfig({ accessMode: 'restricted', databases }).statementTimeoutSeconds).toBe(30);
+    expect(withConfig({ accessMode: 'unrestricted', databases }).statementTimeoutSeconds).toBe(0);
+  });
+
+  it('rejects a config value above what statement_timeout can hold', () => {
+    expect(() => withConfig({ statementTimeoutSeconds: 2_147_484, databases })).toThrow(/statementTimeoutSeconds/u);
   });
 });
 

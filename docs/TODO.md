@@ -2,23 +2,13 @@
 
 Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
-## 2026-11-26 · Major · Feature · A cancelled or long-running tool call cannot be stopped
-
-The server ignores the client's `notifications/cancelled`, and unrestricted mode has no call timeout at all, so a statement runs in postgres to its end. `zaggino/lazy-pg-mcp` works around this from outside by removing the backend and terminating its sessions. Do it in the server: cancel the running statement when the tool call's abort signal fires, and add a configurable call timeout that applies in both access modes. The restricted-mode side (the 30 s timeout that leaves the statement running) is the entry "Restricted-mode timeout is client-side only"; fix the two together. `serverInstructions` in `src/server.ts` tells agents that cancelling a call does not stop its SQL and states each mode's timeout; update those clauses with the fix.
-
-## 2026-11-26 · Minor · Observability · Connections carry no `application_name`
-
-The pool in `src/sql/sql-driver.ts` sets no `application_name`, so the server's sessions cannot be told apart in `pg_stat_activity`. Default it to `postgres-mcp` when neither the URL nor `PGAPPNAME` sets one. Cancelling a call's statement (see "A cancelled or long-running tool call cannot be stopped") may also need it to find the sessions.
-
 ## 2026-11-26 · Minor · Bug · Shutdown does not cover SIGHUP or a closed stdout
 
 `src/server.ts` installs handlers for SIGTERM and SIGINT and reacts to stdin closing, but not to SIGHUP. Whether a reply written after the client closed stdout (EPIPE) ends the process without closing the pool has not been checked; `zaggino/lazy-pg-mcp` records that failure for itself. Handle SIGHUP, and route a stdout `error` through `shutdown()` if the check shows the problem.
 
-## 2026-11-26 · Major · Bug · An unreachable database is reported as a query timeout in restricted mode
+## 2026-11-26 · Minor · Bug · Connecting to an unreachable database waits 30 s
 
-`SafeSqlDriver.runWithTimeout` in `src/sql/safe-sql.ts` starts its 30 s timer before `SqlDriver.executeQuery` connects, so the timer also covers `poolConnect()` and `pool.connect()`. The pool's connection timeout in `src/sql/sql-driver.ts` is 30 s as well. When the database host does not answer, the query timer wins the race and the caller gets `Query execution timed out after 30 seconds in restricted mode. Consider simplifying your query or increasing the timeout.`, which points at the query although no statement ran; the connection error is lost. Found by reading the code, not reproduced; `zaggino/lazy-pg-mcp` records the same symptom for upstream 0.3.0. A refused connection fails at once and is not affected, and unrestricted mode has no query timer.
-
-The two cases must be told apart: a database that cannot be reached returns a connection error that names the cause, and only a statement that was sent and ran too long returns the query timeout. Start the query timer once a connection is held, and give connecting its own, shorter timeout.
+The statement timeout is now `statement_timeout`, set by `SqlDriver` in `src/sql/sql-driver.ts` once a connection is held, so an unreachable host no longer produces the query-timeout message; the connection error is reported. What remains: connecting waits the pool's `connectionTimeoutMillis` of 30 s before failing, as long as the restricted-mode statement timeout. Give connecting its own, shorter timeout so an unreachable database fails fast.
 
 ## 2026-11-26 · Minor · Docs · `AGENTS.md` lacks two rules that `zaggino/lazy-pg-mcp` has
 
@@ -27,10 +17,6 @@ Its agent instructions require the file itself to be updated in the same change 
 ## 2026-11-26 · Major · Bug · Connection pool is invalidated after any query error
 
 `SqlDriver` in `src/sql/sql-driver.ts` calls `markInvalid` on any failure, including a user's syntax error, so the next call reconnects the whole pool. Only connection-level failures should invalidate it.
-
-## 2026-11-26 · Major · Bug · Restricted-mode timeout is client-side only
-
-`SafeSqlDriver.runWithTimeout` in `src/sql/safe-sql.ts` rejects after 30 seconds but never cancels the statement, so it keeps running on the server and holds a pooled connection. Cancelling an MCP tool call does not stop its SQL either. Use `statement_timeout` or `pg_cancel_backend`, and wire the request abort signal through. The restricted-mode clause of `serverInstructions` in `src/server.ts` says the statement keeps running; update it with the fix.
 
 ## 2026-11-26 · Minor · Bug · Table-size estimate always falls back to 10 MB
 
@@ -343,7 +329,7 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 
 ## 2026-11-27 · Minor · Bug · Shutdown waits without limit for running statements
 
-`shutdown()` in `src/server.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to 30 s in restricted mode and with no bound in unrestricted mode. On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. Fix this together with "A cancelled or long-running tool call cannot be stopped", which needs the same cancel path.
+`shutdown()` in `src/server.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
 
 ## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
 

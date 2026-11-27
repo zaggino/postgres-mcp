@@ -293,8 +293,12 @@ export class DatabaseRegistry {
     this.#catalog = this.#buildCatalog();
   }
 
-  describe(): { explicit: string[]; serverCount: number } {
-    return { explicit: this.#explicit.map(({ name }) => name), serverCount: this.#sources.length };
+  describe(): { explicit: string[]; serverCount: number; prefixed: boolean } {
+    return {
+      explicit: this.#explicit.map(({ name }) => name),
+      serverCount: this.#sources.length,
+      prefixed: this.#sources.some(({ source }) => source.prefix !== ''),
+    };
   }
 
   async use<T>(name: string, fn: (sqlDriver: SqlExecutor) => Promise<T>): Promise<T> {

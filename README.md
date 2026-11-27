@@ -18,6 +18,7 @@ Differences from upstream:
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
+- An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure, restricted-mode refusal or timeout, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
 - Error messages and stderr logs do not include the SQL text, plans or parse trees of a query. Upstream included the full query. A database or parser error can still quote the token it failed at.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
@@ -94,7 +95,7 @@ Select the mode with `--access-mode=restricted` (the default) or `--access-mode=
 
 ## Multiple databases
 
-One server process serves every database you name. Every tool except `list_databases` takes a required `database` argument, and the server's instructions tell the client so. `list_databases` returns:
+One server process serves every database you name. Every tool except `list_databases` takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
 
 ```
 { databases: [{ database, source, state, idle_seconds_left, error? }], servers: [{ server, prefix, error? }] }

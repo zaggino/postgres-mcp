@@ -292,7 +292,11 @@ export class SqlDriver {
     try {
       const conn = this.conn ?? this.connect();
       const pool = await conn.poolConnect();
-      const client = await pool.connect();
+      // A checkout failure (credentials, too many connections) can be a pg.DatabaseError; rewrapping keeps it
+      // from passing as the statement's own error, which the tool result reports without isError.
+      const client = await pool.connect().catch((error: unknown) => {
+        throw new Error(errorMessage(error), { cause: error });
+      });
       let destroy = false;
       try {
         return await executeWithClient(client, query, params, forceReadonly);

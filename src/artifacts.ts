@@ -2,21 +2,15 @@
 
 import { structuredPatch } from 'diff';
 
+import { errorMessage } from './errors.ts';
+import type { JsonObject } from './json.ts';
+import { isJsonObject } from './json.ts';
+
 // If the recommendation cost is 0.0, we can't calculate the improvement multiple.
 // Return 1000000.0 to indicate infinite improvement.
 export const INFINITE_IMPROVEMENT_MULTIPLIER = 1_000_000;
 
 const MAX_FILTER_LENGTH = 100;
-
-type JsonObject = Record<string, unknown>;
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Simple error result class; `cause` keeps the error it was built from. */
 export class ErrorResult {

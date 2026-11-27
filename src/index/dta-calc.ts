@@ -1,18 +1,13 @@
-import { pyFloatStr } from '../py-format.ts';
+import { errorMessage } from '../errors.ts';
+import { isJsonObject } from '../json.ts';
+import { formatFixed, formatPercent, naturalSize, pyFloatStr } from '../py-format.ts';
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
 import { literal } from '../sql/literal.ts';
-import { AstNode, isJsonObject, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
+import { AstNode, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 import type { IndexConfiguration, QueryWeight } from './index-opt-base.ts';
-import {
-  candidateStr,
-  formatFixed,
-  formatPercent,
-  IndexRecommendation,
-  IndexTuningBase,
-  naturalSize,
-} from './index-opt-base.ts';
+import { candidateStr, IndexRecommendation, IndexTuningBase } from './index-opt-base.ts';
 
 const MEGABYTE = 1024 * 1024;
 
@@ -686,7 +681,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         unique: node.fields.unique === true,
       };
     } catch (error) {
-      this.dtaTrace(`Error extracting index info: ${error instanceof Error ? error.message : String(error)}`);
+      this.dtaTrace(`Error extracting index info: ${errorMessage(error)}`);
       throw new Error('Error extracting index info', { cause: error });
     }
   }

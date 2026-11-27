@@ -1,8 +1,8 @@
 import { loadModule, parseSync, SqlError } from 'libpg-query';
 
+import type { JsonObject } from '../json.ts';
+import { isJsonObject } from '../json.ts';
 import { STRUCT_FIELD_TYPES } from './allowlists.ts';
-
-export type JsonObject = Readonly<Record<string, unknown>>;
 
 /** A statement as returned in `ParseResult.stmts` (the pglast `RawStmt`). */
 export type RawStmtJson = JsonObject;
@@ -23,10 +23,6 @@ export class SqlParseError extends Error {
     super(message, options);
     this.name = 'SqlParseError';
   }
-}
-
-export function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // Node type names start with an uppercase letter (`SelectStmt`, `A_Const`);

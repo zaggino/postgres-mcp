@@ -136,7 +136,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 ## 2026-11-26 · Minor · Bug · Number formatting rounds half up instead of half to even
 
-Costs and sizes are formatted with `toFixed` (for example in `src/index/index-opt-base.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
+Costs and sizes are formatted with `toFixed` (for example in `src/py-format.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
 
 ## 2026-11-26 · Minor · Bug · Time limit is not hit immediately without `analyzeWorkload`
 
@@ -177,10 +177,6 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
-
-## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
-
-`errorMessage` is redefined in nine modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them; move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 

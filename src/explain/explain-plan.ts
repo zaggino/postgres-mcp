@@ -1,4 +1,8 @@
 import { ErrorResult, ExplainPlanArtifact } from '../artifacts.ts';
+import { errorMessage } from '../errors.ts';
+import { isJsonObject } from '../json.ts';
+import { logLine } from '../log.ts';
+import { pyTypeName } from '../py-format.ts';
 import { SqlBindParams } from '../sql/bind-params.ts';
 import { checkPostgresVersionRequirement } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
@@ -11,41 +15,6 @@ const LIKE_PATTERN = /\bLIKE\b/iu;
 /** The part of the index advisor the explain tool needs for trace logging. */
 export interface DtaTracer {
   dtaTrace: (message: string) => void;
-}
-
-type JsonObject = Record<string, unknown>;
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** Python-style type name, used in user-facing error messages. */
-function typeName(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "<class 'NoneType'>";
-  }
-  if (Array.isArray(value)) {
-    return "<class 'list'>";
-  }
-  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- every other typeof is reported as dict, as upstream does
-  switch (typeof value) {
-    case 'string': {
-      return "<class 'str'>";
-    }
-    case 'boolean': {
-      return "<class 'bool'>";
-    }
-    case 'number': {
-      return Number.isInteger(value) ? "<class 'int'>" : "<class 'float'>";
-    }
-    default: {
-      return "<class 'dict'>";
-    }
-  }
 }
 
 /** The `pg` json type arrives parsed; parse it when a driver hands over text. */
@@ -82,10 +51,6 @@ function toColumnList(columns: unknown): unknown[] {
     return Object.keys(columns);
   }
   return [columns];
-}
-
-function logError(message: string): void {
-  process.stderr.write(`${message}\n`);
 }
 
 /** Tool for generating and analyzing PostgreSQL explain plans. */
@@ -142,13 +107,13 @@ export class ExplainPlanTool {
     try {
       // Validate index definitions format
       if (!Array.isArray(hypotheticalIndexes)) {
-        return new ErrorResult(`Expected list of index definitions, got ${typeName(hypotheticalIndexes)}`);
+        return new ErrorResult(`Expected list of index definitions, got ${pyTypeName(hypotheticalIndexes)}`);
       }
 
       const indexes = new Map<string, IndexDefinition>();
       for (const idx of hypotheticalIndexes as unknown[]) {
         if (!isJsonObject(idx)) {
-          return new ErrorResult(`Expected dictionary for index definition, got ${typeName(idx)}`);
+          return new ErrorResult(`Expected dictionary for index definition, got ${pyTypeName(idx)}`);
         }
         if (!('table' in idx)) {
           return new ErrorResult("Missing 'table' in index definition");
@@ -158,7 +123,7 @@ export class ExplainPlanTool {
         }
         const columns = toColumnList(idx.columns).map((column) => {
           if (typeof column !== 'string') {
-            throw new TypeError(`Expected string for index column, got ${typeName(column)}`);
+            throw new TypeError(`Expected string for index column, got ${pyTypeName(column)}`);
           }
           return column;
         });
@@ -190,7 +155,7 @@ export class ExplainPlanTool {
         return new ErrorResult(`Error converting explain plan: ${errorMessage(error)}`);
       }
     } catch (error) {
-      logError(`Error in explain_with_hypothetical_indexes: ${errorMessage(error)}`);
+      logLine(`Error in explain_with_hypothetical_indexes: ${errorMessage(error)}`);
       return new ErrorResult(`Error generating explain plan with hypothetical indexes: ${errorMessage(error)}`, {
         cause: error,
       });
@@ -237,7 +202,7 @@ export class ExplainPlanTool {
       const queryPlanData = parsePlanColumn(firstRow.cells['QUERY PLAN']);
 
       if (!Array.isArray(queryPlanData)) {
-        return new ErrorResult(`Expected list from EXPLAIN, got ${typeName(queryPlanData)}`);
+        return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
       }
       if (queryPlanData.length === 0) {
         return new ErrorResult('No results returned from EXPLAIN');
@@ -246,7 +211,7 @@ export class ExplainPlanTool {
       const planDict: unknown = queryPlanData[0];
       if (!isJsonObject(planDict)) {
         return new ErrorResult(
-          `Expected dict in EXPLAIN result list, got ${typeName(planDict)} with value ${String(planDict)}`
+          `Expected dict in EXPLAIN result list, got ${pyTypeName(planDict)} with value ${String(planDict)}`
         );
       }
 
@@ -303,14 +268,14 @@ export class ExplainPlanTool {
         if (Array.isArray(planData)) {
           return planData[0];
         }
-        trace(`      - plan_data is an empty list with plan_data type: ${typeName(planData)}`);
+        trace(`      - plan_data is an empty list with plan_data type: ${pyTypeName(planData)}`);
       }
 
       trace('      - returning empty plan');
       // Return empty plan if no result
       return { Plan: { 'Total Cost': Number.POSITIVE_INFINITY } };
     } catch (error) {
-      logError(`Error getting explain plan: ${errorMessage(error)}`);
+      logLine(`Error getting explain plan: ${errorMessage(error)}`);
       throw error;
     }
   }

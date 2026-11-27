@@ -1,16 +1,10 @@
+import { isJsonObject } from '../json.ts';
+import { logLine } from '../log.ts';
 import { pyFloatStr } from '../py-format.ts';
 import { literal } from './literal.ts';
-import { AstNode, isJsonObject, parseSql, Visitor } from './pg-ast.ts';
+import { AstNode, parseSql, Visitor } from './pg-ast.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
-
-function logWarning(message: string): void {
-  process.stderr.write(`${message}\n`);
-}
-
-function logError(message: string): void {
-  process.stderr.write(`${message}\n`);
-}
 
 // --- Visitor classes ---
 
@@ -523,7 +517,7 @@ async function getTableAliases(query: string, tableName: string): Promise<string
     }
     return aliases;
   } catch (error) {
-    logError(`Error extracting table aliases: ${String(error)}`);
+    logLine(`Error extracting table aliases: ${String(error)}`);
     return [tableName];
   }
 }
@@ -784,7 +778,7 @@ export class SqlBindParams {
       this.columnStatsCache.set(cacheKey, stats);
       return stats;
     } catch (error) {
-      logWarning(`Error getting column statistics for ${tableName}.${columnName}: ${String(error)}`);
+      logLine(`Error getting column statistics for ${tableName}.${columnName}: ${String(error)}`);
       this.columnStatsCache.set(cacheKey, null);
       return null;
     }
@@ -850,7 +844,7 @@ export class SqlBindParams {
       }
       return this.extractStmtColumns(stmt);
     } catch {
-      logWarning('Error extracting columns from query');
+      logLine('Error extracting columns from query');
       return new Map();
     }
   }
@@ -862,7 +856,7 @@ export class SqlBindParams {
       collector.visit(stmt);
       return collector.columns;
     } catch {
-      logWarning(`Error extracting columns from query: ${stmt.type}`);
+      logLine(`Error extracting columns from query: ${stmt.type}`);
       return new Map();
     }
   }

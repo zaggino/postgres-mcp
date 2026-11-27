@@ -1,3 +1,6 @@
+import { errorMessage } from '../errors.ts';
+import type { JsonObject } from '../json.ts';
+import { isJsonObject } from '../json.ts';
 import {
   ALLOWED_EXTENSIONS,
   ALLOWED_FUNCTIONS,
@@ -7,8 +10,8 @@ import {
 } from './allowlists.ts';
 import type { Identifier } from './literal.ts';
 import { paramSqlToQuery } from './literal.ts';
-import type { JsonObject, RawStmtJson } from './pg-ast.ts';
-import { asWrappedNode, isJsonObject, parseSql, SqlParseError } from './pg-ast.ts';
+import type { RawStmtJson } from './pg-ast.ts';
+import { asWrappedNode, parseSql, SqlParseError } from './pg-ast.ts';
 import type { DbConnPool, RowResult } from './sql-driver.ts';
 import { QueryTimeoutError } from './sql-driver.ts';
 
@@ -181,10 +184,6 @@ async function validateQuery(query: string): Promise<void> {
       cause: error,
     });
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Wraps an executor so only read-only, allowlisted SQL reaches the database. */

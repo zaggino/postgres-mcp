@@ -1,19 +1,21 @@
 import { readFileSync } from 'node:fs';
 
 import { calculateImprovementMultiple } from '../artifacts.ts';
+import { errorMessage } from '../errors.ts';
 import type { DtaTracer } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
+import { isJsonObject } from '../json.ts';
+import { logLine } from '../log.ts';
+import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
 import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
-import { AstNode, isJsonObject, parseSql } from '../sql/pg-ast.ts';
+import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
-const NATURAL_SIZE_SUFFIXES = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-const BYTES_BASE = 1000;
 const MEGABYTE = 1024 * 1024;
 const DEFAULT_TABLE_SIZE_BYTES = 10 * MEGABYTE;
 
@@ -25,46 +27,6 @@ export type QueryWeight = readonly [query: string, stmt: AstNode, weight: number
 
 /** The chosen indexes and the cost of the workload with them. */
 export type IndexConfiguration = [indexes: Set<IndexRecommendation>, cost: number];
-
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** Python's `f"{value:.{digits}f}"`, including its spelling of non-finite values. */
-export function formatFixed(value: number, digits: number): string {
-  if (Number.isNaN(value)) {
-    return 'nan';
-  }
-  if (!Number.isFinite(value)) {
-    return value > 0 ? 'inf' : '-inf';
-  }
-  return value.toFixed(digits);
-}
-
-/** Python's `f"{value:.2%}"`. */
-export function formatPercent(value: number): string {
-  return `${formatFixed(value * 100, 2)}%`;
-}
-
-/** `humanize.naturalsize` (decimal units): "1 Byte", "999 Bytes", "1.0 kB", "10.5 MB". */
-export function naturalSize(value: number): string {
-  const absolute = Math.abs(value);
-  const sign = value < 0 ? '-' : '';
-  if (absolute === 1) {
-    return `${sign}1 Byte`;
-  }
-  if (absolute < BYTES_BASE) {
-    return `${sign}${Math.trunc(absolute)} Bytes`;
-  }
-  let exponent = 1;
-  let unit = BYTES_BASE;
-  while (exponent < NATURAL_SIZE_SUFFIXES.length && absolute >= unit * BYTES_BASE) {
-    unit *= BYTES_BASE;
-    exponent += 1;
-  }
-  const suffix = NATURAL_SIZE_SUFFIXES[exponent - 1] ?? '';
-  return `${sign}${(absolute / unit).toFixed(1)} ${suffix}`;
-}
 
 /** Pretty print a list for debugging. */
 export function ppList(items: readonly unknown[]): string {
@@ -98,14 +60,6 @@ function toInt(value: unknown): number {
     throw new TypeError(`Invalid number: ${String(value)}`);
   }
   return Math.trunc(parsed);
-}
-
-function logWarning(message: string): void {
-  process.stderr.write(`${message}\n`);
-}
-
-function logError(message: string): void {
-  process.stderr.write(`${message}\n`);
 }
 
 /** Represents a database index with size estimation and definition. */
@@ -339,7 +293,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       }
 
       if (session.workload.length === 0) {
-        logWarning('No workload to analyze');
+        logLine('No workload to analyze');
         return session;
       }
 
@@ -362,7 +316,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
       }
     } catch (error) {
-      logError(`Error in workload analysis: ${errorMessage(error)}`);
+      logLine(`Error in workload analysis: ${errorMessage(error)}`);
       session.error = `Error in workload analysis: ${errorMessage(error)}`;
     }
 
@@ -390,7 +344,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
         'Without up-to-date statistics, the index recommendations may be inaccurate.';
       session.error = message;
-      logError(message);
+      logLine(message);
       return session;
     }
 
@@ -659,13 +613,13 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     const topPlan = planData.Plan;
     if (!isJsonObject(topPlan) || Object.keys(topPlan).length === 0) {
-      logError('No top plan found in plan data');
+      logLine('No top plan found in plan data');
       return Number.POSITIVE_INFINITY;
     }
 
     const totalCost = topPlan['Total Cost'];
     if (totalCost === null || totalCost === undefined) {
-      logError('Total Cost not found in top plan');
+      logLine('Total Cost not found in top plan');
       return Number.POSITIVE_INFINITY;
     }
 
@@ -699,7 +653,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         size = await this.estimateTableSize(table);
       }
     } catch (error) {
-      logWarning(`Error getting table size for ${table}: ${errorMessage(error)}`);
+      logLine(`Error getting table size for ${table}: ${errorMessage(error)}`);
       size = await this.estimateTableSize(table);
     }
     this.tableSizeCache.set(table, size);
@@ -721,7 +675,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         return rowCount * 1024;
       }
     } catch (error) {
-      logWarning(`Error estimating table size for ${table}: ${errorMessage(error)}`);
+      logLine(`Error estimating table size for ${table}: ${errorMessage(error)}`);
     }
 
     return DEFAULT_TABLE_SIZE_BYTES;

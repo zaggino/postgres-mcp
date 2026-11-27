@@ -6,7 +6,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerHandle } from './http.ts';
-import { listenGuarded, logCloseFailure, parseRequestUrl } from './http.ts';
+import { listenGuarded, parseRequestUrl } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
 import type { ServerFactory } from './types.ts';
@@ -14,6 +14,12 @@ import type { ServerFactory } from './types.ts';
 const SSE_SESSION_PARAM = 'sessionId';
 
 type SseSessions = SessionStore<SSEServerTransport>;
+
+function logCloseFailure(what: string): (error: unknown) => void {
+  return (error) => {
+    log('ERROR', `Error closing ${what}: ${errorMessage(error)}`);
+  };
+}
 
 async function handleSseRequest(
   createMcpServer: ServerFactory,

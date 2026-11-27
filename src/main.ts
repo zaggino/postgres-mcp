@@ -85,17 +85,15 @@ export async function main(argv: string[], transports: Transports = defaultTrans
   installSignalHandlers(registry);
 
   const factory = () => createServer(registry);
-  if (options.transport === 'stdio') {
+  const { transport } = options;
+  if (transport === 'stdio') {
     await transports.stdio(factory, () => {
       void shutdown(registry);
     });
     return;
   }
 
-  const http = httpOptions(options);
-  if (http === undefined) {
-    throw new Error(`No HTTP options for transport ${options.transport}`);
-  }
+  const http = httpOptions(options, transport);
   warnIfExposed(http, accessMode);
-  await transports[options.transport](factory, http);
+  await transports[transport](factory, http);
 }

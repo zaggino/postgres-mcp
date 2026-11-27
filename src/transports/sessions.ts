@@ -97,6 +97,12 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     }
   }
 
+  /** Removes the session and closes its transport, logging a failure to close. */
+  close(id: string, transport: T): void {
+    this.remove(id);
+    closeTransport(id, transport);
+  }
+
   async closeAll(): Promise<void> {
     const entries = [...this.#entries.entries()];
     for (const [id] of entries) {
@@ -120,8 +126,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     }
     entry.timer = setTimeout(() => {
       process.stderr.write(`INFO: Closing session ${id} after ${this.#idleMinutes} idle minute(s)\n`);
-      this.remove(id);
-      closeTransport(id, entry.transport);
+      this.close(id, entry.transport);
     }, idleMs);
     entry.timer.unref();
   }

@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer as createHttpServer } from 'node:http';
 
-import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { guardRequests } from './request-guard.ts';
@@ -39,12 +38,6 @@ export function parseRequestUrl(req: IncomingMessage): URL | null {
   } catch {
     return null;
   }
-}
-
-export function logCloseFailure(what: string): (error: unknown) => void {
-  return (error) => {
-    log('ERROR', `Error closing ${what}: ${errorMessage(error)}`);
-  };
 }
 
 /**

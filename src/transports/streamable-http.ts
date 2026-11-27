@@ -7,7 +7,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerHandle } from './http.ts';
-import { listenGuarded, logCloseFailure, parseRequestUrl } from './http.ts';
+import { listenGuarded, parseRequestUrl } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
 import type { ServerFactory } from './types.ts';
@@ -97,8 +97,7 @@ async function startMcpSession(
     initialized = transport.sessionId === id && res.statusCode >= 200 && res.statusCode < 300;
   } finally {
     if (!initialized) {
-      store.remove(id);
-      transport.close().catch(logCloseFailure(`session ${id}`));
+      store.close(id, transport);
     }
   }
 }

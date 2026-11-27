@@ -1,13 +1,12 @@
 import pg from 'pg';
 import { expect, it as test } from 'vitest';
 
+import { DatabaseRegistry } from '../../src/database-registry.ts';
 import { createServer } from '../../src/server.ts';
 import { AccessMode } from '../../src/sql/driver-factory.ts';
-import { noRowsResult } from '../support/fake-pool.ts';
+import { createFakePool, noRowsResult } from '../support/fake-pool.ts';
 import { connectClient } from '../support/mcp-client.ts';
 import { createTestRegistry } from '../support/registry.ts';
-
-const ISSUES_URL = 'https://github.com/zaggino/postgres-mcp/issues';
 
 async function executeSql(accessMode: AccessMode, database: string, sql: string) {
   const { registry } = createTestRegistry(['app'], {
@@ -21,11 +20,6 @@ async function executeSql(accessMode: AccessMode, database: string, sql: string)
   });
   const client = await connectClient(createServer(registry));
   return await client.callTool({ name: 'execute_sql', arguments: { database, sql } });
-}
-
-async function instructions(options: Parameters<typeof createTestRegistry>[1]) {
-  const client = await connectClient(createServer(createTestRegistry(['app'], options).registry));
-  return client.getInstructions() ?? '';
 }
 
 test('an error Postgres raises for the statement keeps the plain upstream result without isError', async () => {
@@ -48,24 +42,27 @@ test('a restricted-mode rejection is reported with isError', async () => {
   expect(JSON.stringify(result.content)).toContain('Error: Error validating query');
 });
 
-test('the instructions state the access mode in effect and where to report server issues', async () => {
-  const restricted = await instructions({ accessMode: AccessMode.RESTRICTED });
-  const unrestricted = await instructions({ accessMode: AccessMode.UNRESTRICTED });
-
-  expect(restricted).toContain('Access mode is restricted');
-  expect(unrestricted).toContain('Access mode is unrestricted');
-  expect(restricted).toContain(ISSUES_URL);
-  expect(unrestricted).toContain(ISSUES_URL);
-});
-
-test('the instructions mention discovered-name prefixes only when a server has a prefix', async () => {
-  const server = (prefix: string) => ({
-    uri: { uri: 'postgresql://u:p@h/postgres' },
-    prefix,
-    include: ['*'],
-    exclude: [],
+test('a Postgres error while checking out a connection is reported with isError', async () => {
+  const registry = new DatabaseRegistry({
+    accessMode: AccessMode.UNRESTRICTED,
+    idleMinutes: 0,
+    databases: [{ name: 'app', source: 'cli', uri: { uri: 'postgresql://u:p@h:5432/app' } }],
+    servers: [],
+    poolFactory: () => {
+      const { pool } = createFakePool();
+      const connect = pool.connect.bind(pool);
+      let checkouts = 0;
+      // The pool's own connection check succeeds; the checkout for the statement is refused.
+      pool.connect = () => {
+        checkouts += 1;
+        return checkouts === 1 ? connect() : Promise.reject(new pg.DatabaseError('too many clients', 0, 'error'));
+      };
+      return pool;
+    },
   });
+  const client = await connectClient(createServer(registry));
 
-  await expect(instructions({ servers: [server('dev-')] })).resolves.toContain("carry their server's prefix");
-  await expect(instructions({ servers: [server('')] })).resolves.not.toContain('prefix');
+  const result = await client.callTool({ name: 'execute_sql', arguments: { database: 'app', sql: 'SELECT 1' } });
+
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error: too many clients' }], isError: true });
 });

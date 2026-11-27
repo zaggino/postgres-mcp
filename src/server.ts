@@ -60,8 +60,7 @@ function formatTextResponse(text: string): CallToolResult {
  * failure (configuration, connection, restricted-mode rejection, timeout, argument check, internal) sets `isError`.
  */
 function formatError(error: unknown): CallToolResult {
-  const message = error instanceof ErrorResult ? error.toText() : errorMessage(error);
-  const cause = error instanceof ErrorResult ? error.cause : error;
+  const [message, cause] = error instanceof ErrorResult ? [error.toText(), error.cause] : [errorMessage(error), error];
   const result = formatTextResponse(`Error: ${message}`);
   return cause instanceof pg.DatabaseError ? result : { ...result, isError: true };
 }
@@ -364,7 +363,7 @@ async function explainQuery(
     if (result instanceof ExplainPlanArtifact) {
       return formatTextResponse(result.toText());
     }
-    return formatError(result instanceof ErrorResult ? result : 'Error processing explain plan');
+    return formatError(result);
   } catch (error) {
     log('ERROR', `Error explaining query: ${errorMessage(error)}`);
     return formatError(error);
@@ -454,13 +453,14 @@ function serverInstructions(registry: DatabaseRegistry): string {
       : "Call list_databases to see each database's connection state.",
     prefixed ? "Discovered names carry their server's prefix; inside the database the name is unprefixed." : '',
     registry.accessMode === AccessMode.RESTRICTED
-      ? `Access mode is restricted: read-only, and a call is abandoned after ${RESTRICTED_TIMEOUT_SECONDS} s while its statement keeps running in Postgres.`
+      ? `Access mode is restricted: read-only, and each statement is abandoned after ${RESTRICTED_TIMEOUT_SECONDS} s but keeps running in Postgres.`
       : 'Access mode is unrestricted: statements can write and have no timeout.',
     'Cancelling a call does not stop its SQL.',
-    'An "Error:" result without isError is Postgres rejecting the statement; with isError the server or its configuration failed.',
+    'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, connection, configuration or server failure).',
+    'The health, top-queries and index tools report failures in their output instead.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
-    'On a failure, show the user the error text first, then check likely causes: an unset ${VAR} in the config, wrong credentials, an unreachable host, or a role without grants (which also makes the listing tools return nothing).',
-    `Report any problem with this MCP server to the user (a likely server bug, wrong or confusing output, a missing tool or argument, an unclear description or error message) and suggest opening an issue at ${packageJson.bugs.url}.`,
+    'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools).',
+    `Report any problem with this MCP server to the user (bugs, confusing output, missing tools or arguments) and suggest an issue at ${packageJson.bugs.url}.`,
   ];
   return clauses.filter((clause) => clause !== '').join(' ');
 }

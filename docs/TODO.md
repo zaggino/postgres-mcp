@@ -172,31 +172,21 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 ## 2026-11-26 · Major · Refactor · Python-shaped data contracts
 
-Data moves through the code in shapes carried over from Python, with no types behind them. It is the root of several entries here: "Objects, arrays and dates are stringified as `[object Object]` and similar", "Missing or non-numeric costs and NULL counters become 0" and "A zero-column SELECT is reported as "no result set"".
+Query results move through the code as untyped rows, in a shape carried over from Python:
 
-Rows:
-
-- `RowResult { cells }` (`src/sql/sql-driver.ts`) wraps every row and has no behaviour. `executeWithClient` copies each row into it, and the callers that pass rows through unwrap or copy them again (`rows.map((r) => r.cells)`, `{ ...row.cells }`). It is used 39 times in 15 files of `src/` and 12 times in 5 test files.
-- `executeQuery` returns `RowResult[] | null`, where `null` means the statement had no result set. Only `execute_sql` (`src/tools/analysis.ts`) needs that; every other caller writes `rows ?? []` or `result?.[0]?.cells.x`.
-- Each module decodes cells itself with `String(...)`, `Number(...)` and `Boolean(...)`, or a local helper: `toInt` (`src/index/index-opt-base.ts`), `toMb` and `nullableText` (`src/database-health/index-health-calc.ts`), a second `nullableText` (`constraint-health-calc.ts`), `toBigInt` (`sequence-health-calc.ts`), `stringValue` (`src/index/dta-calc.ts`) and `cell` (`src/tools/objects.ts`). None checks the value, so a misspelt column or a NULL becomes `"undefined"`, `NaN` or `false` without an error. `src/tools/objects.ts` keeps `unknown` up to the output, including a `Map<unknown, ...>`.
-
-Shapes inside the advisor and explain code:
-
-- `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are positional tuples.
-- Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
-- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
-- `WorkloadEntry` (`index-opt-base.ts`) and `ColumnStats` (`src/sql/bind-params.ts`) are `Record<string, unknown>`.
-- A failure is an `ErrorResult` (`src/artifacts.ts`) told apart from an `ExplainPlanArtifact` by `instanceof`, or a mutable `error: string | null` on `IndexTuningResult`.
+- `RowResult { cells }` (`src/sql/sql-driver.ts`) wraps every row and has no behaviour. `executeWithClient` copies each row into it, and the callers that pass rows through unwrap or copy them again (`rows.map((r) => r.cells)`, `{ ...row.cells }`). About 75 lines in 17 files of `src/`, and 9 test files, read or build `cells`.
+- `executeQuery` returns `RowResult[] | null`, where `null` means the statement had no result set. Only `execute_sql` (`src/tools/analysis.ts`) and `explain` (`src/explain/explain-plan.ts`, "No results returned from EXPLAIN") act on that; every other caller treats `null` as no rows.
+- Each module decodes cells itself with `String(...)`, `Number(...)` and `Boolean(...)`, or a local helper: `toInt` (`src/index/index-opt-base.ts`), `toMb` and `nullableText` (`src/database-health/index-health-calc.ts`), a second `nullableText` (`constraint-health-calc.ts`), `toBigInt` (`sequence-health-calc.ts`), `stringValue` (`src/index/dta-calc.ts`) and `cell` (`src/tools/objects.ts`). Only `toInt` and `toBigInt` check the value. Everywhere else a misspelt column or a NULL becomes `"undefined"`, `NaN` or `false` without an error. `src/tools/objects.ts` keeps `unknown` up to the output, including a `Map<unknown, ...>`.
 
 What to do, in this order; none of it changes the tool surface:
 
-1. Make a row a plain `Record<string, unknown>` and delete `RowResult`. Let `executeQuery` always return an array, and give `execute_sql` the "no result set" signal another way, for example a result that also carries the column names.
-2. Add one module of strict cell readers (`src/sql/cells.ts`: text, nullable text, integer, bigint, boolean, numeric). A reader throws on a missing column or an unexpected type and owns the `pg` rules: `int8` as `number` or `bigint`, `numeric` as a string, JSON for objects and arrays, ISO 8601 for dates. Each module maps its rows to a named interface once, at the query, so nothing after that handles `unknown`. This removes the local helpers and the eight `typescript/no-base-to-string` disables. Decide for each column whether NULL is legal, because a strict reader turns today's silent `NaN` into an error. Do not replace this with `executeQuery<T>()` and a cast, which checks nothing; a zod schema per query would work but costs a parse per row and more code for about 30 small queries.
-3. Replace the tuples with named objects: `{ query, stmt, weight }`, `{ indexes, cost }`, a boolean for the version requirement, and `{ installed: true } | { installed: false; message }` for hypopg.
-4. Turn `IndexRecommendation` and `IndexRecommendationAnalysis` into readonly interfaces, with the improvement multiples as functions. Check `Set<IndexRecommendation>` in `src/index/dta-calc.ts` while there: a JavaScript `Set` compares objects by identity, so it does not remove two recommendations for the same index the way a Python set with `__eq__` did. Key by `IndexDefinition.key`, as `configurationKey` does.
-5. Report failures one way, by throwing or with a discriminated union, and leave `formatError` (`src/tools/result.ts`) as the only place that builds the tool's error result.
+1. Add `src/sql/cells.ts` with strict readers that take a row and a column name: text, nullable text, integer, bigint, boolean, numeric. A reader only narrows the value `pg` produced, and throws on a missing column or an unexpected type. Which JavaScript value a Postgres type becomes stays with `customTypes` in `src/sql/sql-driver.ts`, and turning a value into text stays with "Objects, arrays and dates are stringified as `[object Object]` and similar". Decide first between reader functions and zod schemas built from shared `pg` codecs. Zod is already the validation layer (`src/config.ts`, `src/server.ts`) and needs one declaration per query; readers give control over the error message. Do not use `executeQuery<T>()` with a cast, which checks nothing.
+2. Convert one module at a time: map the rows to a named interface at the query, so nothing after that handles `unknown`. There are about 45 call sites. Keep what `toInt` and `toBigInt` reject today, and decide for each column whether NULL is legal. Isolate the health checks from each other before converting them: `DatabaseHealthTool` (`src/database-health/database-health.ts`) has one `catch` around all of them, so one reader that throws would replace the whole report with an error, as in "A never-used sequence makes the whole health check fail".
+3. `cells` is then left in `cells.ts` and the callers that pass rows through (`execute_sql`, `list_schemas`, the top-queries rows and two copies in `src/index/`). Delete `RowResult`: `SqlExecutor.executeQuery` (`src/sql/safe-sql.ts`) returns `Promise<Row[]>`, with `type Row = Record<string, unknown>` defined next to `SqlExecutor`, and a second method returns `{ fields, rows }` for `execute_sql` alone. `explain` reports an empty array the way it reports `null` today.
 
-Steps 1 and 2 are mechanical but wide: they touch the driver, `tests/support/fake-pool.ts` and the five test files. The tool output has its own entry, "Index advisor output is untyped and formats numbers as text".
+This removes the local helpers and five of the eight `typescript/no-base-to-string` disables: the two `nullableText` helpers, `replication-calc.ts`, `src/sql/extension-utils.ts` and `toInt`. The other three (`src/sql/literal.ts`, `src/sql/bind-params.ts`, `src/index/dta-calc.ts`) write a value into SQL or read a parse tree, and stay with the stringification entry. Delete "Missing or non-numeric costs and NULL counters become 0" when this lands. The `{ fields, rows }` result is where "A zero-column SELECT is reported as "no result set"" and "Duplicate column names collapse in a row object" can be fixed.
+
+The other shapes this entry used to list have their own entries: "Tuples and forwarding classes in the advisor and explain code" and "Advisor sets compare `IndexRecommendation` objects by identity".
 
 ## 2026-11-26 · Minor · Tooling · `promise-function-async` and `strict-boolean-expressions` are switched off
 
@@ -354,8 +344,78 @@ About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and 
 `analyze_query_indexes` and `analyze_workload_indexes` build their result in `src/index/presentation.ts` as `Record<string, unknown>`, in the shape the Python server printed:
 
 - `recommendations` is an array, or the sentence `No index recommendations found.` when there are none.
-- Costs and improvement multiples are strings made by `formatFixed` (`"12.3"`, `"inf"`), and `query_impact` uses `"∞"` for a zero new cost.
+- Costs and improvement multiples are strings made by `formatFixed`. A cost that is infinite prints `"inf"`, and `query_impact` puts `"∞"` in `improvement_multiple` unless both costs are above zero.
 - `total_size_bytes` and `index_estimated_size` hold `naturalSize` text such as `1.0 kB`, not a byte count.
-- `_langfuse_trace` carries the advisor's trace lines unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` is set to something other than `true`, which costs tokens on every call.
 
-No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate any result. Give the result a zod schema with one type per field: numbers as numbers, the unit in the key name (`size_bytes`), an empty array for no recommendations, and the trace off by default. Then declare it as the tool's `outputSchema` and return `structuredContent` next to the text; the other tools with JSON results can follow. Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It settles "`naturalSize` uses decimal units" for these two tools.
+No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate a result. Give the two tools a zod output schema with one type per field: numbers as numbers, `null` where a cost or multiple is not finite, the unit in the key name (`size_bytes`), and an empty array for no recommendations. Then declare it as `outputSchema` and return `structuredContent` next to the text.
+
+Do this after "Health, top-queries and index tools report failures without `isError`". The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`, and today the advisor returns its failures as ordinary `{ "error": ... }` output. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
+
+Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
+
+## 2026-11-28 · Minor · Performance · Index advisor output includes its trace by default
+
+`executeAnalysis` in `src/index/presentation.ts` adds `_langfuse_trace`, the advisor's trace lines, to every result of `analyze_query_indexes` and `analyze_workload_indexes` unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` is set to something other than `true`. The trace is debugging output and costs an agent tokens on every call. Leave it out unless the variable is `true`, and update the README, which documents the default.
+
+## 2026-11-28 · Minor · Refactor · Tuples and forwarding classes in the advisor and explain code
+
+Shapes carried over from Python that TypeScript would write as named objects and interfaces:
+
+- `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
+- Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
+- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
+- `WorkloadEntry` (`index-opt-base.ts`) and `ColumnStats` (`src/sql/bind-params.ts`) are `Record<string, unknown>`.
+
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Let `checkHypopgInstallationStatus` return the extension's status and let its two callers render the message, which also removes its `messageType` parameter. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions, and give `WorkloadEntry` and `ColumnStats` named fields. No output changes.
+
+## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
+
+`generateRecommendations` in `src/index/dta-calc.ts` keeps candidates and chosen indexes in `Set<IndexRecommendation>`. A JavaScript `Set` compares objects by identity, where the Python original compared them by table, columns and method. `candidateIndexes.delete(idx)` therefore never removes a seed index, because the candidates are new objects, and two candidates for the same index would both stay in the set. Neither is reachable today: the only seed is the empty one (see "Seed-column handling in the advisor is partly dead"), and no path is known to produce two equal candidates. Key the sets by `IndexDefinition.key`, as `configurationKey` (`src/index/index-opt-base.ts`) does.
+
+## 2026-11-28 · Major · Bug · `date` and `timestamp` values are shifted by the host's time zone
+
+`pg` parses `date`, `timestamp` and `timestamptz` into JavaScript `Date` objects, and `toJson` (`src/tools/result.ts`) prints a `Date` as a UTC instant. `customTypes` in `src/sql/sql-driver.ts` replaces only the `int8` parser. On a host at UTC+1 with the session time zone UTC, `execute_sql` returns:
+
+- `date '2024-03-10'` as `"2024-03-09T23:00:00.000Z"`, the day before.
+- `timestamp '2024-03-10 12:34:56.123456'` as `"2024-03-10T11:34:56.123Z"`, shifted by the host's offset and marked as UTC.
+- `timestamptz` as the right instant, but cut to milliseconds like the other two.
+- `infinity` and `-infinity` of all three as `null`, the same as NULL.
+- `date '0044-03-15 BC'` as `"-000043-03-14T23:02:16.000Z"`.
+
+Arrays of these types behave the same. An agent reading a `date` column therefore gets the wrong day unless the server's host runs in UTC. Return the three types and their arrays as the text Postgres sends, through parsers in `customTypes`. No internal query reads a `Date` today; `src/sql/literal.ts` only writes one. It changes tool output, so commit it as `feat!` and add it to README's "Differences from upstream".
+
+## 2026-11-28 · Minor · Bug · Float `NaN` and `Infinity` are returned as `null`
+
+`pg` parses `float4` and `float8` into JavaScript numbers, and `JSON.stringify` writes `NaN`, `Infinity` and `-Infinity` as `null`. `toJson` (`src/tools/result.ts`) and `rowsToJson` (`src/top-queries/top-queries-calc.ts`) therefore return `'NaN'::float8` and `'Infinity'::float8` as `null`, alone or in an array, and an agent cannot tell them from NULL. `'NaN'::numeric` is not affected, because `numeric` stays a string. Write the three values as the strings `"NaN"`, `"Infinity"` and `"-Infinity"`.
+
+## 2026-11-28 · Minor · Bug · Numbers beyond a double are returned inconsistently or rounded
+
+`customTypes` in `src/sql/sql-driver.ts` parses a scalar `int8` to a `number` when it is safe and a `bigint` otherwise, and `toJson` (`src/tools/result.ts`) writes a `bigint` as a string. Everything else uses the `pg` defaults. `execute_sql` then returns:
+
+- `int8` as a JSON number up to 2^53 and as a string above it, so one column can hold both.
+- `int8[]` as an array of strings, whatever the values.
+- `numeric[]` as an array of JavaScript numbers: `12345678901234567890.123456789` comes back as `12345678901234567000`, while a scalar `numeric` is an exact string.
+- An integer above 2^53 inside `json` or `jsonb` rounded, because `pg` runs `JSON.parse` on the column: `{"n": 9007199254740993}` comes back with `9007199254740992`.
+
+Decide one rule for `int8` (always a string, or a number when safe) and apply it to the array type; parse `numeric[]` to strings; return `json` and `jsonb` as the text Postgres sends, or parse them without losing digits. `rowsToJson` in `src/top-queries/top-queries-calc.ts` repeats the `bigint` replacer of `toJson` and should use it. A changed type is a breaking change (`feat!`).
+
+## 2026-11-28 · Minor · Bug · `bytea` values are returned as a `Buffer` object
+
+`pg` parses `bytea` into a `Buffer`, which `toJson` (`src/tools/result.ts`) writes through `Buffer.toJSON`: `'\xdeadbeef'::bytea` comes back as `{"type":"Buffer","data":[222,173,190,239]}`, one array element per byte, also inside a `bytea[]`. A column of small binary values fills an agent's context, and the output is not something Postgres accepts back. Return the hex text Postgres sends (`\xdeadbeef`).
+
+## 2026-11-28 · Minor · Feature · `interval`, `point` and `circle` are returned as driver objects
+
+`pg` parses three types into its own objects, which `toJson` (`src/tools/result.ts`) writes as they are: `interval '1 year 2 mons 3 days 04:05:06.789'` as `{"years":1,"months":2,"days":3,"hours":4,"minutes":5,"seconds":6,"milliseconds":789}`, `point '(1,2)'` as `{"x":1,"y":2}` and `circle '<(1,2),3>'` as `{"x":1,"y":2,"radius":3}`. Every other geometric type, and every range, comes back as Postgres text (`box` as `"(1,1),(0,0)"`), and none of the three objects can be pasted back into SQL. Return the text Postgres sends for these three and their arrays. It changes tool output (`feat!`).
+
+## 2026-11-28 · Major · Tests · No test covers how `execute_sql` returns each Postgres type
+
+No test checks the JSON a value of any type comes back as. The unit tests replace `pg` (`tests/support/fake-pool.ts`), so the type parsers never run, and no integration test reads a typed value. The five type entries above were found by hand. Add one integration test that selects literals through `execute_sql` and compares the returned JSON, covering at least:
+
+- `int8` below and above 2^53, `int8[]`, `numeric`, `numeric[]`, `numeric 'NaN'`, `float8` with `NaN` and both infinities, `money`, `oid`, `xid8`.
+- `date`, `timestamp`, `timestamptz` with microseconds, their `infinity` values, a BC date, `time`, `timetz`, `interval`, and an array of each date and time type. Run it with `TZ` set to a zone other than UTC, or it cannot see the shift.
+- `json` and `jsonb` holding an integer above 2^53, and `jsonb[]`.
+- `bytea` and `bytea[]`.
+- `uuid`, `inet`, `macaddr`, `bit`, `point`, `circle`, `box`, a range, a multirange (Postgres 14 and later), `tsvector`, `xml`, a composite row, an enum and an array of an enum.
+- NULL, a text array holding NULL and the string `NULL`, a boolean array and a two-dimensional array.
+
+Arrays of enums and of other user-defined types have not been checked at all; `pg` has no parser for them, so they probably come back as one string such as `{a,b}`.

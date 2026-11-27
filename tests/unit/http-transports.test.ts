@@ -5,9 +5,11 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, expect, it as test, vi } from 'vitest';
 
-import type { HttpServerHandle } from '../../src/server.ts';
-import { createServer, startSseServer, startStreamableHttpServer } from '../../src/server.ts';
+import { createServer } from '../../src/server.ts';
+import type { HttpServerHandle } from '../../src/transports/http.ts';
 import type { HttpServerOptions } from '../../src/transports/request-guard.ts';
+import { startSseServer } from '../../src/transports/sse.ts';
+import { startStreamableHttpServer } from '../../src/transports/streamable-http.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
 const HOST = '127.0.0.1';

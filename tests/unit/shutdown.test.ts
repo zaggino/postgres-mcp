@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { AccessMode } from '../../src/sql/driver-factory.ts';
+import { stubTransports } from '../support/transports.ts';
 
-// `shutdown` refuses to run twice per module, so every test loads a fresh copy of the server.
+// `shutdown` refuses to run twice per module, so every test loads a fresh copy of main.
 async function load() {
-  const server = await import('../../src/server.ts');
+  const main = await import('../../src/main.ts');
   const { DatabaseRegistry } = await import('../../src/database-registry.ts');
-  return { ...server, DatabaseRegistry };
+  return { ...main, DatabaseRegistry };
 }
 
 beforeEach(() => {
@@ -40,15 +41,18 @@ test('shutdown on SIGTERM closes the registry and exits with 143', async () => {
 });
 
 test('the stdio client going away closes the registry main created and exits with 0', async () => {
-  const { main, runners, DatabaseRegistry } = await load();
-  const runStdio = vi.spyOn(runners, 'runStdio').mockResolvedValue();
+  const { main, DatabaseRegistry } = await load();
+  const transports = stubTransports();
   const closeAll = vi.spyOn(DatabaseRegistry.prototype, 'closeAll');
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- process.exit returns never; the stub must return so shutdown can finish
   const exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
 
-  await main(['--database=app']);
-  const onClientGone = runStdio.mock.calls[0]?.[1];
-  onClientGone?.();
+  await main(['--database=app'], transports);
+  const onClientGone = transports.stdio.mock.calls[0]?.[1];
+  if (!onClientGone) {
+    throw new Error('stdio was not called');
+  }
+  onClientGone();
 
   await vi.waitFor(() => {
     expect(exit).toHaveBeenCalledWith(0);

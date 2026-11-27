@@ -33,12 +33,12 @@ export interface CliOptions {
   transport: Transport;
 }
 
-/** The HTTP transport's options, or undefined for stdio. Session limits and allow-lists default where they are used. */
-export function httpOptions(options: CliOptions): HttpServerOptions | undefined {
-  if (options.transport === 'stdio') {
-    return undefined;
-  }
-  const sse = options.transport === 'sse';
+/** The HTTP transports' `--transport` values. */
+export type HttpTransport = Exclude<Transport, 'stdio'>;
+
+/** The options of the HTTP transport `transport`. Session limits and allow-lists default where they are used. */
+export function httpOptions(options: CliOptions, transport: HttpTransport): HttpServerOptions {
+  const sse = transport === 'sse';
   return {
     host: sse ? options.sseHost : options.streamableHttpHost,
     port: sse ? options.ssePort : options.streamableHttpPort,
@@ -201,8 +201,11 @@ function parseAllowList(
 }
 
 function requireAllowedHosts(options: CliOptions): void {
-  const http = httpOptions(options);
-  if (http && !LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
+  if (options.transport === 'stdio') {
+    return;
+  }
+  const http = httpOptions(options, options.transport);
+  if (!LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
     throw new CliError(
       `binding ${http.host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
     );

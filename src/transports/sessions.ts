@@ -1,3 +1,8 @@
+import type { ServerResponse } from 'node:http';
+
+import { errorMessage } from '../errors.ts';
+import { log } from '../log.ts';
+
 export const DEFAULT_MAX_SESSIONS = 100;
 export const DEFAULT_SESSION_IDLE_MINUTES = 30;
 
@@ -8,17 +13,10 @@ interface SessionEntry<T> {
   transport: T;
 }
 
-function logError(message: string): void {
-  process.stderr.write(`ERROR: ${message}\n`);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function closeTransport(id: string, transport: { close: () => Promise<void> }): void {
-  transport.close().catch((error: unknown) => {
-    logError(`Error closing session ${id}: ${errorMessage(error)}`);
+/** Closes a session's transport; a failure is logged, never thrown. */
+function closeTransport(id: string, transport: { close: () => Promise<void> }): Promise<void> {
+  return transport.close().catch((error: unknown) => {
+    log('ERROR', `Error closing session ${id}: ${errorMessage(error)}`);
   });
 }
 
@@ -59,7 +57,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   /** A request for the session is being served. */
-  begin(id: string): void {
+  #begin(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
       entry.inFlight += 1;
@@ -69,7 +67,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   /** A request for the session finished; with none left, the idle timer starts afresh. */
-  end(id: string): void {
+  #end(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
       entry.inFlight = Math.max(0, entry.inFlight - 1);
@@ -77,6 +75,14 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
         this.#startTimer(id, entry);
       }
     }
+  }
+
+  /** Keeps the session's idle timer stopped until the response closes. */
+  hold(id: string, res: ServerResponse): void {
+    this.#begin(id);
+    res.once('close', () => {
+      this.#end(id);
+    });
   }
 
   remove(id: string): void {
@@ -87,18 +93,18 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     }
   }
 
+  /** Removes the session and closes its transport, logging a failure to close. */
+  close(id: string, transport: T): void {
+    this.remove(id);
+    void closeTransport(id, transport);
+  }
+
   async closeAll(): Promise<void> {
     const entries = [...this.#entries.entries()];
     for (const [id] of entries) {
       this.remove(id);
     }
-    await Promise.all(
-      entries.map(([id, { transport }]) =>
-        transport.close().catch((error: unknown) => {
-          logError(`Error closing session ${id}: ${errorMessage(error)}`);
-        })
-      )
-    );
+    await Promise.all(entries.map(([id, { transport }]) => closeTransport(id, transport)));
   }
 
   #startTimer(id: string, entry: SessionEntry<T>): void {
@@ -109,9 +115,8 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
       return;
     }
     entry.timer = setTimeout(() => {
-      process.stderr.write(`INFO: Closing session ${id} after ${this.#idleMinutes} idle minute(s)\n`);
-      this.remove(id);
-      closeTransport(id, entry.transport);
+      log('INFO', `Closing session ${id} after ${this.#idleMinutes} idle minute(s)`);
+      this.close(id, entry.transport);
     }, idleMs);
     entry.timer.unref();
   }

@@ -4,7 +4,7 @@ Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-
 
 ## 2026-11-26 · Minor · Bug · Shutdown does not cover SIGHUP or a closed stdout
 
-`src/server.ts` installs handlers for SIGTERM and SIGINT and reacts to stdin closing, but not to SIGHUP. Whether a reply written after the client closed stdout (EPIPE) ends the process without closing the pool has not been checked; `zaggino/lazy-pg-mcp` records that failure for itself. Handle SIGHUP, and route a stdout `error` through `shutdown()` if the check shows the problem.
+`src/main.ts` installs handlers for SIGTERM and SIGINT and reacts to stdin closing, but not to SIGHUP. Whether a reply written after the client closed stdout (EPIPE) ends the process without closing the pool has not been checked; `zaggino/lazy-pg-mcp` records that failure for itself. Handle SIGHUP, and route a stdout `error` through `shutdown()` if the check shows the problem.
 
 ## 2026-11-26 · Minor · Docs · `AGENTS.md` lacks two rules that `zaggino/lazy-pg-mcp` has
 
@@ -174,17 +174,13 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 `src/database-health/sequence-health-calc.ts` computes the maximum value of every sequence as if it were `bigint`, so `smallint` sequences are never reported as near exhaustion.
 
-## 2026-11-26 · Major · Refactor · Split `src/server.ts`
-
-`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, the SSE and streamable HTTP servers with their request handling, stdio, and startup and shutdown (CLI parsing is in `src/cli.ts`; `src/transports/` holds only the request guard and the session store so far). Move the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters.
-
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
 
 ## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
 
-`errorMessage` is defined in 9 modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. Give each one home (`src/log.ts`, `src/errors.ts`, `src/py-format.ts`) while keeping stderr output unchanged.
+`errorMessage` is redefined in nine modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them; move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
@@ -203,7 +199,7 @@ Of the `promise-function-async` findings, 24 are in `tests/`, and most of the re
 Replacing a truthiness check on a nullable string or boolean changes which values pass, for example `""`. Triage these five first, because they are not that case:
 
 - `!this.timeout` in `src/sql/safe-sql.ts`, where `0` means no timeout.
-- `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/server.ts`.
+- `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/tools/objects.ts`.
 
 Go through the findings, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.
 
@@ -229,7 +225,7 @@ The two agree for strings and numbers, but not for the parsed `json`/`jsonb` obj
 
 ## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
 
-`SSEServerTransport` (used in `src/server.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. Each use carries an inline `typescript/no-deprecated` disable, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision. Once the planned `src/transports/` split (see "Split `src/server.ts`") is done, one file-level disable in the SSE module can replace the per-line ones.
+`SSEServerTransport` (used in `src/transports/sse.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. `src/transports/sse.ts` carries a file-level `typescript/no-deprecated` disable and the test an inline one, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision.
 
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
@@ -285,15 +281,15 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 
 ## 2026-11-27 · Minor · Bug · Object listings read `information_schema`, which hides objects the role cannot access
 
-`list_schemas`, `list_objects` and `get_object_details` in `src/server.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. A divergence would read `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and report what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
+`list_schemas`, `list_objects` and `get_object_details` in `src/tools/objects.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. A divergence would read `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and report what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
 
 ## 2026-11-27 · Minor · Bug · Shutdown waits without limit for running statements
 
-`shutdown()` in `src/server.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
+`shutdown()` in `src/main.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
 
 ## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
 
-`formatError` in `src/server.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, keeping the text upstream produces, then drop the clause from `serverInstructions` and the note from README's "Differences from upstream".
+`formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, keeping the text upstream produces, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
 
 ## 2026-11-27 · Minor · Security · Query cancel requests are sent without TLS
 
@@ -310,3 +306,15 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 ## 2026-11-27 · Minor · Refactor · Split `src/sql/sql-driver.ts`
 
 `src/sql/sql-driver.ts` is about 670 lines and holds six concerns: password masking (`obfuscatePassword`, `maskError`), the error classes and their classifier, the pg adapter with the CancelRequest wire protocol (`pgPool`, `sendCancelRequest`, `poolConfig`, `customTypes`, the pool constants), the per-call transaction runner (`executeWithClient`), `DbConnPool` and `SqlDriver`. `src/sql/connection-queue.ts` also imports its types from it while it imports `queuedPool` back. Move `PoolLike`/`ClientLike` and the pg adapter into `src/sql/pg-pool.ts` and the masking into its own module.
+
+## 2026-11-27 · Minor · Refactor · Each tool is split between `src/server.ts` and `src/tools/`
+
+`createServer` in `src/server.ts` holds each database tool's name, description, zod schema and description constants, while its body lives in `src/tools/objects.ts` or `src/tools/analysis.ts`; eight lambdas map the snake_case arguments to positional parameters, so adding a parameter touches two files and the adapter. Let the tools modules export whole tool definitions (name, description, annotations, `errorLog`, `inputSchema`, `body(sqlDriver, args)`, typed through a small `defineDatabaseTool` helper; `execute_sql`'s as a function of the access mode) and have `createServer` loop over them, leaving it the register helper, `list_databases` and `cancel_query`. Regroup the tools by what they do while at it: `analysis.ts` also holds `execute_sql` and `explain_query`.
+
+## 2026-11-27 · Minor · Refactor · `offersCancelQuery` lives in the instructions module
+
+`offersCancelQuery` in `src/server-instructions.ts` decides whether `createServer` (`src/server.ts`) registers `cancel_query`, and `server.ts` imports it back from the module that only renders the instructions text. Let `createServer` (or `DatabaseRegistry`, which owns the access mode) make that decision and pass it to `serverInstructions`, so the instructions module only renders text.
+
+## 2026-11-27 · Minor · Tests · Shutdown state is module-level
+
+`src/main.ts` keeps `shutdownInProgress` and `removeSignalHandlers` as module variables, so `shutdown` refuses to run twice per module load and `tests/unit/shutdown.test.ts` has to re-import `main.ts` after `vi.resetModules()` for every test. Hold that state in an object that `main` creates (and `shutdown` receives), so tests can run it without reloading the module.

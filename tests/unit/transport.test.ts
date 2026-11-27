@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { main, runners } from '../../src/server.ts';
+import type { Transports } from '../../src/main.ts';
+import { main } from '../../src/main.ts';
 
 function spyOnTransports() {
   return {
-    stdio: vi.spyOn(runners, 'runStdio').mockResolvedValue(),
-    sse: vi.spyOn(runners, 'runSse').mockResolvedValue(),
-    http: vi.spyOn(runners, 'runStreamableHttp').mockResolvedValue(),
+    stdio: vi.fn<Transports['runStdio']>().mockResolvedValue(undefined),
+    sse: vi.fn<Transports['runSse']>().mockResolvedValue(undefined),
+    http: vi.fn<Transports['runStreamableHttp']>().mockResolvedValue(undefined),
   };
+}
+
+function transportsOf(spies: ReturnType<typeof spyOnTransports>): Transports {
+  return { runStdio: spies.stdio, runSse: spies.sse, runStreamableHttp: spies.http };
 }
 
 const DATABASE_ARG = '--database=app';
@@ -25,7 +30,7 @@ describe('transport selection', () => {
   it('--transport=stdio runs only the stdio transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport=stdio']);
+    await main([DATABASE_ARG, '--transport=stdio'], transportsOf(spies));
 
     expect(spies.stdio).toHaveBeenCalledOnce();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -35,7 +40,7 @@ describe('transport selection', () => {
   it('--transport=sse runs only the SSE transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport=sse']);
+    await main([DATABASE_ARG, '--transport=sse'], transportsOf(spies));
 
     expect(spies.stdio).not.toHaveBeenCalled();
     expect(spies.sse).toHaveBeenCalledOnce();
@@ -45,7 +50,7 @@ describe('transport selection', () => {
   it('--transport=streamable-http runs only the streamable HTTP transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport=streamable-http']);
+    await main([DATABASE_ARG, '--transport=streamable-http'], transportsOf(spies));
 
     expect(spies.stdio).not.toHaveBeenCalled();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -55,7 +60,7 @@ describe('transport selection', () => {
   it('defaults to the stdio transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG]);
+    await main([DATABASE_ARG], transportsOf(spies));
 
     expect(spies.stdio).toHaveBeenCalledOnce();
     expect(spies.sse).not.toHaveBeenCalled();
@@ -65,7 +70,7 @@ describe('transport selection', () => {
   it('accepts a separate value for --transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport', 'sse']);
+    await main([DATABASE_ARG, '--transport', 'sse'], transportsOf(spies));
 
     expect(spies.sse).toHaveBeenCalledOnce();
   });
@@ -75,14 +80,17 @@ describe('transport host and port', () => {
   it('passes the streamable HTTP host and port to the transport', async () => {
     const spies = spyOnTransports();
 
-    await main([
-      DATABASE_ARG,
-      '--transport=streamable-http',
-      '--streamable-http-host=0.0.0.0',
-      '--streamable-http-port=9000',
-      '--allowed-hosts=mcp.example,other.example:9000',
-      '--allowed-origins=https://app.example',
-    ]);
+    await main(
+      [
+        DATABASE_ARG,
+        '--transport=streamable-http',
+        '--streamable-http-host=0.0.0.0',
+        '--streamable-http-port=9000',
+        '--allowed-hosts=mcp.example,other.example:9000',
+        '--allowed-origins=https://app.example',
+      ],
+      transportsOf(spies)
+    );
 
     expect(spies.http).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
@@ -97,7 +105,10 @@ describe('transport host and port', () => {
   it('passes the SSE host and port to the transport', async () => {
     const spies = spyOnTransports();
 
-    await main([DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080', '--allowed-hosts=*']);
+    await main(
+      [DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080', '--allowed-hosts=*'],
+      transportsOf(spies)
+    );
 
     expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',

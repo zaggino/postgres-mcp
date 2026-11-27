@@ -177,6 +177,17 @@ test('a recorded error masks every password of a connection URL it echoes', asyn
   expect(conn.lastError).not.toMatch(/first|second/u);
 });
 
+test('a recorded error masks the password of a URL whose text holds a replacement pattern such as $&', async () => {
+  const url = 'postgresql://user:p@hunter2@localhost/db$&';
+  const conn = new DbConnPool(url, () => {
+    throw new Error(`could not connect to ${url}`);
+  });
+
+  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
+
+  expect(conn.lastError).not.toContain('hunter2');
+});
+
 test('cancelling a call that waits for a free connection rejects it at once and releases the late connection', async () => {
   const fake = createFakePool();
   let freeConnection = () => {};

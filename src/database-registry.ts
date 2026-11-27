@@ -156,7 +156,8 @@ class IdlePool {
     return this.#uri;
   }
 
-  // A pool marked invalid by a failed query is still held, and its idle timer still runs, so it counts as open.
+  // A pool invalidated by a connection-level failure is still held until the next call rebuilds it, and its idle timer
+  // still runs, so it counts as open.
   get isOpen(): boolean {
     return Boolean(this.#conn?.pool);
   }
@@ -166,7 +167,7 @@ class IdlePool {
     return this.#retired && this.#inFlight === 0;
   }
 
-  /** Why the last call could not reach the database; kept from the closed pool until a new one is opened. */
+  /** Why the last call could not reach the database; carried from a closed pool into the next until a call reaches it. */
   get lastError(): string | null {
     return this.#conn ? this.#conn.lastError : this.#lastError;
   }
@@ -176,7 +177,7 @@ class IdlePool {
   }
 
   async use<T>(fn: (conn: DbConnPool) => Promise<T>): Promise<T> {
-    this.#conn ??= new DbConnPool(this.#uri, this.#poolFactory);
+    this.#conn ??= new DbConnPool(this.#uri, this.#poolFactory, this.#lastError);
     const conn = this.#conn;
     this.#inFlight += 1;
     this.#clearTimer();

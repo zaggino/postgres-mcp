@@ -306,3 +306,7 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 ## 2026-11-27 · Minor · Tests · Gaps in the cancellation and statement-timeout tests
 
 Untested: `cancel_query` in one session cannot list or cancel another session's calls; an explicit `statementTimeoutSeconds: 0` in restricted mode sends no `SET statement_timeout`; `--statement-timeout` reaches the registry and the server instructions through `main` (the config tests stop at `resolveConfig`).
+
+## 2026-11-27 · Minor · Refactor · Split `src/sql/sql-driver.ts`
+
+`src/sql/sql-driver.ts` is about 670 lines and holds six concerns: password masking (`obfuscatePassword`, `maskError`), the error classes and their classifier, the pg adapter with the CancelRequest wire protocol (`pgPool`, `sendCancelRequest`, `poolConfig`, `customTypes`, the pool constants), the per-call transaction runner (`executeWithClient`), `DbConnPool` and `SqlDriver`. `src/sql/connection-queue.ts` also imports its types from it while it imports `queuedPool` back. Move `PoolLike`/`ClientLike` and the pg adapter into `src/sql/pg-pool.ts` and the masking into its own module.

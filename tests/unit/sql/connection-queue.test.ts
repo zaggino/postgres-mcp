@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { queuedPool, WAIT_TIMEOUT_MESSAGE } from '../../../src/sql/connection-queue.ts';
+import { PoolClosedError, queuedPool, WAIT_TIMEOUT_MESSAGE } from '../../../src/sql/connection-queue.ts';
 import { createFakePool } from '../../support/fake-pool.ts';
 
 test('a checkout cancelled while the pool is full leaves the queue and never takes a client', async () => {
@@ -42,4 +42,42 @@ test('a checkout that gets no free client within the wait timeout fails with pg-
   const next = await pool.connect();
   next.release();
   expect(fake.releases).toHaveLength(2);
+});
+
+test('a release that throws still frees its slot for the next checkout', async () => {
+  const fake = createFakePool();
+  const pool = queuedPool(
+    {
+      connect: async () => {
+        const client = await fake.pool.connect();
+        return {
+          ...client,
+          release: () => {
+            throw new Error('Release called on client which has already been released to the pool.');
+          },
+        };
+      },
+      end: fake.end,
+    },
+    1,
+    60_000
+  );
+  const held = await pool.connect();
+
+  expect(() => {
+    held.release();
+  }).toThrow('already been released');
+
+  await expect(pool.connect()).resolves.toBeDefined();
+});
+
+test('closing the pool fails the checkouts still waiting at once', async () => {
+  const fake = createFakePool();
+  const pool = queuedPool(fake.pool, 1, 60_000);
+  await pool.connect();
+  const waiting = pool.connect();
+
+  await pool.end();
+
+  await expect(waiting).rejects.toBeInstanceOf(PoolClosedError);
 });

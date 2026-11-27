@@ -30,6 +30,8 @@ test('cancel_query lists the running call, cancels it by id, and the call ends w
       .array(z.object({ call_id: z.string(), tool: z.string(), database: z.string() }))
       .parse(JSON.parse(text));
     expect(listed).toMatchObject([{ tool: 'execute_sql', database: 'app' }]);
+    // A call cancelled before its statement reaches Postgres needs no cancel request, so wait until it has.
+    expect(fakes.get('app')?.queries.map((query) => query.text)).toContain(SLOW_SQL);
     callId = listed[0]?.call_id ?? '';
   });
 

@@ -13,7 +13,7 @@ test('poolConnect opens the pool, probes it with SELECT 1 and marks it valid', a
 
   const pool = await dbPool.poolConnect();
 
-  expect(pool).toBe(fake.pool);
+  expect(pool).toBe(dbPool.pool);
   expect(factory).toHaveBeenCalledExactlyOnceWith(URL);
   expect(fake.queries.map((q) => q.text)).toEqual(['SELECT 1']);
   expect(fake.releases).toHaveLength(1);
@@ -32,7 +32,8 @@ test('poolConnect succeeds on a second attempt after the first fails', async () 
   await expect(dbPool.poolConnect()).rejects.toThrow('Connection attempt failed: Connection error');
   const pool = await dbPool.poolConnect();
 
-  expect(pool).toBe(good.pool);
+  expect(pool).toBe(dbPool.pool);
+  expect(good.queries.map((q) => q.text)).toEqual(['SELECT 1']);
   expect(dbPool.isValid).toBe(true);
 });
 
@@ -87,7 +88,8 @@ test('poolConnect rebuilds the pool after it was marked invalid', async () => {
 
   const pool = await dbPool.poolConnect();
 
-  expect(pool).toBe(second.pool);
+  expect(pool).toBe(dbPool.pool);
+  expect(second.queries.map((q) => q.text)).toEqual(['SELECT 1']);
   expect(first.end).toHaveBeenCalledOnce();
 });
 
@@ -133,8 +135,9 @@ test('concurrent poolConnect calls on an invalid pool build one new pool and end
 
   const [a, b] = await Promise.all([dbPool.poolConnect(), dbPool.poolConnect()]);
 
-  expect(a).toBe(second.pool);
-  expect(b).toBe(second.pool);
+  expect(a).toBe(dbPool.pool);
+  expect(b).toBe(a);
+  expect(second.queries.map((q) => q.text)).toEqual(['SELECT 1']);
   expect(factory).toHaveBeenCalledTimes(2);
   expect(first.end).toHaveBeenCalledOnce();
   expect(second.end).not.toHaveBeenCalled();

@@ -97,3 +97,19 @@ test('list_databases shows why the last call could not reach a database, passwor
   await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 42 AS answer' });
   await expect(callToolText(client, 'list_databases')).resolves.not.toContain('last_error');
 });
+
+test('a connection error stays listed after its pool closes, through a call cancelled before reaching the database', async () => {
+  const { registry } = createTestRegistry(['a'], {
+    handler: () => {
+      throw new Error('connection refused');
+    },
+  });
+  await expect(registry.use('a', (driver) => driver.executeQuery('SELECT 2'))).rejects.toThrow('connection refused');
+  await registry.closeAll();
+
+  await expect(
+    registry.use('a', (driver) => driver.executeQuery('SELECT 2'), { signal: AbortSignal.abort() })
+  ).rejects.toThrow('Query cancelled');
+
+  expect((await registry.list()).databases).toMatchObject([{ database: 'a', last_error: 'connection refused' }]);
+});

@@ -191,7 +191,9 @@ export class ExplainPlanTool {
       }
     } catch (error) {
       logError(`Error in explain_with_hypothetical_indexes: ${errorMessage(error)}`);
-      return new ErrorResult(`Error generating explain plan with hypothetical indexes: ${errorMessage(error)}`);
+      return new ErrorResult(`Error generating explain plan with hypothetical indexes: ${errorMessage(error)}`, {
+        cause: error,
+      });
     }
   }
 
@@ -254,7 +256,7 @@ export class ExplainPlanTool {
         return new ErrorResult(`Internal error converting explain plan - do not retry: ${errorMessage(error)}`);
       }
     } catch (error) {
-      return new ErrorResult(`Error executing explain plan: ${errorMessage(error)}`);
+      return new ErrorResult(`Error executing explain plan: ${errorMessage(error)}`, { cause: error });
     }
   }
 

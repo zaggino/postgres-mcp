@@ -18,12 +18,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Simple error result class. */
+/** Simple error result class; `cause` keeps the error it was built from. */
 export class ErrorResult {
   readonly value: string;
+  readonly cause: unknown;
 
-  constructor(message: string) {
+  constructor(message: string, options?: { cause?: unknown }) {
     this.value = message;
+    this.cause = options?.cause;
   }
 
   toText(): string {

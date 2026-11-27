@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import pg from 'pg';
 import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
@@ -22,7 +23,7 @@ import { ExplainPlanTool } from './explain/explain-plan.ts';
 import { DatabaseTuningAdvisor } from './index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from './index/index-opt-base.ts';
 import { TextPresentation } from './index/presentation.ts';
-import { AccessMode, getSqlDriver } from './sql/driver-factory.ts';
+import { AccessMode, getSqlDriver, RESTRICTED_TIMEOUT_SECONDS } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
@@ -54,8 +55,15 @@ function formatTextResponse(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
-function formatError(error: string): CallToolResult {
-  return formatTextResponse(`Error: ${error}`);
+/**
+ * Upstream's `Error: ...` text. A failure Postgres raised for the statement keeps upstream's plain result; any other
+ * failure (configuration, connection, restricted-mode rejection, timeout, argument check, internal) sets `isError`.
+ */
+function formatError(error: unknown): CallToolResult {
+  const message = error instanceof ErrorResult ? error.toText() : errorMessage(error);
+  const cause = error instanceof ErrorResult ? error.cause : error;
+  const result = formatTextResponse(`Error: ${message}`);
+  return cause instanceof pg.DatabaseError ? result : { ...result, isError: true };
 }
 
 function cell(row: { cells: Record<string, unknown> }, name: string): unknown {
@@ -116,7 +124,7 @@ async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
     return formatTextResponse(toJson(schemas));
   } catch (error) {
     log('ERROR', `Error listing schemas: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -184,7 +192,7 @@ async function listObjects(sqlDriver: SqlExecutor, schemaName: string, objectTyp
     return formatTextResponse(toJson(objects));
   } catch (error) {
     log('ERROR', `Error listing objects: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -320,7 +328,7 @@ async function getObjectDetails(
     return formatTextResponse(toJson(result));
   } catch (error) {
     log('ERROR', `Error getting object details: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -356,10 +364,10 @@ async function explainQuery(
     if (result instanceof ExplainPlanArtifact) {
       return formatTextResponse(result.toText());
     }
-    return formatError(result instanceof ErrorResult ? result.toText() : 'Error processing explain plan');
+    return formatError(result instanceof ErrorResult ? result : 'Error processing explain plan');
   } catch (error) {
     log('ERROR', `Error explaining query: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -372,7 +380,7 @@ async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<CallTool
     return formatTextResponse(toJson(rows.map((r) => r.cells)));
   } catch (error) {
     log('ERROR', `Error executing query: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -384,7 +392,7 @@ async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: nu
     return formatTextResponse(toJson(result));
   } catch (error) {
     log('ERROR', `Error analyzing workload: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -407,7 +415,7 @@ async function analyzeQueryIndexes(
     return formatTextResponse(toJson(result));
   } catch (error) {
     log('ERROR', `Error analyzing queries: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
@@ -431,19 +439,30 @@ async function getTopQueries(sqlDriver: SqlExecutor, sortBy: string, limit: numb
     return formatError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.");
   } catch (error) {
     log('ERROR', `Error getting slow queries: ${errorMessage(error)}`);
-    return formatError(errorMessage(error));
+    return formatError(error);
   }
 }
 
+/** Sent to every client at initialization; each clause costs tokens in every session, so keep them short. */
 function serverInstructions(registry: DatabaseRegistry): string {
-  const { explicit, serverCount } = registry.describe();
-  return `Every tool except list_databases requires a "database" argument.${
-    explicit.length > 0 ? ` Configured databases: ${explicit.join(', ')}.` : ''
-  }${
+  const { explicit, serverCount, prefixed } = registry.describe();
+  const clauses = [
+    'Every tool except list_databases requires a "database" argument.',
+    explicit.length > 0 ? `Configured databases: ${explicit.join(', ')}.` : '',
     serverCount > 0
-      ? ` More databases are discovered on ${serverCount} server(s); call list_databases to see them all.`
-      : " Call list_databases to see each database's connection state."
-  }`;
+      ? `More databases are discovered on ${serverCount} server(s); call list_databases to see them all.`
+      : "Call list_databases to see each database's connection state.",
+    prefixed ? "Discovered names carry their server's prefix; inside the database the name is unprefixed." : '',
+    registry.accessMode === AccessMode.RESTRICTED
+      ? `Access mode is restricted: read-only, and a call is abandoned after ${RESTRICTED_TIMEOUT_SECONDS} s while its statement keeps running in Postgres.`
+      : 'Access mode is unrestricted: statements can write and have no timeout.',
+    'Cancelling a call does not stop its SQL.',
+    'An "Error:" result without isError is Postgres rejecting the statement; with isError the server or its configuration failed.',
+    // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
+    'On a failure, show the user the error text first, then check likely causes: an unset ${VAR} in the config, wrong credentials, an unreachable host, or a role without grants (which also makes the listing tools return nothing).',
+    `Report any problem with this MCP server to the user (a likely server bug, wrong or confusing output, a missing tool or argument, an unclear description or error message) and suggest opening an issue at ${packageJson.bugs.url}.`,
+  ];
+  return clauses.filter((clause) => clause !== '').join(' ');
 }
 
 /** Build an MCP server with every tool registered against the registry's databases and access mode. */
@@ -463,7 +482,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     } catch (error) {
       // Errors thrown by the tool body keep their own handling; only access failures are reported here.
       if (error instanceof DatabaseAccessError) {
-        return formatError(error.message);
+        return formatError(error);
       }
       throw error;
     }
@@ -646,7 +665,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
         return formatTextResponse(toJson(await registry.list()));
       } catch (error) {
         log('ERROR', `Error listing databases: ${errorMessage(error)}`);
-        return formatError(errorMessage(error));
+        return formatError(error);
       }
     }
   );

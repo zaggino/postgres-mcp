@@ -255,7 +255,7 @@ The port is covered: `tests/unit/list-databases.test.ts` labels a `:5433` server
 
 ## 2026-11-27 · Minor · Performance · `list_databases` output repeats the same fields for every database
 
-Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. Update the tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
+Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. The tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
 
 ## 2026-11-27 · Major · Bug · Object listings read `information_schema`, which hides objects the role cannot access
 
@@ -299,7 +299,7 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 
 ## 2026-11-27 · Minor · Refactor · Some stderr lines have no level prefix
 
-About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind parameters, explain, health, top queries, extension utilities, the registry's idle-pool close and the fatal error in `src/index.ts`) write unprefixed lines, while the rest use `log(level, ...)` with an `INFO:`/`WARNING:`/`ERROR:` prefix. Stderr mixes both styles and the severity of the unprefixed lines is lost. Move them to `log(level, ...)` with the right level. The CLI usage error in `src/cli.ts` can stay unprefixed; if it is the only caller left, write it directly or keep `logLine` for it alone.
+About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind parameters, explain, health, top queries, extension utilities, the registry's idle-pool close and the fatal error in `src/index.ts`) write unprefixed lines, while the rest use `log(level, ...)` with an `INFO:`/`WARNING:`/`ERROR:` prefix. Stderr mixes both styles and the severity of the unprefixed lines is lost. Move them to `log(level, ...)` with the right level. The CLI usage error in `src/cli.ts` stays unprefixed; if it is the only caller left, keep `logLine` for it alone.
 
 ## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
 
@@ -315,7 +315,7 @@ Several helpers exist only to reproduce Python's output or semantics: `pyTypeNam
 
 ## 2026-11-27 · Minor · Docs · Code comments cite upstream as the reason for behaviour
 
-About 34 lines in `src/` and 5 in `tests/` that mention upstream or Python, and two reasons in `oxlint.config.ts`, give upstream as the reason for a behaviour: inline lint-disable reasons ("as upstream does", "mirrors upstream"), doc comments such as the one on `logLine` in `src/log.ts`, and test names such as "lists the eleven tools in upstream order". Since upstream is no longer a specification (`AGENTS.md`, "Upstream is a reference"), they read as constraints that no longer exist. Sweep them in one change: reword each one to give the real reason, or turn it into a TODO entry where the behaviour itself should change.
+About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and two reasons in `oxlint.config.ts`, give upstream as the reason for a behaviour: inline lint-disable reasons ("as upstream does", "mirrors upstream"), doc comments such as the one on `logLine` in `src/log.ts`, and test names such as "lists the eleven tools in upstream order". Since upstream is no longer a specification (`AGENTS.md`, "Upstream is a reference"), they read as constraints that no longer exist. Sweep them in one change: reword each one to give the real reason, or turn it into a TODO entry where the behaviour itself should change.
 
 ## 2026-11-28 · Minor · Bug · Statistics values are written into SQL as Python float text
 

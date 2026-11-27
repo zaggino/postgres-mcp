@@ -7,7 +7,7 @@ A Postgres MCP server with index tuning, explain plans, health checks, and safe 
 
 > This is a fork of [crystaldba/postgres-mcp](https://github.com/crystaldba/postgres-mcp) (Postgres MCP Pro), rewritten in TypeScript and published on npm as [`@zaggino/postgres-mcp`](https://www.npmjs.com/package/@zaggino/postgres-mcp). Credit for the design, the index tuning approach and the original implementation goes to Crystal DBA.
 
-The fork no longer tracks upstream and fixes inherited defects as it finds them. The notable differences from upstream:
+The fork no longer tracks upstream and fixes inherited defects as it finds them. Differences from upstream (the notable ones; the list is not exhaustive and does not include individual bug fixes):
 
 - TypeScript on Node.js 26+ instead of Python.
 - Installed from npm. There is no Docker image and no PyPI package.

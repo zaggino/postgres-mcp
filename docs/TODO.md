@@ -321,7 +321,7 @@ Some unprefixed `logLine` calls carry messages this fork added rather than text 
 
 ## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
 
-`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN` where Python printed `inf` or `nan`; plan costs can be infinite (the fallback plan). Route them through `formatFixed` after checking that each was a Python format spec upstream.
+`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN` where Python printed `inf` or `nan`. Route them through `formatFixed` after checking that each was a Python format spec upstream.
 
 ## 2026-11-27 · Minor · Bug · Two bind-parameter log lines print `Error: ` before the message
 

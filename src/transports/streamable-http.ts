@@ -6,12 +6,9 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
-import type { ServerFactory } from '../server.ts';
 import type { HttpServerHandle } from './http.ts';
 import {
-  closeHttpServer,
   headerValue,
-  holdSession,
   listenGuarded,
   logCloseFailure,
   parseRequestUrl,
@@ -21,6 +18,7 @@ import {
 } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
+import type { ServerFactory } from './types.ts';
 
 type McpSessions = SessionStore<StreamableHTTPServerTransport>;
 
@@ -38,7 +36,7 @@ async function startMcpSession(
     store.remove(id);
   };
   store.add(id, transport);
-  holdSession(store, id, res);
+  store.hold(id, res);
   let initialized = false;
   try {
     await createMcpServer().connect(transport);
@@ -61,7 +59,7 @@ async function handleMcpRequest(
   const sessionId = headerValue(req, 'mcp-session-id');
   const existing = sessionId ? store.get(sessionId) : undefined;
   if (sessionId && existing) {
-    holdSession(store, sessionId, res);
+    store.hold(sessionId, res);
   }
 
   if (req.method === 'POST') {
@@ -107,7 +105,7 @@ export async function startStreamableHttpServer(
 ): Promise<HttpServerHandle> {
   const store: McpSessions = new SessionStore(options);
 
-  const { httpServer, port } = await listenGuarded('Streamable HTTP server', '/mcp', options, (req, res) => {
+  return await listenGuarded('Streamable HTTP server', '/mcp', options, store, (req, res) => {
     const path = parseRequestUrl(req)?.pathname;
     if (path === undefined) {
       res.writeHead(400).end('Bad Request');
@@ -132,11 +130,4 @@ export async function startStreamableHttpServer(
       );
     });
   });
-  return {
-    port,
-    close: async () => {
-      await store.closeAll();
-      await closeHttpServer(httpServer);
-    },
-  };
 }

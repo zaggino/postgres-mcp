@@ -180,7 +180,7 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 ## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
 
-`errorMessage` is defined in 9 modules, stderr logging helpers in five, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the server, tool and transport modules use them; move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
+`errorMessage` is redefined in ten modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them (`src/transports/sessions.ts` still has its own copies); move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
@@ -306,3 +306,7 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 ## 2026-11-27 · Minor · Refactor · Split `src/sql/sql-driver.ts`
 
 `src/sql/sql-driver.ts` is about 670 lines and holds six concerns: password masking (`obfuscatePassword`, `maskError`), the error classes and their classifier, the pg adapter with the CancelRequest wire protocol (`pgPool`, `sendCancelRequest`, `poolConfig`, `customTypes`, the pool constants), the per-call transaction runner (`executeWithClient`), `DbConnPool` and `SqlDriver`. `src/sql/connection-queue.ts` also imports its types from it while it imports `queuedPool` back. Move `PoolLike`/`ClientLike` and the pg adapter into `src/sql/pg-pool.ts` and the masking into its own module.
+
+## 2026-11-27 · Minor · Refactor · Each tool is split between `src/server.ts` and `src/tools/`
+
+`createServer` in `src/server.ts` holds each database tool's name, description, zod schema and description constants, while its body lives in `src/tools/objects.ts` or `src/tools/analysis.ts`; nine lambdas map the snake_case arguments to positional parameters, so adding a parameter touches two files and the adapter. Let the tools modules export whole tool definitions (name, description, annotations, `errorLog`, `inputSchema`, `body(sqlDriver, args)`, typed through a small `defineDatabaseTool` helper; `execute_sql`'s as a function of the access mode) and have `createServer` loop over them, leaving it the register helper, `list_databases` and `cancel_query`. Regroup the tools by what they do while at it: `analysis.ts` also holds `execute_sql` and `explain_query`.

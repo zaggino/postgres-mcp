@@ -5,11 +5,11 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
-import type { ServerFactory } from '../server.ts';
 import type { HttpServerHandle } from './http.ts';
-import { closeHttpServer, listenGuarded, logCloseFailure, parseRequestUrl } from './http.ts';
+import { listenGuarded, logCloseFailure, parseRequestUrl } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
+import type { ServerFactory } from './types.ts';
 
 const SSE_SESSION_PARAM = 'sessionId';
 
@@ -62,7 +62,7 @@ export async function startSseServer(
 ): Promise<HttpServerHandle> {
   const store: SseSessions = new SessionStore<SSEServerTransport>(options);
 
-  const { httpServer, port } = await listenGuarded('SSE server', '/sse', options, (req, res) => {
+  return await listenGuarded('SSE server', '/sse', options, store, (req, res) => {
     handleSseRequest(createMcpServer, store, req, res).catch((error: unknown) => {
       log('ERROR', `SSE request failed: ${errorMessage(error)}`);
       if (!res.headersSent) {
@@ -70,11 +70,4 @@ export async function startSseServer(
       }
     });
   });
-  return {
-    port,
-    close: async () => {
-      await store.closeAll();
-      await closeHttpServer(httpServer);
-    },
-  };
 }

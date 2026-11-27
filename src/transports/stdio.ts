@@ -1,6 +1,6 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-import type { ServerFactory } from '../server.ts';
+import type { ServerFactory } from './types.ts';
 
 export async function runStdio(createMcpServer: ServerFactory, onClientGone: () => void): Promise<void> {
   const server = createMcpServer();

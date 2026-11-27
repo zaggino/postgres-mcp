@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Transports } from '../../src/main.ts';
 import { main } from '../../src/main.ts';
 import { AccessMode, getSqlDriver } from '../../src/sql/driver-factory.ts';
 import { SafeSqlDriver } from '../../src/sql/safe-sql.ts';
 import { DbConnPool, SqlDriver } from '../../src/sql/sql-driver.ts';
 import { connectClient } from '../support/mcp-client.ts';
+import { stubTransports } from '../support/transports.ts';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -26,15 +26,11 @@ describe(getSqlDriver, () => {
 describe('command line access mode', () => {
   it('--access-mode=restricted serves the read-only execute_sql tool', async () => {
     vi.stubEnv('MCP_APP_DATABASE_URI', 'postgresql://user:password@localhost/db');
-    const runStdio = vi.fn<Transports['runStdio']>().mockResolvedValue(undefined);
+    const transports = stubTransports();
 
-    await main(['--database=app', '--access-mode=restricted'], {
-      runStdio,
-      runSse: vi.fn(),
-      runStreamableHttp: vi.fn(),
-    });
+    await main(['--database=app', '--access-mode=restricted'], transports);
 
-    const factory = runStdio.mock.calls[0]?.[0];
+    const factory = transports.runStdio.mock.calls[0]?.[0];
     if (!factory) {
       throw new Error('runStdio was not called');
     }

@@ -6,13 +6,13 @@ import { resolveConfig } from './config.ts';
 import { DatabaseRegistry } from './database-registry.ts';
 import { errorMessage } from './errors.ts';
 import { log } from './log.ts';
-import type { ServerFactory } from './server.ts';
 import { createServer } from './server.ts';
-import { warnIfExposed } from './transports/http.ts';
 import type { HttpServerOptions } from './transports/request-guard.ts';
+import { warnIfExposed } from './transports/request-guard.ts';
 import { startSseServer } from './transports/sse.ts';
 import { runStdio } from './transports/stdio.ts';
 import { startStreamableHttpServer } from './transports/streamable-http.ts';
+import type { ServerFactory } from './transports/types.ts';
 
 let shutdownInProgress = false;
 
@@ -59,19 +59,15 @@ function installSignalHandlers(registry: DatabaseRegistry): void {
 
 /** The transports `main` starts; tests pass stubs. */
 export interface Transports {
-  runStdio: (createMcpServer: ServerFactory, onClientGone: () => void) => Promise<void>;
-  runSse: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<void>;
-  runStreamableHttp: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<void>;
+  runStdio: (createMcpServer: ServerFactory, onClientGone: () => void) => Promise<unknown>;
+  runSse: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<unknown>;
+  runStreamableHttp: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<unknown>;
 }
 
 const defaultTransports: Transports = {
   runStdio,
-  runSse: async (createMcpServer, options) => {
-    await startSseServer(createMcpServer, options);
-  },
-  runStreamableHttp: async (createMcpServer, options) => {
-    await startStreamableHttpServer(createMcpServer, options);
-  },
+  runSse: startSseServer,
+  runStreamableHttp: startStreamableHttpServer,
 };
 
 export async function main(argv: string[], transports: Transports = defaultTransports): Promise<void> {

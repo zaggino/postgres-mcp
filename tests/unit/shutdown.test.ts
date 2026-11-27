@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import type { Transports } from '../../src/main.ts';
 import { AccessMode } from '../../src/sql/driver-factory.ts';
+import { stubTransports } from '../support/transports.ts';
 
 // `shutdown` refuses to run twice per module, so every test loads a fresh copy of main.
 async function load() {
@@ -42,13 +42,13 @@ test('shutdown on SIGTERM closes the registry and exits with 143', async () => {
 
 test('the stdio client going away closes the registry main created and exits with 0', async () => {
   const { main, DatabaseRegistry } = await load();
-  const runStdio = vi.fn<Transports['runStdio']>().mockResolvedValue(undefined);
+  const transports = stubTransports();
   const closeAll = vi.spyOn(DatabaseRegistry.prototype, 'closeAll');
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- process.exit returns never; the stub must return so shutdown can finish
   const exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
 
-  await main(['--database=app'], { runStdio, runSse: vi.fn(), runStreamableHttp: vi.fn() });
-  const onClientGone = runStdio.mock.calls[0]?.[1];
+  await main(['--database=app'], transports);
+  const onClientGone = transports.runStdio.mock.calls[0]?.[1];
   onClientGone?.();
 
   await vi.waitFor(() => {

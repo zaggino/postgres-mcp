@@ -4,8 +4,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerOptions } from './request-guard.ts';
-import { guardRequests, LOOPBACK_HOSTS } from './request-guard.ts';
-import type { SessionStore } from './sessions.ts';
+import { guardRequests } from './request-guard.ts';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -13,16 +12,6 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export interface HttpServerHandle {
   close: () => Promise<void>;
   port: number;
-}
-
-export function warnIfExposed(http: HttpServerOptions, accessMode: string): void {
-  if (!LOOPBACK_HOSTS.has(http.host)) {
-    const hostChecks = http.allowedHosts === 'any' ? ' Host checks are disabled by --allowed-hosts=*.' : '';
-    log(
-      'WARNING',
-      `Listening on ${http.host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
-    );
-  }
 }
 
 export function readBody(req: IncomingMessage): Promise<unknown> {
@@ -91,7 +80,7 @@ function listen(httpServer: ReturnType<typeof createHttpServer>, host: string, p
   });
 }
 
-export function closeHttpServer(httpServer: ReturnType<typeof createHttpServer>): Promise<void> {
+function closeHttpServer(httpServer: ReturnType<typeof createHttpServer>): Promise<void> {
   return new Promise((resolve) => {
     httpServer.close(() => {
       resolve();
@@ -119,31 +108,27 @@ export function logCloseFailure(what: string): (error: unknown) => void {
   };
 }
 
-/** Keeps the session's idle timer stopped until the response closes. */
-export function holdSession<T extends { close: () => Promise<void> }>(
-  store: SessionStore<T>,
-  id: string,
-  res: ServerResponse
-): void {
-  store.begin(id);
-  res.once('close', () => {
-    store.end(id);
-  });
-}
-
 /**
  * Listens, then serves requests that pass the Host and Origin check. The handler
  * attaches after listening because the default allow-list names the bound port.
+ * Closing the handle closes the sessions in `store`, then the HTTP server.
  */
 export async function listenGuarded(
   label: string,
   path: string,
   options: HttpServerOptions,
+  store: { closeAll: () => Promise<void> },
   handler: (req: IncomingMessage, res: ServerResponse) => void
-): Promise<{ httpServer: ReturnType<typeof createHttpServer>; port: number }> {
+): Promise<HttpServerHandle> {
   const httpServer = createHttpServer();
   const port = await listen(httpServer, options.host, options.port);
   httpServer.on('request', guardRequests(options, port, handler));
   log('INFO', `${label} listening on http://${options.host}:${port}${path}`);
-  return { httpServer, port };
+  return {
+    port,
+    close: async () => {
+      await store.closeAll();
+      await closeHttpServer(httpServer);
+    },
+  };
 }

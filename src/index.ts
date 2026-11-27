@@ -1,8 +1,8 @@
 #!/usr/bin/env node
+import { errorMessage } from './errors.ts';
 import { main } from './main.ts';
 
 main(process.argv.slice(2)).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${errorMessage(error)}\n`);
   process.exit(1);
 });

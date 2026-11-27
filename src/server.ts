@@ -307,5 +307,3 @@ export function createServer(registry: DatabaseRegistry): McpServer {
 
   return server;
 }
-
-export type ServerFactory = () => McpServer;

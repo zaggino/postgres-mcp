@@ -1,19 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Transports } from '../../src/main.ts';
 import { main } from '../../src/main.ts';
-
-function spyOnTransports() {
-  return {
-    stdio: vi.fn<Transports['runStdio']>().mockResolvedValue(undefined),
-    sse: vi.fn<Transports['runSse']>().mockResolvedValue(undefined),
-    http: vi.fn<Transports['runStreamableHttp']>().mockResolvedValue(undefined),
-  };
-}
-
-function transportsOf(spies: ReturnType<typeof spyOnTransports>): Transports {
-  return { runStdio: spies.stdio, runSse: spies.sse, runStreamableHttp: spies.http };
-}
+import { stubTransports } from '../support/transports.ts';
 
 const DATABASE_ARG = '--database=app';
 
@@ -28,57 +16,57 @@ afterEach(() => {
 
 describe('transport selection', () => {
   it('--transport=stdio runs only the stdio transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
-    await main([DATABASE_ARG, '--transport=stdio'], transportsOf(spies));
+    await main([DATABASE_ARG, '--transport=stdio'], transports);
 
-    expect(spies.stdio).toHaveBeenCalledOnce();
-    expect(spies.sse).not.toHaveBeenCalled();
-    expect(spies.http).not.toHaveBeenCalled();
+    expect(transports.runStdio).toHaveBeenCalledOnce();
+    expect(transports.runSse).not.toHaveBeenCalled();
+    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
   });
 
   it('--transport=sse runs only the SSE transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
-    await main([DATABASE_ARG, '--transport=sse'], transportsOf(spies));
+    await main([DATABASE_ARG, '--transport=sse'], transports);
 
-    expect(spies.stdio).not.toHaveBeenCalled();
-    expect(spies.sse).toHaveBeenCalledOnce();
-    expect(spies.http).not.toHaveBeenCalled();
+    expect(transports.runStdio).not.toHaveBeenCalled();
+    expect(transports.runSse).toHaveBeenCalledOnce();
+    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
   });
 
   it('--transport=streamable-http runs only the streamable HTTP transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
-    await main([DATABASE_ARG, '--transport=streamable-http'], transportsOf(spies));
+    await main([DATABASE_ARG, '--transport=streamable-http'], transports);
 
-    expect(spies.stdio).not.toHaveBeenCalled();
-    expect(spies.sse).not.toHaveBeenCalled();
-    expect(spies.http).toHaveBeenCalledOnce();
+    expect(transports.runStdio).not.toHaveBeenCalled();
+    expect(transports.runSse).not.toHaveBeenCalled();
+    expect(transports.runStreamableHttp).toHaveBeenCalledOnce();
   });
 
   it('defaults to the stdio transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
-    await main([DATABASE_ARG], transportsOf(spies));
+    await main([DATABASE_ARG], transports);
 
-    expect(spies.stdio).toHaveBeenCalledOnce();
-    expect(spies.sse).not.toHaveBeenCalled();
-    expect(spies.http).not.toHaveBeenCalled();
+    expect(transports.runStdio).toHaveBeenCalledOnce();
+    expect(transports.runSse).not.toHaveBeenCalled();
+    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
   });
 
   it('accepts a separate value for --transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
-    await main([DATABASE_ARG, '--transport', 'sse'], transportsOf(spies));
+    await main([DATABASE_ARG, '--transport', 'sse'], transports);
 
-    expect(spies.sse).toHaveBeenCalledOnce();
+    expect(transports.runSse).toHaveBeenCalledOnce();
   });
 });
 
 describe('transport host and port', () => {
   it('passes the streamable HTTP host and port to the transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
     await main(
       [
@@ -89,10 +77,10 @@ describe('transport host and port', () => {
         '--allowed-hosts=mcp.example,other.example:9000',
         '--allowed-origins=https://app.example',
       ],
-      transportsOf(spies)
+      transports
     );
 
-    expect(spies.http).toHaveBeenCalledWith(expect.any(Function), {
+    expect(transports.runStreamableHttp).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
       port: 9000,
       allowedHosts: ['mcp.example', 'other.example:9000'],
@@ -103,14 +91,14 @@ describe('transport host and port', () => {
   });
 
   it('passes the SSE host and port to the transport', async () => {
-    const spies = spyOnTransports();
+    const transports = stubTransports();
 
     await main(
       [DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080', '--allowed-hosts=*'],
-      transportsOf(spies)
+      transports
     );
 
-    expect(spies.sse).toHaveBeenCalledWith(expect.any(Function), {
+    expect(transports.runSse).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
       port: 8080,
       allowedHosts: 'any',

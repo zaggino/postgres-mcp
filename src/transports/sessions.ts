@@ -1,3 +1,5 @@
+import type { ServerResponse } from 'node:http';
+
 export const DEFAULT_MAX_SESSIONS = 100;
 export const DEFAULT_SESSION_IDLE_MINUTES = 30;
 
@@ -77,6 +79,14 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
         this.#startTimer(id, entry);
       }
     }
+  }
+
+  /** Keeps the session's idle timer stopped until the response closes. */
+  hold(id: string, res: ServerResponse): void {
+    this.begin(id);
+    res.once('close', () => {
+      this.end(id);
+    });
   }
 
   remove(id: string): void {

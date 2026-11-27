@@ -9,6 +9,7 @@ import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
 import { ACCESS_MODES, AccessMode } from './sql/driver-factory.ts';
 
 export const DEFAULT_IDLE_MINUTES = 10;
+export const DEFAULT_ACCESS_MODE: AccessMode = AccessMode.RESTRICTED;
 
 const DATABASE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const VARIABLE_PATTERN = /\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}/gu;
@@ -144,7 +145,7 @@ export function resolveConfig(
       throw new CliError('no databases configured: pass --database NAME or --config FILE');
     }
     return {
-      accessMode: cli.accessMode ?? AccessMode.UNRESTRICTED,
+      accessMode: cli.accessMode ?? DEFAULT_ACCESS_MODE,
       idleMinutes: cli.idleMinutes ?? DEFAULT_IDLE_MINUTES,
       databases: cliDatabases(cli.databases, env),
       servers: [],
@@ -163,7 +164,7 @@ export function resolveConfig(
   }
 
   return {
-    accessMode: cli.accessMode ?? config.accessMode ?? AccessMode.UNRESTRICTED,
+    accessMode: cli.accessMode ?? config.accessMode ?? DEFAULT_ACCESS_MODE,
     idleMinutes: cli.idleMinutes ?? config.idleMinutes ?? DEFAULT_IDLE_MINUTES,
     databases,
     servers,

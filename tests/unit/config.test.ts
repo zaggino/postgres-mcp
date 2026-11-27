@@ -142,20 +142,25 @@ describe('config file', () => {
 });
 
 describe('precedence', () => {
-  const config = { accessMode: 'restricted', idleMinutes: 3, databases: { a: { uri: 'postgres://h/d' } } };
+  const config = { accessMode: 'unrestricted', idleMinutes: 3, databases: { a: { uri: 'postgres://h/d' } } };
 
   it('lets CLI access mode and idle minutes override the config', () => {
-    const result = withConfig(config, {}, { accessMode: 'unrestricted', idleMinutes: 0 });
-    expect([result.accessMode, result.idleMinutes]).toEqual(['unrestricted', 0]);
+    const result = withConfig(config, {}, { accessMode: 'restricted', idleMinutes: 0 });
+    expect([result.accessMode, result.idleMinutes]).toEqual(['restricted', 0]);
   });
 
   it('uses config values when the CLI omits them', () => {
     const result = withConfig(config);
-    expect([result.accessMode, result.idleMinutes]).toEqual(['restricted', 3]);
+    expect([result.accessMode, result.idleMinutes]).toEqual(['unrestricted', 3]);
   });
 
-  it('defaults to unrestricted and 10 minutes', () => {
+  it('defaults a config file to restricted and 10 minutes', () => {
     const result = withConfig({ databases: { a: { uri: 'postgres://h/d' } } });
-    expect([result.accessMode, result.idleMinutes]).toEqual(['unrestricted', 10]);
+    expect([result.accessMode, result.idleMinutes]).toEqual(['restricted', 10]);
+  });
+
+  it('defaults --database to restricted', () => {
+    const result = resolveConfig(cli({ databases: ['app'] }), { MCP_APP_DATABASE_URI: 'postgres://h/d' }, noFile);
+    expect(result.accessMode).toBe('restricted');
   });
 });

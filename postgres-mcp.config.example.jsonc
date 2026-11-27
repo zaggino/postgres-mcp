@@ -1,6 +1,6 @@
 // postgres-mcp config file. JSON with comments and trailing commas; unknown keys are rejected.
 {
-  // "unrestricted" or "restricted"; --access-mode wins.
+  // "restricted" (default) or "unrestricted"; --access-mode wins.
   "accessMode": "restricted",
   // Minutes without a call in flight before a pool closes; 0 never closes. --idle-minutes wins.
   "idleMinutes": 10,

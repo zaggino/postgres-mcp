@@ -67,8 +67,8 @@ PostgreSQL MCP Server
 options:
   -h, --help            show this help message and exit
   --access-mode {${ACCESS_MODES.join(',')}}
-                        Set SQL access mode: unrestricted (unrestricted) or
-                        restricted (read-only with protections)
+                        Set SQL access mode: restricted (read-only with
+                        protections, default) or unrestricted
   --database NAME       Database to serve; repeatable. The connection URI is
                         read from MCP_<NAME>_DATABASE_URI (name uppercased,
                         '-' becomes '_'). Exclusive with --config

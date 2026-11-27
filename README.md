@@ -14,6 +14,7 @@ Differences from upstream:
 - Structured tool results are JSON instead of Python repr text.
 - The experimental LLM index tuning method (`method="llm"`) is not included. `method` accepts only `"dta"`.
 - Restricted mode runs statements in an enforced read-only transaction.
+- The default access mode is `restricted`. Upstream defaults to `unrestricted`.
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
@@ -89,7 +90,7 @@ To run the published package instead of a clone, use `npx` as the command and `"
 - **Unrestricted**: full read/write access to data and schema. Suitable for development.
 - **Restricted**: SQL is parsed and checked against allowlists of statements, node types and functions, executed in a read-only transaction, and limited to 30 seconds of execution time. Suitable for production.
 
-Select the mode with `--access-mode=restricted` or `--access-mode=unrestricted` (the default).
+Select the mode with `--access-mode=restricted` (the default) or `--access-mode=unrestricted`.
 
 ## Multiple databases
 
@@ -106,15 +107,15 @@ One server process serves every database you name. Every tool except `list_datab
 
 `--config FILE` reads a JSONC file (JSON with `//` and `/* */` comments and trailing commas; plain JSON works too); see [postgres-mcp.config.example.jsonc](postgres-mcp.config.example.jsonc). Unknown keys are rejected, every key is optional, but at least one database or server is required.
 
-| Key                 | Default        | Description                                                                                                                                     |
-| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accessMode`        | `unrestricted` | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
-| `idleMinutes`       | `10`           | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
-| `databases`         | none           | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
-| `servers[].uri`     | required       | A `postgres://` or `postgresql://` URL of a server whose databases are discovered.                                                              |
-| `servers[].prefix`  | `""`           | Prepended to each discovered database name.                                                                                                     |
-| `servers[].include` | `["*"]`        | Globs of database names to keep.                                                                                                                |
-| `servers[].exclude` | `[]`           | Globs of database names to drop.                                                                                                                |
+| Key                 | Default      | Description                                                                                                                                     |
+| ------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accessMode`        | `restricted` | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
+| `idleMinutes`       | `10`         | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
+| `databases`         | none         | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
+| `servers[].uri`     | required     | A `postgres://` or `postgresql://` URL of a server whose databases are discovered.                                                              |
+| `servers[].prefix`  | `""`         | Prepended to each discovered database name.                                                                                                     |
+| `servers[].include` | `["*"]`      | Globs of database names to keep.                                                                                                                |
+| `servers[].exclude` | `[]`         | Globs of database names to drop.                                                                                                                |
 
 Globs support `*` and `?` only and are matched against the whole database name (before the prefix). Discovery lists `pg_database` entries that allow connections and are not templates. A discovered database is reached with the server URI whose path is replaced by the database name, so discovery needs a URL-form server URI: key/value DSNs and a `dbname=` query parameter are not supported.
 
@@ -186,22 +187,22 @@ There is no authentication. A server bound to a non-loopback address logs a warn
 postgres-mcp [options] (--database NAME ... | --config FILE)
 ```
 
-| Option                   | Default        | Description                                                                                                                      |
-| ------------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `--database`             | none           | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`.                                    |
-| `--config`               | none           | JSONC [config file](#config-file). Exclusive with `--database`.                                                                  |
-| `--idle-minutes`         | `10`           | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
-| `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.                                                                                                  |
-| `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.                                                                                             |
-| `--sse-host`             | `localhost`    | Host to bind the SSE server to.                                                                                                  |
-| `--sse-port`             | `8000`         | Port of the SSE server.                                                                                                          |
-| `--streamable-http-host` | `localhost`    | Host to bind the streamable HTTP server to.                                                                                      |
-| `--streamable-http-port` | `8000`         | Port of the streamable HTTP server.                                                                                              |
-| `--allowed-hosts`        | loopback only  | Comma-separated `Host` values to accept, added to loopback on a loopback bind; required on a non-loopback bind; `*` accepts any. |
-| `--allowed-origins`      | loopback only  | Comma-separated `Origin` values (`scheme://host[:port]`) to accept, added to loopback on a loopback bind; `*` accepts any.       |
-| `--max-sessions`         | `100`          | Most concurrent HTTP sessions; further ones get 503.                                                                             |
-| `--session-idle-minutes` | `30`           | Close an HTTP session after this many minutes without a request; `0` never; max 35791.                                           |
-| `-h`, `--help`           |                | Show help.                                                                                                                       |
+| Option                   | Default       | Description                                                                                                                      |
+| ------------------------ | ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `--database`             | none          | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`.                                    |
+| `--config`               | none          | JSONC [config file](#config-file). Exclusive with `--database`.                                                                  |
+| `--idle-minutes`         | `10`          | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
+| `--access-mode`          | `restricted`  | `unrestricted` or `restricted`.                                                                                                  |
+| `--transport`            | `stdio`       | `stdio`, `sse` or `streamable-http`.                                                                                             |
+| `--sse-host`             | `localhost`   | Host to bind the SSE server to.                                                                                                  |
+| `--sse-port`             | `8000`        | Port of the SSE server.                                                                                                          |
+| `--streamable-http-host` | `localhost`   | Host to bind the streamable HTTP server to.                                                                                      |
+| `--streamable-http-port` | `8000`        | Port of the streamable HTTP server.                                                                                              |
+| `--allowed-hosts`        | loopback only | Comma-separated `Host` values to accept, added to loopback on a loopback bind; required on a non-loopback bind; `*` accepts any. |
+| `--allowed-origins`      | loopback only | Comma-separated `Origin` values (`scheme://host[:port]`) to accept, added to loopback on a loopback bind; `*` accepts any.       |
+| `--max-sessions`         | `100`         | Most concurrent HTTP sessions; further ones get 503.                                                                             |
+| `--session-idle-minutes` | `30`          | Close an HTTP session after this many minutes without a request; `0` never; max 35791.                                           |
+| `-h`, `--help`           |               | Show help.                                                                                                                       |
 
 Environment variables:
 

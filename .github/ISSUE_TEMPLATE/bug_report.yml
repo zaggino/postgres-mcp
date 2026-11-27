@@ -36,8 +36,8 @@ body:
     attributes:
       label: Access mode
       options:
-        - unrestricted
         - restricted
+        - unrestricted
     validations:
       required: true
   - type: dropdown

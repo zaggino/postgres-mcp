@@ -49,7 +49,10 @@ test('the stdio client going away closes the registry main created and exits wit
 
   await main(['--database=app'], transports);
   const onClientGone = transports.stdio.mock.calls[0]?.[1];
-  onClientGone?.();
+  if (!onClientGone) {
+    throw new Error('stdio was not called');
+  }
+  onClientGone();
 
   await vi.waitFor(() => {
     expect(exit).toHaveBeenCalledWith(0);

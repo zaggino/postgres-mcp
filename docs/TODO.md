@@ -180,7 +180,7 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 ## 2026-11-26 · Major · Refactor · Cross-cutting helpers are redeclared per module
 
-`errorMessage` is redefined in ten modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them (`src/transports/sessions.ts` still has its own copies); move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
+`errorMessage` is redefined in nine modules besides `src/errors.ts`, stderr logging helpers in several besides `src/log.ts`, `isJsonObject` in three, and the Python-format helpers are spread over `src/index/index-opt-base.ts`, `src/index/dta-calc.ts`, `src/sql/bind-params.ts` and `src/explain/explain-plan.ts` although `src/py-format.ts` exists. `src/log.ts` and `src/errors.ts` now exist and the modules split out of `src/server.ts` use them; move the remaining copies there and into `src/py-format.ts` while keeping stderr output unchanged.
 
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 

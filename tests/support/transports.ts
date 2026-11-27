@@ -8,5 +8,5 @@ export function stubTransports() {
     stdio: vi.fn<Transports['stdio']>().mockResolvedValue(undefined),
     sse: vi.fn<Transports['sse']>().mockResolvedValue(undefined),
     'streamable-http': vi.fn<Transports['streamable-http']>().mockResolvedValue(undefined),
-  };
+  } satisfies Transports;
 }

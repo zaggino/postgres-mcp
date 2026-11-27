@@ -124,7 +124,7 @@ test('a driver created from engineUrl builds its pool on connect', () => {
   const driver = new SqlDriver({
     engineUrl: 'postgresql://user:pass@localhost/db',
   });
-  expect(driver.conn).toBeNull();
+  expect(driver.conn).toBeUndefined();
 
   const conn = driver.connect();
 

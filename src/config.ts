@@ -3,9 +3,9 @@ import { parse, printParseErrorCode } from 'jsonc-parser';
 import { z } from 'zod';
 
 import type { CliOptions } from './cli.ts';
-import { CliError, MAX_IDLE_MINUTES } from './cli.ts';
+import { CliError } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
-import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
+import { MAX_IDLE_MINUTES, NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
 import {
   ACCESS_MODES,
   DEFAULT_ACCESS_MODE,

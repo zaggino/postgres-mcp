@@ -1,6 +1,5 @@
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import type { ExplicitDatabase, RegistryOptions } from '../../src/database-registry.ts';
-import { deps } from '../../src/server.ts';
 import { AccessMode, defaultStatementTimeoutSeconds } from '../../src/sql/driver-factory.ts';
 import type { QueryHandler } from './fake-pool.ts';
 import { createFakePool } from './fake-pool.ts';
@@ -20,6 +19,8 @@ export function createTestRegistry(
     /** Extra entries, e.g. one whose URI failed to resolve. */
     databases?: ExplicitDatabase[];
     statementTimeoutSeconds?: number;
+    /** Replaces the driver factory, e.g. to answer queries without a pool. */
+    getSqlDriver?: RegistryOptions['getSqlDriver'];
   } = {}
 ) {
   const fakes = new Map<string, FakePool>();
@@ -37,7 +38,7 @@ export function createTestRegistry(
       ...(options.databases ?? []),
     ],
     servers: options.servers ?? [],
-    getSqlDriver: (mode, conn, driverOptions) => deps.getSqlDriver(mode, conn, driverOptions),
+    getSqlDriver: options.getSqlDriver,
     poolFactory: (url) => {
       const fake = createFakePool(options.handler);
       fakes.set(decodeURIComponent(new URL(url).pathname.slice(1)), fake);

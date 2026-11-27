@@ -62,10 +62,6 @@ The node allowlist in `src/sql/allowlists.ts` includes types that appear only in
 
 `executeWithClient` in `src/sql/sql-driver.ts` wraps every query in `BEGIN`/`COMMIT`, so `CREATE INDEX CONCURRENTLY`, `VACUUM` and similar fail. Upstream behaves the same through its implicit psycopg transaction.
 
-## 2026-11-26 · Minor · Refactor · GROUP BY branch in the bind-parameter collector is dead
-
-`src/sql/bind-params.ts` checks `SortGroupClause` for GROUP BY items. That node type never occurs in a raw parse tree, so the branch never runs and grouped columns are collected by other paths only.
-
 ## 2026-11-26 · Minor · Bug · Column collection stops after a nested SELECT
 
 `ColumnCollector` in `src/sql/bind-params.ts` resets its `inside_select` state when it leaves a nested SELECT, so columns after a subquery in the same scope are not collected.
@@ -146,10 +142,6 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` processes the quals of top-level `JoinExpr` items only, so index candidates from nested joins are missed.
 
-## 2026-11-26 · Minor · Refactor · `workload` argument of `analyze_workload` is unused
-
-`TextPresentation` in `src/index/presentation.ts` accepts the workload but never uses it.
-
 ## 2026-11-26 · Minor · Bug · Number formatting rounds half up instead of half to even
 
 Costs and sizes are formatted with `toFixed` (for example in `src/index/index-opt-base.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
@@ -157,10 +149,6 @@ Costs and sizes are formatted with `toFixed` (for example in `src/index/index-op
 ## 2026-11-26 · Minor · Bug · Time limit is not hit immediately without `analyzeWorkload`
 
 `analysisStartTime` in `src/index/dta-calc.ts` defaults to 0 and is compared with `performance.now()`. Calling `enumerateGreedy` without `analyzeWorkload` therefore does not stop at the time limit at once, as Python did.
-
-## 2026-11-26 · Minor · Bug · `analyze_db_health` has no error handling
-
-`analyzeDbHealth` in `src/server.ts` lets failures propagate as MCP errors instead of returning an error text like the other tools.
 
 ## 2026-11-26 · Minor · Bug · `explain_query` rejects `hypothetical_indexes: null`
 
@@ -200,7 +188,7 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 ## 2026-11-26 · Major · Refactor · Split `src/server.ts`
 
-`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, the SSE and streamable HTTP servers with their request handling, stdio, and startup and shutdown (CLI parsing is in `src/cli.ts`; `src/transports/` holds only the request guard and the session store so far). Move the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters (`deps` has its own entry below, as does the repeated try/catch envelope).
+`src/server.ts` is about 1,100 lines and still holds the tool handlers, tool registration, the SSE and streamable HTTP servers with their request handling, stdio, and startup and shutdown (CLI parsing is in `src/cli.ts`; `src/transports/` holds only the request guard and the session store so far). Move the rest into `src/transports/` (stdio, SSE, streamable HTTP, shared HTTP helpers), a tools module and `src/main.ts`. Replace the exported mutable `runners` test seam with parameters.
 
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
@@ -271,18 +259,6 @@ Discovery of the databases on a config `servers` entry builds each database URI 
 
 `DatabaseRegistry.use` in `src/database-registry.ts` reruns discovery on every server for each unknown `database` value, so a model looping over wrong names queries every server each time. Each database used gets its own pool (up to 5 connections) that stays open for `idleMinutes`, with no limit on how many are open at once, so a server with many databases can reach `max_connections`. Add a short negative cache for unknown names, and a cap on open pools.
 
-## 2026-11-26 · Minor · Refactor · `deps.getSqlDriver` duplicates the registry's driver factory
-
-`DatabaseRegistry` takes a `getSqlDriver` option, yet `src/server.ts` still exports the mutable `deps` object, and `main` and `tests/support/registry.ts` bridge the two with the same lambda (so the test helper imports the whole server module). Delete `deps`, give `createTestRegistry` a `getSqlDriver` option, and move the four `vi.spyOn(deps, 'getSqlDriver')` sites in `tests/unit/explain/` to it.
-
-## 2026-11-26 · Minor · Refactor · Tool handlers repeat the same try/catch envelope
-
-Eight handlers in `src/server.ts` each wrap their body in `try { … } catch { log('ERROR', …); return formatError(…) }`, while `onDatabase` in `createServer` already wraps every call. Give `onDatabase` a log label and let it own the catch, which also handles `DatabaseAccessError` in one place. `analyze_db_health` has no envelope today and its errors reach the MCP SDK; it needs an opt-out to stay behaviour-identical. Do it together with one `registerDatabaseTool(name, config, (sqlDriver, args) => …)` helper that adds the `database` schema and the wrapping, so the nine registrations stop repeating both (a generic helper over the SDK's `registerTool` needed casts the first time; try typing it against `z.ZodRawShape` again). `onDatabase` now also takes the tool name and the request signal, so each registration repeats the tool name (once for `registerTool`, once for `onDatabase`, which the `cancel_query` listing shows); the `registerDatabaseTool` helper should own both.
-
-## 2026-11-26 · Minor · Refactor · Small cleanups left over from the multi-database review
-
-`MAX_IDLE_MINUTES` is a `setTimeout` limit that belongs next to `IdlePool` in `src/database-registry.ts`, not in `src/cli.ts`. `SqlDriver.conn` in `src/sql/sql-driver.ts` is `DbConnPool | null` only for the `engineUrl` path, so its `pool` getter converts `null` to `undefined`; an optional field removes the conversion.
-
 ## 2026-11-26 · Minor · Refactor · Server URIs are validated in two places
 
 `configServer` in `src/config.ts` checks a server `uri` only when it has no `${VAR}`, so `#discoverSource` in `src/database-registry.ts` checks it again after expansion on every discovery run, and `config.ts` imports `isPostgresUrl` and `NOT_A_POSTGRES_URL` from the registry for that. Validate once in `config.ts` after expansion (a fatal `CliError` for a literal URI, a `{ error }` spec for an expanded one), seed `SourceState.error` and the source pool in the registry constructor, and drop the re-check, the lazy pool creation inside the `try` and the dead `'error' in source.uri` ternary in `list()`.
@@ -309,7 +285,7 @@ On SSE, `POST /messages` returns 202 before the tool runs and the result travels
 
 ## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
 
-`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both.
+`SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both, and would own `MAX_IDLE_MINUTES`, the `setTimeout` limit that bounds both timers and is defined next to `IdlePool` for now.
 
 ## 2026-11-27 · Minor · Refactor · Resolve each discovery server once instead of per discovery and per listing
 

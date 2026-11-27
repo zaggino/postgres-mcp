@@ -426,7 +426,7 @@ export interface SqlDriverOptions {
 
 /** Adapter that runs queries through a DbConnPool and returns row objects. */
 export class SqlDriver {
-  conn: DbConnPool | null;
+  conn?: DbConnPool;
   readonly engineUrl: string | undefined;
   readonly signal: AbortSignal | undefined;
   readonly statementTimeoutSeconds: number;
@@ -438,7 +438,6 @@ export class SqlDriver {
       this.conn = conn;
     } else if (engineUrl) {
       this.engineUrl = engineUrl;
-      this.conn = null;
     } else {
       throw new Error('Either conn or engineUrl must be provided');
     }
@@ -456,7 +455,7 @@ export class SqlDriver {
   }
 
   get pool(): DbConnPool | undefined {
-    return this.conn ?? undefined;
+    return this.conn;
   }
 
   async executeQuery(

@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 
+import { MAX_IDLE_MINUTES } from './database-registry.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
 import { ACCESS_MODES, DEFAULT_ACCESS_MODE, MAX_STATEMENT_TIMEOUT_SECONDS } from './sql/driver-factory.ts';
 import type { AllowList, HttpServerOptions } from './transports/request-guard.ts';
@@ -7,9 +8,6 @@ import { hostEntryProblem, LOOPBACK_HOSTS, originEntryProblem } from './transpor
 import { DEFAULT_MAX_SESSIONS, DEFAULT_SESSION_IDLE_MINUTES } from './transports/sessions.ts';
 
 export class CliError extends Error {}
-
-/** The longest delay setTimeout accepts (2^31 - 1 ms); larger values would fire at once. */
-export const MAX_IDLE_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
 
 const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];

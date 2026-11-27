@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { expect, it as test } from 'vitest';
+import { expect, it as test, vi } from 'vitest';
 
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import { createServer } from '../../src/server.ts';
@@ -66,4 +66,36 @@ test('a Postgres error while checking out a connection is reported with isError'
   const result = await client.callTool({ name: 'execute_sql', arguments: { database: 'app', sql: 'SELECT 1' } });
 
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: too many clients' }], isError: true });
+});
+
+async function callFailingTool(name: string, args: Record<string, unknown>) {
+  const { registry } = createTestRegistry(['app'], {
+    handler: ({ text }) => {
+      if (text.startsWith('BEGIN') || text.startsWith('ROLLBACK') || text === 'SELECT 1') {
+        return [noRowsResult];
+      }
+      throw new Error('socket hang up');
+    },
+  });
+  const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  try {
+    const client = await connectClient(createServer(registry));
+    const result = await client.callTool({ name, arguments: { database: 'app', ...args } });
+    return { result, logged: stderr.mock.calls.map(([line]) => String(line)) };
+  } finally {
+    stderr.mockRestore();
+  }
+}
+
+test('a tool failure that is not a Postgres rejection is logged with the tool label and reported with isError', async () => {
+  const { result, logged } = await callFailingTool('list_schemas', {});
+
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error: socket hang up' }], isError: true });
+  expect(logged).toContain('ERROR: Error listing schemas: socket hang up\n');
+});
+
+test('an analyze_db_health failure is reported in its output without isError', async () => {
+  const { result } = await callFailingTool('analyze_db_health', { health_type: 'connection' });
+
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error calculating database health: socket hang up' }] });
 });

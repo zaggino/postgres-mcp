@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it as test, vi } from 'vitest';
 
 import { ExplainPlanArtifact } from '../../../src/artifacts.ts';
-import { createServer, deps } from '../../../src/server.ts';
+import type { RegistryOptions } from '../../../src/database-registry.ts';
+import { createServer } from '../../../src/server.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
 import { createTestRegistry } from '../../support/registry.ts';
@@ -22,6 +23,9 @@ vi.mock('../../../src/explain/explain-plan.ts', () => ({
 
 type ExecuteQuery = SqlExecutor['executeQuery'];
 
+/** The driver factory the next server's registry uses; the real one when unset. */
+let getSqlDriver: RegistryOptions['getSqlDriver'];
+
 function artifact(extra: Record<string, unknown> = {}): ExplainPlanArtifact {
   return ExplainPlanArtifact.fromJsonData({
     Plan: {
@@ -36,11 +40,11 @@ function artifact(extra: Record<string, unknown> = {}): ExplainPlanArtifact {
 }
 
 function useDriver(executeQuery: ExecuteQuery = vi.fn<ExecuteQuery>()) {
-  vi.spyOn(deps, 'getSqlDriver').mockReturnValue({ executeQuery });
+  getSqlDriver = () => ({ executeQuery });
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
-  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+  const client = await connectClient(createServer(createTestRegistry(['app'], { getSqlDriver }).registry));
   return await callToolText(client, 'explain_query', { database: 'app', ...args });
 }
 
@@ -106,9 +110,9 @@ test('explain_query with hypothetical indexes reports a missing hypopg extension
 });
 
 test('explain_query returns the error text when the driver cannot be created', async () => {
-  vi.spyOn(deps, 'getSqlDriver').mockImplementation(() => {
+  getSqlDriver = () => {
     throw new Error('Error executing query');
-  });
+  };
 
   const text = await explainQuery({ sql: 'INVALID SQL' });
 

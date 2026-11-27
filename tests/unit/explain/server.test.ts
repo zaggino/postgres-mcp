@@ -1,6 +1,7 @@
 import { afterEach, expect, it as test, vi } from 'vitest';
 
-import { createServer, deps } from '../../../src/server.ts';
+import type { RegistryOptions } from '../../../src/database-registry.ts';
+import { createServer } from '../../../src/server.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
 import { createTestRegistry } from '../../support/registry.ts';
@@ -8,6 +9,9 @@ import { createTestRegistry } from '../../support/registry.ts';
 const EXECUTION_ERROR = /^Error: .*Error executing query/u;
 
 type ExecuteQuery = SqlExecutor['executeQuery'];
+
+/** The driver factory the next server's registry uses; the real one when unset. */
+let getSqlDriver: RegistryOptions['getSqlDriver'];
 
 function plan(extra: Record<string, unknown> = {}, node = {}) {
   return {
@@ -30,21 +34,22 @@ function useExplainDriver(planData: unknown) {
       query.includes('pg_extension') ? [{ cells: { extversion: '1.4.1' } }] : [{ cells: { 'QUERY PLAN': [planData] } }]
     )
   );
-  vi.spyOn(deps, 'getSqlDriver').mockReturnValue({ executeQuery });
+  getSqlDriver = () => ({ executeQuery });
   return executeQuery;
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
-  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+  const client = await connectClient(createServer(createTestRegistry(['app'], { getSqlDriver }).registry));
   return await callToolText(client, 'explain_query', { database: 'app', ...args });
 }
 
 afterEach(() => {
+  getSqlDriver = undefined;
   vi.restoreAllMocks();
 });
 
 test('registers the explain_query tool', async () => {
-  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+  const client = await connectClient(createServer(createTestRegistry(['app'], { getSqlDriver }).registry));
 
   const { tools } = await client.listTools();
 
@@ -97,7 +102,7 @@ test('explain_query rejects analyze combined with hypothetical indexes', async (
 });
 
 test('explain_query formats a failing EXPLAIN as an error message', async () => {
-  vi.spyOn(deps, 'getSqlDriver').mockReturnValue({
+  getSqlDriver = () => ({
     executeQuery: vi.fn<ExecuteQuery>().mockRejectedValue(new Error('Error executing query')),
   });
 

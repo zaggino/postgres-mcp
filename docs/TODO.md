@@ -20,7 +20,7 @@ Its agent instructions require the file itself to be updated in the same change 
 
 ## 2026-11-26 · Minor · Bug · Bind-parameter collector tests `AEXPR_OP` where the original comment says IN
 
-`src/sql/bind-params.ts` matches `kind === "AEXPR_OP"` before visiting a subselect on the right-hand side; the upstream comment describes the `IN` case, which is `AEXPR_IN`. Behaviour is kept from upstream, so `IN (SELECT ...)` is not handled as intended.
+`src/sql/bind-params.ts` matches `kind === "AEXPR_OP"` before visiting a subselect on the right-hand side; the comment there describes the `IN` case, which is `AEXPR_IN`, so `IN (SELECT ...)` is not handled as intended. Match `AEXPR_IN` there.
 
 ## 2026-11-26 · Minor · Bug · `execute_sql`'s `sql` parameter defaults to `"all"`
 
@@ -52,7 +52,7 @@ The node allowlist in `src/sql/allowlists.ts` includes types that appear only in
 
 ## 2026-11-26 · Minor · Bug · Statements that cannot run in a transaction fail in unrestricted mode
 
-`executeWithClient` in `src/sql/sql-driver.ts` wraps every query in `BEGIN`/`COMMIT`, so `CREATE INDEX CONCURRENTLY`, `VACUUM` and similar fail. Upstream behaves the same through its implicit psycopg transaction.
+`executeWithClient` in `src/sql/sql-driver.ts` wraps every query in `BEGIN`/`COMMIT`, so `CREATE INDEX CONCURRENTLY`, `VACUUM` and similar fail.
 
 ## 2026-11-26 · Minor · Bug · Column collection stops after a nested SELECT
 
@@ -72,15 +72,11 @@ The node allowlist in `src/sql/allowlists.ts` includes types that appear only in
 
 ## 2026-11-26 · Minor · Bug · Column names are embedded unescaped in regular expressions
 
-`identifyParameterColumn` and the rewrite helpers in `src/sql/bind-params.ts` build regexes from raw column names. Names with regex metacharacters mis-match, and `identifyParameterColumn` swallows the resulting invalid-regex error where upstream raised it.
+`identifyParameterColumn` and the rewrite helpers in `src/sql/bind-params.ts` build regexes from raw column names. Names with regex metacharacters mis-match, and `identifyParameterColumn` swallows the resulting invalid-regex error, so the failure goes unreported.
 
 ## 2026-11-26 · Minor · Bug · Rewrite regexes use ASCII-only `\w`
 
 Regexes in `src/sql/bind-params.ts` use `\w`, which in JavaScript matches ASCII only, so non-ASCII column names are truncated. Use `\p{L}` with the `u` flag.
-
-## 2026-11-26 · Minor · Bug · BETWEEN replacement inserts statistics values literally
-
-`replaceParameters` in `src/sql/bind-params.ts` inserts stat values as replacement text. Upstream processed backslash escapes in them and raised on invalid ones; here text values are quoted as SQL literals and numbers are inserted as text, so no escapes are processed.
 
 ## 2026-11-26 · Minor · Bug · `pg_stats` integers above 2^53 lose precision
 
@@ -94,10 +90,6 @@ Statistics values in `src/sql/bind-params.ts` pass through `number`, so very lar
 
 The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so `ExplainPlanArtifact` in `src/artifacts.ts` cannot be created from it.
 
-## 2026-11-26 · Minor · Other · Plan diff hunks can differ from upstream
-
-`src/artifacts.ts` uses `diff` (jsdiff) where upstream used `difflib`. Both produce valid diffs, but hunk alignment can differ, so output is not byte-identical to upstream.
-
 ## 2026-11-26 · Minor · Bug · A never-used sequence makes the whole health check fail
 
 `SequenceHealthCalc` in `src/database-health/sequence-health-calc.ts` converts `last_value` with `toBigInt`, which fails on `NULL` for a sequence that has never been used. The error aborts the whole `analyze_db_health` call.
@@ -108,11 +100,11 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 ## 2026-11-26 · Minor · Bug · Physical replication slot prints `(database: None)`
 
-The slot formatter in `src/database-health/replication-calc.ts` prints the database as `None` for physical slots, which have no database. The spelling is kept from the Python original.
+The slot formatter in `src/database-health/replication-calc.ts` prints the database as Python's `None` for physical slots, which have no database. Leave the database out for physical slots.
 
 ## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
 
-`src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant. The text is kept from upstream.
+`src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant.
 
 ## 2026-11-26 · Minor · Bug · Index-health column split breaks on expression indexes
 
@@ -120,7 +112,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 ## 2026-11-26 · Minor · Bug · Vacuum health default `maxValue` looks like a typo
 
-`src/database-health/vacuum-health-calc.ts` defaults `maxValue` to 2146483648, probably meant to be 2147483647 (2^31 - 1). Kept from upstream.
+`src/database-health/vacuum-health-calc.ts` defaults `maxValue` to 2146483648, probably meant to be 2147483647 (2^31 - 1).
 
 ## 2026-11-26 · Minor · Bug · Index recommendations drop the long-text warning
 
@@ -134,17 +126,13 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` processes the quals of top-level `JoinExpr` items only, so index candidates from nested joins are missed.
 
-## 2026-11-26 · Minor · Bug · Number formatting rounds half up instead of half to even
-
-Costs and sizes are formatted with `toFixed` (for example in `src/py-format.ts` and `src/artifacts.ts`), which rounds exact binary ties up. Python rounded half to even, so the last digit can differ.
-
 ## 2026-11-26 · Minor · Bug · Time limit is not hit immediately without `analyzeWorkload`
 
-`analysisStartTime` in `src/index/dta-calc.ts` defaults to 0 and is compared with `performance.now()`. Calling `enumerateGreedy` without `analyzeWorkload` therefore does not stop at the time limit at once, as Python did.
+`analysisStartTime` in `src/index/dta-calc.ts` defaults to 0 and is compared with `performance.now()`. Calling `enumerateGreedy` without `analyzeWorkload` therefore does not stop at the time limit at once, as it should.
 
 ## 2026-11-26 · Minor · Bug · `explain_query` rejects `hypothetical_indexes: null`
 
-The zod schema in `src/server.ts` accepts only an array, while the Python tool accepted `None`. Clients that send `null` get a validation error.
+The zod schema in `src/server.ts` accepts only an array, so clients that send `null` get a validation error. Accept `null` as no hypothetical indexes.
 
 ## 2026-11-26 · Minor · Bug · `getPostgresVersion` rejects pre-release versions
 
@@ -197,11 +185,11 @@ Replacing a truthiness check on a nullable string or boolean changes which value
 - `!this.timeout` in `src/sql/safe-sql.ts`, where `0` means no timeout.
 - `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/tools/objects.ts`.
 
-Go through the findings, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.
+Go through the findings, keep the current behaviour unless a change is intended, and switch the rules back on.
 
-## 2026-11-26 · Minor · Bug · Objects, arrays and dates are stringified differently from Python `str()`
+## 2026-11-26 · Minor · Bug · Objects, arrays and dates are stringified as `[object Object]` and similar
 
-Eight sites, each marked with an inline `typescript/no-base-to-string` disable, turn an `unknown` value into text with `String(value)` where upstream used `str()`:
+Eight sites, each marked with an inline `typescript/no-base-to-string` disable, turn an `unknown` value into text with `String(value)`:
 
 - `nullableText` in `src/database-health/constraint-health-calc.ts` and in `src/database-health/index-health-calc.ts`
 - `src/database-health/replication-calc.ts`
@@ -211,17 +199,11 @@ Eight sites, each marked with an inline `typescript/no-base-to-string` disable, 
 - `src/index/index-opt-base.ts`
 - `src/index/dta-calc.ts`
 
-The two agree for strings and numbers, but not for the parsed `json`/`jsonb` objects, arrays and `Date` values that `pg` returns:
-
-- `[object Object]` instead of `{'a': 1}`
-- `1,2` instead of `[1, 2]`
-- the JavaScript date form instead of Python's
-
-`src/sql/literal.ts` puts the result into SQL array-literal text. Route the sites through one shared cell-to-text helper, which is the "shared cell readers" step of "Python-shaped data contracts", and decide there which values need Python's form.
+That is fine for strings and numbers, but not for the parsed `json`/`jsonb` objects, arrays and `Date` values that `pg` returns: an object prints as `[object Object]`, an array as `1,2`, and a date in the long JavaScript form. `src/sql/literal.ts` puts the result into SQL array-literal text. Route the sites through one shared cell-to-text helper, which is the "shared cell readers" step of "Python-shaped data contracts", using JSON for objects and arrays and ISO 8601 for dates (check that the SQL array-literal site still produces valid literals).
 
 ## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
 
-`SSEServerTransport` (used in `src/transports/sse.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. `src/transports/sse.ts` carries a file-level `typescript/no-deprecated` disable and the test an inline one, because `--transport=sse` is part of the upstream CLI surface. When the SDK removes the transport, upstream parity and the SDK conflict, and that will need a decision.
+`SSEServerTransport` (used in `src/transports/sse.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. `src/transports/sse.ts` carries a file-level `typescript/no-deprecated` disable and the test an inline one, because `--transport=sse` is part of the CLI surface. When the SDK removes the transport, drop `--transport=sse` and its flags in a breaking-change (`feat!`) commit.
 
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
@@ -275,9 +257,9 @@ The port is covered: `tests/unit/list-databases.test.ts` labels a `:5433` server
 
 Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. `list_databases` is a fork-only tool, so its output shape is not pinned to upstream, but the tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
 
-## 2026-11-27 · Minor · Bug · Object listings read `information_schema`, which hides objects the role cannot access
+## 2026-11-27 · Major · Bug · Object listings read `information_schema`, which hides objects the role cannot access
 
-`list_schemas`, `list_objects` and `get_object_details` in `src/tools/objects.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. A divergence would read `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and report what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
+`list_schemas`, `list_objects` and `get_object_details` in `src/tools/objects.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. Fix by reading `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and reporting what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
 
 ## 2026-11-27 · Minor · Bug · Shutdown waits without limit for running statements
 
@@ -285,7 +267,7 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 
 ## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
 
-`formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, keeping the text upstream produces, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
+`formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
 
 ## 2026-11-27 · Minor · Security · Query cancel requests are sent without TLS
 
@@ -315,14 +297,22 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 
 `src/main.ts` keeps `shutdownInProgress` and `removeSignalHandlers` as module variables, so `shutdown` refuses to run twice per module load and `tests/unit/shutdown.test.ts` has to re-import `main.ts` after `vi.resetModules()` for every test. Hold that state in an object that `main` creates (and `shutdown` receives), so tests can run it without reloading the module.
 
-## 2026-11-27 · Minor · Refactor · Fork-authored stderr lines have no level prefix
+## 2026-11-27 · Minor · Refactor · Some stderr lines have no level prefix
 
-Some unprefixed `logLine` calls carry messages this fork added rather than text ported from upstream, for example the idle-pool close error in `src/database-registry.ts`, the cancel-request and idle-pool errors in `src/sql/sql-driver.ts`, and the fatal error in `src/index.ts`. Fork messages elsewhere use `log(level, ...)` with an `ERROR:`/`WARNING:` prefix, so stderr mixes both styles and the severity of these lines is lost. Check each `logLine` call site against upstream and move the fork-authored ones to `log(level, ...)`; that changes stderr output.
+About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind parameters, explain, health, top queries, extension utilities, the registry's idle-pool close and the fatal error in `src/index.ts`) write unprefixed lines, while the rest use `log(level, ...)` with an `INFO:`/`WARNING:`/`ERROR:` prefix. Stderr mixes both styles and the severity of the unprefixed lines is lost. Move them to `log(level, ...)` with the right level. The CLI usage error in `src/cli.ts` can stay unprefixed; if it is the only caller left, write it directly or keep `logLine` for it alone.
 
 ## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
 
-`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN` where Python printed `inf` or `nan`. Route them through `formatFixed` after checking that each was a Python format spec upstream.
+`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN`, while the advisor output prints `inf` or `nan`. Route them through one formatter so all output agrees.
 
 ## 2026-11-27 · Minor · Bug · Two bind-parameter log lines print `Error: ` before the message
 
-`src/sql/bind-params.ts` logs "Error extracting table aliases" and "Error getting column statistics" with `String(error)`, which prints the error class name before the message, where upstream's f-string printed only the message and the rest of the port uses `errorMessage` from `src/errors.ts`. Switch them to `errorMessage`; that changes stderr output.
+`src/sql/bind-params.ts` logs "Error extracting table aliases" and "Error getting column statistics" with `String(error)`, which prints the error class name before the message, while the rest of the code uses `errorMessage` from `src/errors.ts`. Switch them to `errorMessage`; that changes stderr output.
+
+## 2026-11-27 · Minor · Refactor · Replace the Python-format helpers
+
+`src/py-format.ts` reproduces Python's output: `pyTypeName` (`<class 'dict'>` in `explain_query` errors in `src/explain/explain-plan.ts`), `pyFloatStr` (Python float text in the advisor traces in `src/index/dta-calc.ts` and in the statistics values that `src/sql/bind-params.ts` writes into SQL), and `naturalSize` (`humanize.naturalsize`, base 1000). Replace `pyTypeName` with plain messages such as "expected an array of index definitions". Use `String` in the traces. In `bind-params.ts`, give each statistics literal an explicit cast to its column's type instead of relying on Python float text. Keep `formatFixed` and `formatPercent` as the project's number formatters. Decide whether `naturalSize` switches to base 1024, which `pg_size_pretty` and `psql` use. Update the "Output format" rule in `AGENTS.md` when the module goes.
+
+## 2026-11-27 · Minor · Docs · Code comments cite upstream as the reason for behaviour
+
+About 34 lines in `src/` and 5 in `tests/` give upstream as the reason for a behaviour: inline lint-disable reasons ("as upstream does", "mirrors upstream"), doc comments, and test names such as "lists the eleven tools in upstream order". Since upstream is no longer a specification (`AGENTS.md`, "Upstream is a reference"), they read as constraints that no longer exist. Reword each one to give the real reason, or fix the behaviour, when the code around it is next touched.

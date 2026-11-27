@@ -14,7 +14,7 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: How it could work. Note that tool names, parameters and CLI flags follow upstream crystaldba/postgres-mcp and are not changed lightly.
+      description: How it could work. Note that tool names, parameters and CLI flags are a published interface that other tools cache, so changes to them are deliberate.
   - type: textarea
     id: alternatives
     attributes:

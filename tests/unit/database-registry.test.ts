@@ -40,6 +40,7 @@ function registry(options: Partial<RegistryOptions>) {
   return new DatabaseRegistry({
     accessMode: AccessMode.UNRESTRICTED,
     idleMinutes: 10,
+    statementTimeoutSeconds: 0,
     databases: [],
     servers: [],
     ...options,
@@ -427,10 +428,14 @@ test('keeps the version cache separate for each connection pool', async () => {
   const b = createFakePool(versioned('16.2'));
 
   const versionA = await getPostgresVersion(
-    getSqlDriver(AccessMode.UNRESTRICTED, new DbConnPool('postgresql://h/a', () => a.pool))
+    getSqlDriver(AccessMode.UNRESTRICTED, new DbConnPool('postgresql://h/a', () => a.pool), {
+      statementTimeoutSeconds: 0,
+    })
   );
   const versionB = await getPostgresVersion(
-    getSqlDriver(AccessMode.UNRESTRICTED, new DbConnPool('postgresql://h/b', () => b.pool))
+    getSqlDriver(AccessMode.UNRESTRICTED, new DbConnPool('postgresql://h/b', () => b.pool), {
+      statementTimeoutSeconds: 0,
+    })
   );
 
   expect([versionA, versionB]).toEqual([15, 16]);

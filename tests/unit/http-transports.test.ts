@@ -11,7 +11,7 @@ import type { HttpServerOptions } from '../../src/transports/request-guard.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
 const HOST = '127.0.0.1';
-const TOOL_COUNT = 10;
+const TOOL_COUNT = 11;
 
 const cleanups: (() => Promise<void>)[] = [];
 

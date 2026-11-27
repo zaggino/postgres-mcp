@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { vi } from 'vitest';
 
 import type { PoolLike, QueryResultLike } from '../../src/sql/sql-driver.ts';
@@ -7,7 +8,8 @@ export interface RecordedQuery {
   values: readonly unknown[] | undefined;
 }
 
-export type QueryHandler = (query: RecordedQuery) => QueryResultLike[];
+/** A handler may return a promise to keep a statement pending, for example until the client is cancelled. */
+export type QueryHandler = (query: RecordedQuery) => QueryResultLike[] | Promise<QueryResultLike[]>;
 
 export function rowsResult(rows: Record<string, unknown>[]): QueryResultLike {
   const first = rows[0] ?? { id: null };
@@ -16,11 +18,33 @@ export function rowsResult(rows: Record<string, unknown>[]): QueryResultLike {
 
 export const noRowsResult: QueryResultLike = { rows: [], fields: [] };
 
-/** A pool that records every statement sent through its clients. */
+/** A pg.DatabaseError as Postgres reports it, for example 57014 for a cancelled or timed-out statement. */
+export function databaseError(message: string, code: string): pg.DatabaseError {
+  const error = new pg.DatabaseError(message, 0, 'error');
+  error.code = code;
+  return error;
+}
+
+/**
+ * A pool that records every statement sent through its clients. `cancel` is a spy; while a statement from `hang`
+ * is pending, calling `cancel` rejects it with Postgres's "canceling statement due to user request" (57014).
+ */
 export function createFakePool(handler: QueryHandler = () => [noRowsResult]) {
   const queries: RecordedQuery[] = [];
   const releases: (boolean | undefined)[] = [];
   const end = vi.fn(() => Promise.resolve());
+  const pendingRejects: ((error: Error) => void)[] = [];
+  const cancel = vi.fn(() => {
+    for (const reject of pendingRejects.splice(0)) {
+      reject(databaseError('canceling statement due to user request', '57014'));
+    }
+    return Promise.resolve();
+  });
+  /** Resolves a handler result that never settles until `cancel` is called. */
+  const hang = (): Promise<QueryResultLike[]> =>
+    new Promise((_resolve, reject) => {
+      pendingRejects.push(reject);
+    });
   const pool: PoolLike = {
     connect: () =>
       Promise.resolve({
@@ -37,8 +61,9 @@ export function createFakePool(handler: QueryHandler = () => [noRowsResult]) {
         release(destroy) {
           releases.push(destroy);
         },
+        cancel,
       }),
     end,
   };
-  return { pool, queries, releases, end };
+  return { pool, queries, releases, end, cancel, hang };
 }

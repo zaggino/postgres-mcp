@@ -23,7 +23,8 @@ import { ExplainPlanTool } from './explain/explain-plan.ts';
 import { DatabaseTuningAdvisor } from './index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from './index/index-opt-base.ts';
 import { TextPresentation } from './index/presentation.ts';
-import { AccessMode, getSqlDriver, RESTRICTED_TIMEOUT_SECONDS } from './sql/driver-factory.ts';
+import { RunningCalls } from './running-calls.ts';
+import { AccessMode, getSqlDriver } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
@@ -442,20 +443,37 @@ async function getTopQueries(sqlDriver: SqlExecutor, sortBy: string, limit: numb
   }
 }
 
+function accessModeClause({ accessMode, statementTimeoutSeconds: seconds }: DatabaseRegistry): string {
+  if (accessMode === AccessMode.RESTRICTED) {
+    return seconds > 0
+      ? `Access mode is restricted: read-only, and Postgres cancels each statement after ${seconds} s.`
+      : 'Access mode is restricted: read-only, with no statement timeout.';
+  }
+  return seconds > 0
+    ? `Access mode is unrestricted: statements can write, and Postgres cancels each statement after ${seconds} s.`
+    : 'Access mode is unrestricted: statements can write and have no timeout.';
+}
+
+/** Whether the cancel_query tool is registered; it is only in unrestricted mode. */
+function offersCancelQuery(registry: DatabaseRegistry): boolean {
+  return registry.accessMode === AccessMode.UNRESTRICTED;
+}
+
 /** Sent to every client at initialization; each clause costs tokens in every session, so keep them short. */
 function serverInstructions(registry: DatabaseRegistry): string {
   const { explicit, serverCount, prefixed } = registry.describe();
   const clauses = [
-    'Every tool except list_databases requires a "database" argument.',
+    offersCancelQuery(registry)
+      ? 'Every tool except list_databases and cancel_query requires a "database" argument.'
+      : 'Every tool except list_databases requires a "database" argument.',
     explicit.length > 0 ? `Configured databases: ${explicit.join(', ')}.` : '',
     serverCount > 0
       ? `More databases are discovered on ${serverCount} server(s); call list_databases to see them all.`
       : "Call list_databases to see each database's connection state.",
     prefixed ? "Discovered names carry their server's prefix; inside the database the name is unprefixed." : '',
-    registry.accessMode === AccessMode.RESTRICTED
-      ? `Access mode is restricted: read-only, and each statement is abandoned after ${RESTRICTED_TIMEOUT_SECONDS} s but keeps running in Postgres.`
-      : 'Access mode is unrestricted: statements can write and have no timeout.',
-    'Cancelling a call does not stop its SQL.',
+    accessModeClause(registry),
+    'Cancelling a call cancels its running statement.',
+    offersCancelQuery(registry) ? 'Call cancel_query to list running calls or cancel one by call_id.' : '',
     'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, connection, configuration or server failure).',
     'The health, top-queries and index tools report failures in their output instead.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
@@ -472,13 +490,20 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     { instructions: serverInstructions(registry) }
   );
 
+  // Per MCP session: createServer runs once per session.
+  const calls = new RunningCalls();
+
   /** Run a tool body against a named database; access failures become tool errors. */
   const onDatabase = async (
+    tool: string,
     database: string,
+    signal: AbortSignal,
     fn: (sqlDriver: SqlExecutor) => Promise<CallToolResult>
   ): Promise<CallToolResult> => {
     try {
-      return await registry.use(database, fn);
+      return await calls.track(tool, database, signal, (callSignal) =>
+        registry.use(database, fn, { signal: callSignal })
+      );
     } catch (error) {
       // Errors thrown by the tool body keep their own handling; only access failures are reported here.
       if (error instanceof DatabaseAccessError) {
@@ -495,7 +520,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       inputSchema: { database: databaseSchema },
       annotations: { title: 'List Schemas', readOnlyHint: true },
     },
-    ({ database }) => onDatabase(database, (sqlDriver) => listSchemas(sqlDriver))
+    ({ database }, { signal }) => onDatabase('list_schemas', database, signal, (sqlDriver) => listSchemas(sqlDriver))
   );
 
   server.registerTool(
@@ -509,8 +534,8 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'List Objects', readOnlyHint: true },
     },
-    ({ database, schema_name, object_type }) =>
-      onDatabase(database, (sqlDriver) => listObjects(sqlDriver, schema_name, object_type))
+    ({ database, schema_name, object_type }, { signal }) =>
+      onDatabase('list_objects', database, signal, (sqlDriver) => listObjects(sqlDriver, schema_name, object_type))
   );
 
   server.registerTool(
@@ -525,8 +550,10 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Get Object Details', readOnlyHint: true },
     },
-    ({ database, schema_name, object_name, object_type }) =>
-      onDatabase(database, (sqlDriver) => getObjectDetails(sqlDriver, schema_name, object_name, object_type))
+    ({ database, schema_name, object_name, object_type }, { signal }) =>
+      onDatabase('get_object_details', database, signal, (sqlDriver) =>
+        getObjectDetails(sqlDriver, schema_name, object_name, object_type)
+      )
   );
 
   server.registerTool(
@@ -551,8 +578,10 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Explain Query', readOnlyHint: true },
     },
-    ({ database, sql, analyze, hypothetical_indexes }) =>
-      onDatabase(database, (sqlDriver) => explainQuery(sqlDriver, sql, analyze, hypothetical_indexes))
+    ({ database, sql, analyze, hypothetical_indexes }, { signal }) =>
+      onDatabase('explain_query', database, signal, (sqlDriver) =>
+        explainQuery(sqlDriver, sql, analyze, hypothetical_indexes)
+      )
   );
 
   server.registerTool(
@@ -566,8 +595,10 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Analyze Workload Indexes', readOnlyHint: true },
     },
-    ({ database, max_index_size_mb }) =>
-      onDatabase(database, (sqlDriver) => analyzeWorkloadIndexes(sqlDriver, max_index_size_mb))
+    ({ database, max_index_size_mb }, { signal }) =>
+      onDatabase('analyze_workload_indexes', database, signal, (sqlDriver) =>
+        analyzeWorkloadIndexes(sqlDriver, max_index_size_mb)
+      )
   );
 
   server.registerTool(
@@ -582,8 +613,10 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Analyze Query Indexes', readOnlyHint: true },
     },
-    ({ database, queries, max_index_size_mb }) =>
-      onDatabase(database, (sqlDriver) => analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb))
+    ({ database, queries, max_index_size_mb }, { signal }) =>
+      onDatabase('analyze_query_indexes', database, signal, (sqlDriver) =>
+        analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb)
+      )
   );
 
   server.registerTool(
@@ -599,7 +632,8 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Analyze Database Health', readOnlyHint: true },
     },
-    ({ database, health_type }) => onDatabase(database, (sqlDriver) => analyzeDbHealth(sqlDriver, health_type))
+    ({ database, health_type }, { signal }) =>
+      onDatabase('analyze_db_health', database, signal, (sqlDriver) => analyzeDbHealth(sqlDriver, health_type))
   );
 
   server.registerTool(
@@ -623,7 +657,8 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       },
       annotations: { title: 'Get Top Queries', readOnlyHint: true },
     },
-    ({ database, sort_by, limit }) => onDatabase(database, (sqlDriver) => getTopQueries(sqlDriver, sort_by, limit))
+    ({ database, sort_by, limit }, { signal }) =>
+      onDatabase('get_top_queries', database, signal, (sqlDriver) => getTopQueries(sqlDriver, sort_by, limit))
   );
 
   // execute_sql is described according to the access mode
@@ -649,7 +684,8 @@ export function createServer(registry: DatabaseRegistry): McpServer {
         sql: z.string().default('all').describe('SQL to run'),
       },
     },
-    ({ database, sql }) => onDatabase(database, (sqlDriver) => executeSql(sqlDriver, sql))
+    ({ database, sql }, { signal }) =>
+      onDatabase('execute_sql', database, signal, (sqlDriver) => executeSql(sqlDriver, sql))
   );
 
   server.registerTool(
@@ -669,6 +705,28 @@ export function createServer(registry: DatabaseRegistry): McpServer {
       }
     }
   );
+
+  if (offersCancelQuery(registry)) {
+    server.registerTool(
+      'cancel_query',
+      {
+        description:
+          "List this session's running tool calls, or cancel one by call_id. Cancelling stops its statement in Postgres. Only reachable if the client can issue a call while another is running, or has given up on one.",
+        inputSchema: {
+          call_id: z.string().optional().describe('Id of the call to cancel, from the list returned without it'),
+        },
+        annotations: { title: 'Cancel Query', readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      },
+      ({ call_id }) => {
+        if (call_id === undefined) {
+          return formatTextResponse(toJson(calls.list()));
+        }
+        return calls.cancel(call_id)
+          ? formatTextResponse(toJson({ cancelled: true, call_id }))
+          : formatError(new Error(`No running call with call_id "${call_id}"`));
+      }
+    );
+  }
 
   return server;
 }
@@ -1088,7 +1146,7 @@ export async function main(argv: string[]): Promise<void> {
 
   const registry = new DatabaseRegistry({
     ...resolved,
-    getSqlDriver: (mode, conn) => deps.getSqlDriver(mode, conn),
+    getSqlDriver: (mode, conn, driverOptions) => deps.getSqlDriver(mode, conn, driverOptions),
   });
   const { accessMode } = registry;
   log(

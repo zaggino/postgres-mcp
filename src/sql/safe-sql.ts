@@ -10,11 +10,21 @@ import { paramSqlToQuery } from './literal.ts';
 import type { JsonObject, RawStmtJson } from './pg-ast.ts';
 import { asWrappedNode, isJsonObject, parseSql, SqlParseError } from './pg-ast.ts';
 import type { DbConnPool, RowResult } from './sql-driver.ts';
+import { QueryTimeoutError } from './sql-driver.ts';
 
 const PG_CATALOG_PATTERN = /^pg_catalog\.(?<name>.+)$/u;
 const STMT_NOT_ALLOWED =
   'Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other read-only statements are allowed. Received';
 const SQL_COMMENT_PREFIX = '/* postgres-mcp */';
+
+/** The timeout error as upstream words it in restricted mode. */
+export class RestrictedQueryTimeoutError extends QueryTimeoutError {
+  constructor(seconds: number, options?: { cause?: unknown }) {
+    super(seconds, options);
+    this.message = `Query execution timed out after ${seconds} seconds in restricted mode. Consider simplifying your query or increasing the timeout.`;
+    this.name = 'RestrictedQueryTimeoutError';
+  }
+}
 
 /** What SafeSqlDriver wraps; a SqlDriver satisfies it. */
 export interface SqlExecutor {
@@ -25,14 +35,6 @@ export interface SqlExecutor {
     params?: readonly unknown[] | null,
     forceReadonly?: boolean
   ) => Promise<RowResult[] | null>;
-}
-
-function logWarning(message: string): void {
-  process.stderr.write(`${message}\n`);
-}
-
-function logError(message: string): void {
-  process.stderr.write(`${message}\n`);
 }
 
 function functionName(funcname: unknown): string {
@@ -188,16 +190,13 @@ function errorMessage(error: unknown): string {
 /** Wraps an executor so only read-only, allowlisted SQL reaches the database. */
 export class SafeSqlDriver implements SqlExecutor {
   readonly sqlDriver: SqlExecutor;
-  readonly timeout: number | null;
 
   get pool(): DbConnPool | undefined {
     return this.sqlDriver.pool;
   }
 
-  /** `timeout` is in seconds; a falsy value disables it. */
-  constructor(sqlDriver: SqlExecutor, timeout: number | null = null) {
+  constructor(sqlDriver: SqlExecutor) {
     this.sqlDriver = sqlDriver;
-    this.timeout = timeout;
   }
 
   // The third argument is accepted for interface compatibility but ignored:
@@ -208,41 +207,13 @@ export class SafeSqlDriver implements SqlExecutor {
     _forceReadonly = true
   ): Promise<RowResult[] | null> {
     await validateQuery(query);
-    const run = () => this.sqlDriver.executeQuery(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
-
-    if (!this.timeout) {
-      return await run();
-    }
-    return await this.runWithTimeout(run);
-  }
-
-  private async runWithTimeout(run: () => Promise<RowResult[] | null>): Promise<RowResult[] | null> {
-    const seconds = this.timeout;
-    let timer: NodeJS.Timeout | undefined;
-    let timedOut = false;
-    const expired = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => {
-          timedOut = true;
-          logWarning(`Query execution timed out after ${seconds} seconds`);
-          reject(
-            new Error(
-              `Query execution timed out after ${seconds} seconds in restricted mode. Consider simplifying your query or increasing the timeout.`
-            )
-          );
-        },
-        (seconds ?? 0) * 1000
-      );
-    });
     try {
-      return await Promise.race([run(), expired]);
+      return await this.sqlDriver.executeQuery(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
     } catch (error) {
-      if (!timedOut) {
-        logError(`Error executing query: ${String(error)}`);
+      if (error instanceof QueryTimeoutError) {
+        throw new RestrictedQueryTimeoutError(error.seconds, { cause: error.cause });
       }
       throw error;
-    } finally {
-      clearTimeout(timer);
     }
   }
 

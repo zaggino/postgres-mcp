@@ -16,24 +16,9 @@ describe(getSqlDriver, () => {
     [AccessMode.UNRESTRICTED, SqlDriver],
     [AccessMode.RESTRICTED, SafeSqlDriver],
   ])('returns the driver for %s mode', (accessMode, expectedType) => {
-    const driver = getSqlDriver(accessMode, new DbConnPool());
+    const driver = getSqlDriver(accessMode, new DbConnPool(), { statementTimeoutSeconds: 0 });
 
     expect(driver).toBeInstanceOf(expectedType);
-  });
-
-  it('restricted mode applies a 30 second timeout around the base driver', () => {
-    const driver = getSqlDriver(AccessMode.RESTRICTED, new DbConnPool());
-
-    expect(driver).toBeInstanceOf(SafeSqlDriver);
-    expect(driver).toHaveProperty('timeout', 30);
-    expect(driver).toHaveProperty('sqlDriver', expect.any(SqlDriver));
-  });
-
-  it('unrestricted mode returns a plain driver without a timeout', () => {
-    const driver = getSqlDriver(AccessMode.UNRESTRICTED, new DbConnPool());
-
-    expect(driver).toBeInstanceOf(SqlDriver);
-    expect('timeout' in driver).toBe(false);
   });
 });
 

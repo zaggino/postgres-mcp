@@ -18,12 +18,15 @@ Differences from upstream:
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
-- An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure, restricted-mode refusal or timeout, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
+- An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure, restricted-mode refusal, statement timeout or cancellation, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
 - Error messages and stderr logs do not include the SQL text, plans or parse trees of a query. Upstream included the full query. A database or parser error can still quote the token it failed at.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
+- Statement timeouts are enforced by Postgres (`statement_timeout`), so a statement that runs too long is stopped; `--statement-timeout` sets the limit in either mode (default 30 seconds in restricted mode, none in unrestricted mode). Upstream stops waiting after 30 seconds in restricted mode and leaves the statement running.
+- Cancelling a tool call (`notifications/cancelled`) cancels its running statement in Postgres. In unrestricted mode a new `cancel_query` tool lists the session's running calls and cancels one by id. Upstream ignores cancellation.
+- Connections set `application_name` to `postgres-mcp` unless the connection URI or `PGAPPNAME` sets one.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
-- One server serves many databases. Every tool takes a required `database` argument and there is a new `list_databases` tool, so the tool schemas differ from upstream. Databases are named with `--database` flags or a `--config` file, which can also discover the databases of a server; pools open lazily and close when idle (`--idle-minutes`). `DATABASE_URI` and the positional `database_url` are removed. See [Multiple databases](#multiple-databases).
+- One server serves many databases. Every database tool takes a required `database` argument and there is a new `list_databases` tool, so the tool schemas differ from upstream. Databases are named with `--database` flags or a `--config` file, which can also discover the databases of a server; pools open lazily and close when idle (`--idle-minutes`). `DATABASE_URI` and the positional `database_url` are removed. See [Multiple databases](#multiple-databases).
 
 ## Overview
 
@@ -89,13 +92,15 @@ To run the published package instead of a clone, use `npx` as the command and `"
 ### Access modes
 
 - **Unrestricted**: full read/write access to data and schema. Suitable for development.
-- **Restricted**: SQL is parsed and checked against allowlists of statements, node types and functions, executed in a read-only transaction, and limited to 30 seconds of execution time. Suitable for production.
+- **Restricted**: SQL is parsed and checked against allowlists of statements, node types and functions, executed in a read-only transaction, and each statement is limited to 30 seconds by default. Suitable for production.
 
 Select the mode with `--access-mode=restricted` (the default) or `--access-mode=unrestricted`.
 
+Postgres cancels any statement that runs longer than `--statement-timeout` seconds (default 30 in restricted mode, none in unrestricted mode; `0` disables it). Postgres enforces the limit itself (`SET statement_timeout` on the connection before each call), so a statement is stopped even if the server stops waiting for it. In unrestricted mode, SQL can change `statement_timeout` itself. Cancelling a tool call from the client cancels its running statement. In unrestricted mode the `cancel_query` tool lets the agent do the same: called without arguments it lists the session's running calls, and with a `call_id` it cancels that call. This only helps when the client can make a call while another is running, or has given up waiting for one.
+
 ## Multiple databases
 
-One server process serves every database you name. Every tool except `list_databases` takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
+One server process serves every database you name. Every tool except `list_databases` (and `cancel_query` in unrestricted mode) takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
 
 ```
 { databases: [{ database, source, state, idle_seconds_left, error? }], servers: [{ server, prefix, error? }] }
@@ -108,15 +113,16 @@ One server process serves every database you name. Every tool except `list_datab
 
 `--config FILE` reads a JSONC file (JSON with `//` and `/* */` comments and trailing commas; plain JSON works too); see [postgres-mcp.config.example.jsonc](postgres-mcp.config.example.jsonc). Unknown keys are rejected, every key is optional, but at least one database or server is required.
 
-| Key                 | Default      | Description                                                                                                                                     |
-| ------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accessMode`        | `restricted` | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
-| `idleMinutes`       | `10`         | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
-| `databases`         | none         | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
-| `servers[].uri`     | required     | A `postgres://` or `postgresql://` URL of a server whose databases are discovered; port and database are optional.                              |
-| `servers[].prefix`  | `""`         | Prepended to each discovered database name.                                                                                                     |
-| `servers[].include` | `["*"]`      | Globs of database names to keep.                                                                                                                |
-| `servers[].exclude` | `[]`         | Globs of database names to drop.                                                                                                                |
+| Key                       | Default                           | Description                                                                                                                                     |
+| ------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accessMode`              | `restricted`                      | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
+| `idleMinutes`             | `10`                              | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
+| `statementTimeoutSeconds` | `30` restricted, `0` unrestricted | Seconds after which Postgres cancels a statement; `0` means none; at most 2147483. `--statement-timeout` wins.                                  |
+| `databases`               | none                              | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
+| `servers[].uri`           | required                          | A `postgres://` or `postgresql://` URL of a server whose databases are discovered; port and database are optional.                              |
+| `servers[].prefix`        | `""`                              | Prepended to each discovered database name.                                                                                                     |
+| `servers[].include`       | `["*"]`                           | Globs of database names to keep.                                                                                                                |
+| `servers[].exclude`       | `[]`                              | Globs of database names to drop.                                                                                                                |
 
 Globs support `*` and `?` only and are matched against the whole database name (before the prefix). Discovery lists `pg_database` entries that allow connections and are not templates. It connects with the server URI, defaulting the port to `5432` and, when the URI names no database, the database to `postgres` (not the user name, as `pg` would), so `postgresql://user:password@host` is enough; `PGPORT` and `PGDATABASE` are not consulted for server URIs. A discovered database is reached with the server URI whose path is replaced by the database name, so discovery needs a URL-form server URI: key/value DSNs and a `dbname=` query parameter are not supported.
 
@@ -193,6 +199,7 @@ postgres-mcp [options] (--database NAME ... | --config FILE)
 | `--database`             | none          | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`.                                    |
 | `--config`               | none          | JSONC [config file](#config-file). Exclusive with `--database`.                                                                  |
 | `--idle-minutes`         | `10`          | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
+| `--statement-timeout`    | `30` / `0`    | Seconds after which Postgres cancels a statement: `30` in restricted mode, `0` (none) in unrestricted mode; max 2147483.         |
 | `--access-mode`          | `restricted`  | `unrestricted` or `restricted`.                                                                                                  |
 | `--transport`            | `stdio`       | `stdio`, `sse` or `streamable-http`.                                                                                             |
 | `--sse-host`             | `localhost`   | Host to bind the SSE server to.                                                                                                  |
@@ -258,7 +265,7 @@ Optimize a specific query:
 
 The server provides its functionality through [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools) only, because tool support is widespread across the [MCP client ecosystem](https://modelcontextprotocol.io/clients). Some other Postgres MCP servers, such as the [reference Postgres MCP server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres), expose schema information as [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources).
 
-Every tool except `list_databases` takes a required `database` argument, the name of the database to run against.
+Every tool except `list_databases` and `cancel_query` takes a required `database` argument, the name of the database to run against.
 
 | Tool name                  | Description                                                                                                                               |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -272,6 +279,7 @@ Every tool except `list_databases` takes a required `database` argument, the nam
 | `analyze_workload_indexes` | Analyzes the workload for resource-intensive queries and recommends indexes.                                                              |
 | `analyze_query_indexes`    | Analyzes a list of up to 10 SQL queries and recommends indexes.                                                                           |
 | `analyze_db_health`        | Runs health checks: index, connection, constraint, buffer cache, sequence, vacuum, and replication health.                                |
+| `cancel_query`             | Unrestricted mode only. Lists this session's running tool calls, or cancels one by `call_id`.                                             |
 
 ## Related projects
 
@@ -357,7 +365,7 @@ ROLLBACK; DROP TABLE users;
 
 To prevent this the SQL is parsed before execution with `libpg-query`, and anything that is not on an allowlist of statement types, parse tree nodes, functions and extensions is rejected. That includes `COMMIT` and `ROLLBACK`. The common stored procedure languages, including PL/pgSQL and PL/Python, do not allow `COMMIT` or `ROLLBACK` inside functions, but if you have unsafe procedural languages enabled, the read-only protection could be circumvented.
 
-Restricted mode also limits query execution time to 30 seconds. The limit is applied on the client side: the server stops waiting, but the statement can keep running on the database (see [docs/TODO.md](docs/TODO.md)).
+Restricted mode also limits each statement to 30 seconds by default (`--statement-timeout`). Postgres enforces the limit and cancels the statement.
 
 The two modes sit at opposite ends of the convenience and safety spectrum:
 

@@ -6,7 +6,12 @@ import type { CliOptions } from './cli.ts';
 import { CliError, MAX_IDLE_MINUTES } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
 import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
-import { ACCESS_MODES, DEFAULT_ACCESS_MODE } from './sql/driver-factory.ts';
+import {
+  ACCESS_MODES,
+  DEFAULT_ACCESS_MODE,
+  defaultStatementTimeoutSeconds,
+  MAX_STATEMENT_TIMEOUT_SECONDS,
+} from './sql/driver-factory.ts';
 
 export const DEFAULT_IDLE_MINUTES = 10;
 
@@ -19,6 +24,7 @@ const configSchema = z
   .object({
     accessMode: z.enum(ACCESS_MODES).optional(),
     idleMinutes: z.number().int().nonnegative().max(MAX_IDLE_MINUTES).optional(),
+    statementTimeoutSeconds: z.number().int().nonnegative().max(MAX_STATEMENT_TIMEOUT_SECONDS).optional(),
     databases: z.record(z.string(), uriSchema).optional(),
     servers: z
       .array(
@@ -131,7 +137,7 @@ function configServer(
 
 /** Resolve CLI flags and the optional config file into registry options. */
 export function resolveConfig(
-  cli: Pick<CliOptions, 'accessMode' | 'databases' | 'configPath' | 'idleMinutes'>,
+  cli: Pick<CliOptions, 'accessMode' | 'databases' | 'configPath' | 'idleMinutes' | 'statementTimeoutSeconds'>,
   env: NodeJS.ProcessEnv,
   readFile: (path: string) => string
 ): Omit<RegistryOptions, 'poolFactory' | 'getSqlDriver'> {
@@ -147,9 +153,12 @@ export function resolveConfig(
       ? { settings: {}, sources: { databases: cliDatabases(cli.databases, env), servers: [] } }
       : fromConfigFile(cli.configPath, env, readFile);
 
+  const accessMode = cli.accessMode ?? settings.accessMode ?? DEFAULT_ACCESS_MODE;
   return {
-    accessMode: cli.accessMode ?? settings.accessMode ?? DEFAULT_ACCESS_MODE,
+    accessMode,
     idleMinutes: cli.idleMinutes ?? settings.idleMinutes ?? DEFAULT_IDLE_MINUTES,
+    statementTimeoutSeconds:
+      cli.statementTimeoutSeconds ?? settings.statementTimeoutSeconds ?? defaultStatementTimeoutSeconds(accessMode),
     ...sources,
   };
 }
@@ -160,7 +169,7 @@ function fromConfigFile(
   env: NodeJS.ProcessEnv,
   readFile: (path: string) => string
 ): {
-  settings: Pick<z.infer<typeof configSchema>, 'accessMode' | 'idleMinutes'>;
+  settings: Pick<z.infer<typeof configSchema>, 'accessMode' | 'idleMinutes' | 'statementTimeoutSeconds'>;
   sources: Pick<RegistryOptions, 'databases' | 'servers'>;
 } {
   const config = readConfig(path, readFile);

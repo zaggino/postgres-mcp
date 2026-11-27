@@ -23,10 +23,12 @@ export interface RegistryOptions {
   accessMode: AccessMode;
   /** Minutes without a call in flight before a pool closes; 0 never closes. */
   idleMinutes: number;
+  /** Seconds after which Postgres cancels a statement; 0 means no timeout. */
+  statementTimeoutSeconds: number;
   databases: ExplicitDatabase[];
   servers: DiscoverySource[];
   poolFactory?: PoolFactory;
-  getSqlDriver?: (accessMode: AccessMode, conn: DbConnPool) => SqlExecutor;
+  getSqlDriver?: typeof defaultGetSqlDriver;
 }
 
 export interface DatabaseListing {
@@ -266,9 +268,10 @@ function poolState(pool: IdlePool | undefined): 'open' | 'closed' {
 
 export class DatabaseRegistry {
   readonly accessMode: AccessMode;
+  readonly statementTimeoutSeconds: number;
   readonly #idleMinutes: number;
   readonly #poolFactory: PoolFactory;
-  readonly #getSqlDriver: (accessMode: AccessMode, conn: DbConnPool) => SqlExecutor;
+  readonly #getSqlDriver: typeof defaultGetSqlDriver;
   readonly #explicit: readonly ExplicitDatabase[];
   readonly #pools = new Map<string, IdlePool>();
   /** Pools taken out of service while a call was still running; shutdown closes them too. */
@@ -279,6 +282,7 @@ export class DatabaseRegistry {
 
   constructor(options: RegistryOptions) {
     this.accessMode = options.accessMode;
+    this.statementTimeoutSeconds = options.statementTimeoutSeconds;
     this.#idleMinutes = options.idleMinutes;
     this.#poolFactory = options.poolFactory ?? defaultPoolFactory;
     this.#getSqlDriver = options.getSqlDriver ?? defaultGetSqlDriver;
@@ -301,7 +305,11 @@ export class DatabaseRegistry {
     };
   }
 
-  async use<T>(name: string, fn: (sqlDriver: SqlExecutor) => Promise<T>): Promise<T> {
+  async use<T>(
+    name: string,
+    fn: (sqlDriver: SqlExecutor) => Promise<T>,
+    { signal }: { signal?: AbortSignal } = {}
+  ): Promise<T> {
     let entry = this.#catalog.get(name);
     if (!entry && this.#sources.length > 0) {
       await this.#discover();
@@ -322,7 +330,7 @@ export class DatabaseRegistry {
       pool = new IdlePool(uri, this.#poolFactory, this.#idleMinutes);
       this.#pools.set(name, pool);
     }
-    return await pool.use((conn) => fn(this.#createDriver(conn, uri)));
+    return await pool.use((conn) => fn(this.#createDriver(conn, uri, signal)));
   }
 
   /** Why discovery may have missed a name: the servers whose last run failed. */
@@ -333,9 +341,12 @@ export class DatabaseRegistry {
     return failures.length > 0 ? ` Discovery failed on ${failures.join('; ')}.` : '';
   }
 
-  #createDriver(conn: DbConnPool, uri: string): SqlExecutor {
+  #createDriver(conn: DbConnPool, uri: string, signal?: AbortSignal): SqlExecutor {
     try {
-      return this.#getSqlDriver(this.accessMode, conn);
+      return this.#getSqlDriver(this.accessMode, conn, {
+        signal,
+        statementTimeoutSeconds: this.statementTimeoutSeconds,
+      });
     } catch (error) {
       throw new DatabaseAccessError(maskError(error, uri), { cause: error });
     }

@@ -7,7 +7,7 @@ import { createFakePool, rowsResult } from '../../support/fake-pool.ts';
 async function beginStatementFor(accessMode: AccessMode, forceReadonly?: boolean): Promise<string | undefined> {
   const fake = createFakePool(() => [rowsResult([{ test: 'value' }])]);
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
-  const driver = getSqlDriver(accessMode, conn);
+  const driver = getSqlDriver(accessMode, conn, { statementTimeoutSeconds: 0 });
 
   await driver.executeQuery('SELECT 1', null, forceReadonly);
 

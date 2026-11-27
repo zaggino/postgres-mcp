@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 
 import { DatabaseRegistry } from '../../src/database-registry.ts';
-import { AccessMode } from '../../src/sql/driver-factory.ts';
+import { AccessMode, defaultStatementTimeoutSeconds } from '../../src/sql/driver-factory.ts';
 import { defaultPoolFactory } from '../../src/sql/sql-driver.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
@@ -32,6 +32,7 @@ describeWithPostgres('DatabaseRegistry discovery', ({ connectionString }) => {
     registry = new DatabaseRegistry({
       accessMode: AccessMode.RESTRICTED,
       idleMinutes: 10,
+      statementTimeoutSeconds: defaultStatementTimeoutSeconds(AccessMode.RESTRICTED),
       databases: [],
       servers: [{ uri: { uri: connectionString() }, prefix: 'x-', include: ['mcp_disc_*'], exclude: [] }],
     });

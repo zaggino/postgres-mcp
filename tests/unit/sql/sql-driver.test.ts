@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 
-import { DbConnPool, SqlDriver } from '../../../src/sql/sql-driver.ts';
+import { DbConnPool, poolConfig, SqlDriver } from '../../../src/sql/sql-driver.ts';
 import type { QueryHandler } from '../../support/fake-pool.ts';
 import { createFakePool, noRowsResult, rowsResult } from '../../support/fake-pool.ts';
 
@@ -147,4 +147,16 @@ test('executeQuery on a failed pool probe does not run the query', async () => {
   await expect(driver.executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
 
   expect(query).toHaveBeenCalledExactlyOnceWith('SELECT 1');
+});
+
+test('poolConfig defaults application_name to postgres-mcp for a plain URI', () => {
+  expect(poolConfig('postgresql://user:pass@localhost/db', {}).application_name).toBe('postgres-mcp');
+});
+
+test('poolConfig keeps an application_name given in the URI', () => {
+  expect(poolConfig('postgresql://user:pass@localhost/db?application_name=mine', {}).application_name).toBeUndefined();
+});
+
+test('poolConfig keeps an application_name given by PGAPPNAME', () => {
+  expect(poolConfig('postgresql://user:pass@localhost/db', { PGAPPNAME: 'mine' }).application_name).toBeUndefined();
 });

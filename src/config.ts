@@ -6,10 +6,9 @@ import type { CliOptions } from './cli.ts';
 import { CliError, MAX_IDLE_MINUTES } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
 import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
-import { ACCESS_MODES, AccessMode } from './sql/driver-factory.ts';
+import { ACCESS_MODES, DEFAULT_ACCESS_MODE } from './sql/driver-factory.ts';
 
 export const DEFAULT_IDLE_MINUTES = 10;
-export const DEFAULT_ACCESS_MODE: AccessMode = AccessMode.RESTRICTED;
 
 const DATABASE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const VARIABLE_PATTERN = /\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}/gu;

@@ -11,6 +11,7 @@ export const AccessMode = {
   UNRESTRICTED: 'unrestricted',
   RESTRICTED: 'restricted',
 } as const satisfies Record<string, AccessMode>;
+export const DEFAULT_ACCESS_MODE: AccessMode = AccessMode.RESTRICTED;
 
 /** Get the appropriate SQL driver for the access mode. */
 export function getSqlDriver(accessMode: AccessMode, conn: DbConnPool): SqlExecutor {

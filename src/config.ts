@@ -1,3 +1,5 @@
+import type { ParseError } from 'jsonc-parser';
+import { parse } from 'jsonc-parser';
 import { z } from 'zod';
 
 import type { CliOptions } from './cli.ts';
@@ -10,7 +12,6 @@ export const DEFAULT_IDLE_MINUTES = 10;
 
 const DATABASE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const VARIABLE_PATTERN = /\$\{(?<name>[A-Za-z_][A-Za-z0-9_]*)\}/gu;
-const JSON_ERROR_POSITION = /position \d+(?: \(line \d+ column \d+\))?/u;
 
 const uriSchema = z.object({ uri: z.string() }).strict();
 
@@ -97,13 +98,13 @@ function readConfig(path: string, readFile: (path: string) => string): z.infer<t
   } catch (error) {
     throw new CliError(`cannot read config file ${path}: ${errorMessage(error)}`, { cause: error });
   }
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (error) {
-    // V8's message quotes the text around the error, which can be part of a literal URI with a password.
-    const at = JSON_ERROR_POSITION.exec(errorMessage(error))?.[0];
-    throw new CliError(`invalid JSON in config file ${path}${at ? ` at ${at}` : ''}`, { cause: error });
+  // JSONC: comments and trailing commas are allowed. The error names only the offset, never the text around
+  // it, which can be part of a literal URI with a password.
+  const errors: ParseError[] = [];
+  const json: unknown = parse(text, errors, { allowTrailingComma: true });
+  const [firstError] = errors;
+  if (firstError) {
+    throw new CliError(`invalid JSON in config file ${path} at position ${firstError.offset}`);
   }
   const parsed = configSchema.safeParse(json);
   if (!parsed.success) {

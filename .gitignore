@@ -10,3 +10,4 @@ coverage/
 # used for local testing, do not commit
 .mcp.json
 postgres-mcp.config.json
+postgres-mcp.config.jsonc

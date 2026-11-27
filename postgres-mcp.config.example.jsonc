@@ -1,0 +1,23 @@
+// postgres-mcp config file. JSON with comments and trailing commas; unknown keys are rejected.
+{
+  // "unrestricted" or "restricted"; --access-mode wins.
+  "accessMode": "restricted",
+  // Minutes without a call in flight before a pool closes; 0 never closes. --idle-minutes wins.
+  "idleMinutes": 10,
+  // Databases by name. A uri is a literal URI or contains ${VAR} references expanded from the environment.
+  "databases": {
+    "app": { "uri": "${APP_DATABASE_URI}" },
+    "analytics": { "uri": "${ANALYTICS_DATABASE_URI}" },
+  },
+  // Servers whose databases are discovered from pg_database.
+  "servers": [
+    {
+      "uri": "${STAGING_SERVER_URI}",
+      // Prepended to each discovered database name.
+      "prefix": "staging-",
+      // Globs (* and ?) matched against the whole database name, before the prefix.
+      "include": ["*"],
+      "exclude": ["postgres", "rdsadmin"],
+    },
+  ],
+}

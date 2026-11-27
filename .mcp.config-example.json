@@ -3,7 +3,7 @@
     "postgres": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/postgres-mcp/dist/index.js", "--config=/path/to/postgres-mcp.config.json"]
+      "args": ["/path/to/postgres-mcp/dist/index.js", "--config=/path/to/postgres-mcp.config.jsonc"]
     }
   }
 }

@@ -5,8 +5,7 @@
     ".": {
       "release-type": "node",
       "include-component-in-tag": false,
-      "bump-minor-pre-major": true,
-      "initial-version": "0.4.0"
+      "initial-version": "1.0.0"
     }
   }
 }

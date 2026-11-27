@@ -18,13 +18,13 @@ Its agent instructions require the file itself to be updated in the same change 
 
 `ReplicationCalc` in `src/database-health/replication-calc.ts` uses WAL functions such as `pg_last_wal_receive_lsn()` that are not in the function allowlist in `src/sql/allowlists.ts`. In restricted mode the lag query is rejected and the check reports nothing.
 
-## 2026-11-26 · Minor · Bug · Bind-parameter collector tests `AEXPR_OP` where the original comment says IN
+## 2026-11-26 · Minor · Bug · Bind-parameter collector has a dead `AEXPR_OP` branch and may miss `IN (SELECT ...)`
 
-`src/sql/bind-params.ts` matches `kind === "AEXPR_OP"` before visiting a subselect on the right-hand side; the comment there describes the `IN` case, which is `AEXPR_IN`, so `IN (SELECT ...)` is not handled as intended. Match `AEXPR_IN` there.
+The `A_Expr` visitor in `src/sql/bind-params.ts` ends with a branch for `kind === "AEXPR_OP"` with a `SelectStmt` right-hand side, ported from upstream's `kind == 0` whose comment meant `IN`. The block just above already visits any `SelectStmt` right-hand side in its own scope, so the branch only repeats that visit. `libpg-query` parses `x IN (SELECT ...)` as a `SubLink` (`ANY_SUBLINK`), not an `A_Expr`, and `x IN (1, 2)` as `AEXPR_IN` with a `List`, so neither form reaches the branch. Delete it, and check whether the columns of an `IN (SELECT ...)` subquery are collected in the subquery's scope.
 
 ## 2026-11-26 · Minor · Bug · `execute_sql`'s `sql` parameter defaults to `"all"`
 
-The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so a call without it sends `all` to the database and returns a syntax error. The parameter should be required.
+The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so a call without it sends `all` to the database and returns a syntax error. The parameter should be required; that is a breaking surface change (`feat!`).
 
 ## 2026-11-26 · Minor · Bug · Workload SQL is lowercased wholesale
 
@@ -120,7 +120,7 @@ The slot formatter in `src/database-health/replication-calc.ts` prints the datab
 
 ## 2026-11-26 · Minor · Refactor · Seed-column handling in the advisor is partly dead
 
-`seedColumnsCount` and `minColumnUsage` in `src/index/dta-calc.ts` are only partly used because the seed pass is commented out upstream.
+`seedColumnsCount` and `minColumnUsage` in `src/index/dta-calc.ts` are only partly used: `generateRecommendations` starts the greedy search from the empty seed alone, so no seed pass uses them. Either implement the seed pass or remove the options.
 
 ## 2026-11-26 · Minor · Bug · Condition column collector ignores nested joins
 
@@ -207,7 +207,7 @@ That is fine for strings and numbers, but not for the parsed `json`/`jsonb` obje
 
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
-`.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of 0.4.0 will fail; publish 0.4.0 by hand from the `v0.4.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.
+`.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of the first release, 1.0.0, will fail; publish 1.0.0 by hand from the `v1.0.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.
 
 ## 2026-11-26 · Minor · Feature · Server discovery needs a URL-form server URI
 
@@ -255,11 +255,11 @@ The port is covered: `tests/unit/list-databases.test.ts` labels a `:5433` server
 
 ## 2026-11-27 · Minor · Performance · `list_databases` output repeats the same fields for every database
 
-Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. `list_databases` is a fork-only tool, so its output shape is not pinned to upstream, but the tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
+Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. Update the tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
 
 ## 2026-11-27 · Major · Bug · Object listings read `information_schema`, which hides objects the role cannot access
 
-`list_schemas`, `list_objects` and `get_object_details` in `src/tools/objects.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. Fix by reading `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and reporting what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
+`list_schemas`, `list_objects` and `get_object_details` in `src/tools/objects.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Fix by reading `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and reporting what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
 
 ## 2026-11-27 · Minor · Bug · Shutdown waits without limit for running statements
 
@@ -309,10 +309,18 @@ About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind paramete
 
 `src/sql/bind-params.ts` logs "Error extracting table aliases" and "Error getting column statistics" with `String(error)`, which prints the error class name before the message, while the rest of the code uses `errorMessage` from `src/errors.ts`. Switch them to `errorMessage`; that changes stderr output.
 
-## 2026-11-27 · Minor · Refactor · Replace the Python-format helpers
+## 2026-11-27 · Minor · Refactor · Replace the Python-imitating helpers
 
-`src/py-format.ts` reproduces Python's output: `pyTypeName` (`<class 'dict'>` in `explain_query` errors in `src/explain/explain-plan.ts`), `pyFloatStr` (Python float text in the advisor traces in `src/index/dta-calc.ts` and in the statistics values that `src/sql/bind-params.ts` writes into SQL), and `naturalSize` (`humanize.naturalsize`, base 1000). Replace `pyTypeName` with plain messages such as "expected an array of index definitions". Use `String` in the traces. In `bind-params.ts`, give each statistics literal an explicit cast to its column's type instead of relying on Python float text. Keep `formatFixed` and `formatPercent` as the project's number formatters. Decide whether `naturalSize` switches to base 1024, which `pg_size_pretty` and `psql` use. Update the "Output format" rule in `AGENTS.md` when the module goes.
+Several helpers exist only to reproduce Python's output or semantics: `pyTypeName` in `src/py-format.ts` (`<class 'dict'>` in `explain_query` errors in `src/explain/explain-plan.ts`), `pyFloatStr` (Python float text in the advisor traces in `src/index/dta-calc.ts`), `pyLog` and `pyDivide` in `src/index/dta-calc.ts`, and `pyStr` in `src/sql/bind-params.ts`. Replace `pyTypeName` with plain messages such as "expected an array of index definitions", use `String` in the traces, and replace the arithmetic helpers with plain JavaScript where the Python error cases cannot occur. `formatFixed` and `formatPercent` stay. The statistics literals in `bind-params.ts` are a separate entry.
 
 ## 2026-11-27 · Minor · Docs · Code comments cite upstream as the reason for behaviour
 
-About 34 lines in `src/` and 5 in `tests/` give upstream as the reason for a behaviour: inline lint-disable reasons ("as upstream does", "mirrors upstream"), doc comments, and test names such as "lists the eleven tools in upstream order". Since upstream is no longer a specification (`AGENTS.md`, "Upstream is a reference"), they read as constraints that no longer exist. Reword each one to give the real reason, or fix the behaviour, when the code around it is next touched.
+About 34 lines in `src/` and 5 in `tests/` that mention upstream or Python, and two reasons in `oxlint.config.ts`, give upstream as the reason for a behaviour: inline lint-disable reasons ("as upstream does", "mirrors upstream"), doc comments such as the one on `logLine` in `src/log.ts`, and test names such as "lists the eleven tools in upstream order". Since upstream is no longer a specification (`AGENTS.md`, "Upstream is a reference"), they read as constraints that no longer exist. Sweep them in one change: reword each one to give the real reason, or turn it into a TODO entry where the behaviour itself should change.
+
+## 2026-11-28 · Minor · Bug · Statistics values are written into SQL as Python float text
+
+`SqlBindParams` in `src/sql/bind-params.ts` fills query parameters with values from `pg_stats`, writing floats through `pyFloatStr` (`1.0`, `1e-05`) and integers as plain text, with no cast. The literal's type then depends on its spelling, which can pick a different operator or plan from the one the real parameter type would. Write each value with an explicit cast to its column's type, and drop the `pyFloatStr` call.
+
+## 2026-11-28 · Minor · Feature · `naturalSize` uses decimal units
+
+`naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor results (`src/index/presentation.ts`) and traces. `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024; it changes tool output, so mention it in the release notes.

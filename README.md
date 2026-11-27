@@ -7,7 +7,7 @@ A Postgres MCP server with index tuning, explain plans, health checks, and safe 
 
 > This is a fork of [crystaldba/postgres-mcp](https://github.com/crystaldba/postgres-mcp) (Postgres MCP Pro), rewritten in TypeScript and published on npm as [`@zaggino/postgres-mcp`](https://www.npmjs.com/package/@zaggino/postgres-mcp). Credit for the design, the index tuning approach and the original implementation goes to Crystal DBA.
 
-Differences from upstream:
+The fork no longer tracks upstream and fixes inherited defects as it finds them. The notable differences from upstream:
 
 - TypeScript on Node.js 26+ instead of Python.
 - Installed from npm. There is no Docker image and no PyPI package.
@@ -21,7 +21,8 @@ Differences from upstream:
 - An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure including a FATAL report from Postgres, restricted-mode refusal, statement timeout or cancellation, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
 - Error messages and stderr logs do not include the SQL text, plans or parse trees of a query. Upstream included the full query. A database or parser error can still quote the token it failed at.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
-- Plan diffs are computed with jsdiff instead of Python's `difflib`, so hunks can be aligned differently. Numbers are rounded with JavaScript's `toFixed`, which rounds exact ties up where Python rounds them to even, so a last digit can differ.
+- Plan diffs are computed with jsdiff instead of Python's `difflib`, so hunks can be aligned differently.
+- Numbers are rounded with JavaScript's `toFixed`, which rounds exact ties up where Python rounds them to even, so a last digit can differ.
 - The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
 - Statement timeouts are enforced by Postgres (`statement_timeout`), so a statement that runs too long is stopped; `--statement-timeout` sets the limit in either mode (default 30 seconds in restricted mode, none in unrestricted mode). Upstream stops waiting after 30 seconds in restricted mode and leaves the statement running.
 - Cancelling a tool call (`notifications/cancelled`) cancels its running statement in Postgres. In unrestricted mode a new `cancel_query` tool lists the session's running calls and cancels one by id. Upstream ignores cancellation.

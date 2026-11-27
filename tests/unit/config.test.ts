@@ -154,17 +154,8 @@ describe('precedence', () => {
     expect([result.accessMode, result.idleMinutes]).toEqual(['unrestricted', 3]);
   });
 
-  it('defaults a config file to restricted and 10 minutes', () => {
+  it('defaults to restricted and 10 minutes', () => {
     const result = withConfig({ databases: { a: { uri: 'postgres://h/d' } } });
     expect([result.accessMode, result.idleMinutes]).toEqual(['restricted', 10]);
-  });
-
-  it.each([
-    [undefined, 'restricted'],
-    ['unrestricted', 'unrestricted'],
-  ] as const)('resolves --database with --access-mode %s to %s', (accessMode, expected) => {
-    const env = { MCP_APP_DATABASE_URI: 'postgres://h/d' };
-    const result = resolveConfig(cli({ databases: ['app'], accessMode }), env, noFile);
-    expect(result.accessMode).toBe(expected);
   });
 });

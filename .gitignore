@@ -4,6 +4,9 @@ coverage/
 *.tsbuildinfo
 .env
 .env.*
-.mcp.json
 .claude/temp/
 .claude/worktrees/
+
+# used for local testing, do not commit
+.mcp.json
+postgres-mcp.config.json

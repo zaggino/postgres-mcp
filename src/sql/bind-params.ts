@@ -62,7 +62,6 @@ export class ColumnCollector extends Visitor {
   /** Collected columns, keyed by table. */
   readonly columns = new Map<string, Set<string>>();
   private readonly contextStack: Scope[] = [];
-  private targetList: AstNode[] | undefined;
   private insideSelect: boolean;
   private readonly columnAliases = new Map<string, ColumnAlias>();
   private currentQueryLevel: number;
@@ -90,17 +89,13 @@ export class ColumnCollector extends Visitor {
     });
 
     // First pass: collect column aliases from targetList
-    const targetList = node.nodes('targetList');
-    if (targetList.length > 0) {
-      this.targetList = targetList;
-      for (const targetEntry of targetList) {
-        const colAlias = targetEntry.string('name');
-        if (colAlias) {
-          this.columnAliases.set(colAlias, {
-            node: targetEntry.node('val'),
-            level: queryLevel,
-          });
-        }
+    for (const targetEntry of node.nodes('targetList')) {
+      const colAlias = targetEntry.string('name');
+      if (colAlias) {
+        this.columnAliases.set(colAlias, {
+          node: targetEntry.node('val'),
+          level: queryLevel,
+        });
       }
     }
 
@@ -113,24 +108,8 @@ export class ColumnCollector extends Visitor {
   }
 
   private processQueryClauses(node: AstNode): void {
-    const targetList = node.nodes('targetList');
-    if (targetList.length > 0) {
-      this.targetList = targetList;
-      for (const targetEntry of targetList) {
-        this.visit(targetEntry.node('val'));
-      }
-    }
-
-    for (const groupItem of node.nodes('groupClause')) {
-      if (!groupItem.is('SortGroupClause')) {
-        continue;
-      }
-      const refIndex = groupItem.number('tleSortGroupRef') ?? 0;
-      if (this.targetList && refIndex <= this.targetList.length) {
-        // 1-based; `at` keeps negative indexing for a zero ref.
-        const targetEntry = this.targetList.at(refIndex - 1);
-        this.visit(targetEntry?.node('val'));
-      }
+    for (const targetEntry of node.nodes('targetList')) {
+      this.visit(targetEntry.node('val'));
     }
 
     this.visit(node.node('whereClause'));

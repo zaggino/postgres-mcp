@@ -8,7 +8,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import pg from 'pg';
 import { z } from 'zod';
@@ -24,7 +25,7 @@ import { DatabaseTuningAdvisor } from './index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from './index/index-opt-base.ts';
 import { TextPresentation } from './index/presentation.ts';
 import { RunningCalls } from './running-calls.ts';
-import { AccessMode, getSqlDriver } from './sql/driver-factory.ts';
+import { AccessMode } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
@@ -44,9 +45,6 @@ function log(level: string, message: string): void {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-/** Replaceable seam so tests can supply a driver without a database. */
-export const deps = { getSqlDriver };
 
 function toJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => (typeof item === 'bigint' ? item.toString() : item));
@@ -105,9 +103,8 @@ const methodSchema = z.enum(['dta']).default('dta').describe('Method to use for 
 const maxIndexSizeSchema = z.number().int().default(10_000).describe('Max index size in MB');
 
 async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
-  try {
-    const rows = await sqlDriver.executeQuery(
-      `
+  const rows = await sqlDriver.executeQuery(
+    `
             SELECT
                 schema_name,
                 schema_owner,
@@ -119,81 +116,72 @@ async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
             FROM information_schema.schemata
             ORDER BY schema_type, schema_name
             `
-    );
-    const schemas = rows ? rows.map((row) => row.cells) : [];
-    return formatTextResponse(toJson(schemas));
-  } catch (error) {
-    log('ERROR', `Error listing schemas: ${errorMessage(error)}`);
-    return formatError(error);
-  }
+  );
+  const schemas = rows ? rows.map((row) => row.cells) : [];
+  return formatTextResponse(toJson(schemas));
 }
 
 async function listObjects(sqlDriver: SqlExecutor, schemaName: string, objectType: string): Promise<CallToolResult> {
-  try {
-    let objects: unknown[];
+  let objects: unknown[];
 
-    if (objectType === 'table' || objectType === 'view') {
-      const tableType = objectType === 'table' ? 'BASE TABLE' : 'VIEW';
-      const rows = await SafeSqlDriver.executeParamQuery(
-        sqlDriver,
-        `
+  if (objectType === 'table' || objectType === 'view') {
+    const tableType = objectType === 'table' ? 'BASE TABLE' : 'VIEW';
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
                 SELECT table_schema, table_name, table_type
                 FROM information_schema.tables
                 WHERE table_schema = {} AND table_type = {}
                 ORDER BY table_name
                 `,
-        [schemaName, tableType]
-      );
-      objects = rows
-        ? rows.map((row) => ({
-            schema: cell(row, 'table_schema'),
-            name: cell(row, 'table_name'),
-            type: cell(row, 'table_type'),
-          }))
-        : [];
-    } else if (objectType === 'sequence') {
-      const rows = await SafeSqlDriver.executeParamQuery(
-        sqlDriver,
-        `
+      [schemaName, tableType]
+    );
+    objects = rows
+      ? rows.map((row) => ({
+          schema: cell(row, 'table_schema'),
+          name: cell(row, 'table_name'),
+          type: cell(row, 'table_type'),
+        }))
+      : [];
+  } else if (objectType === 'sequence') {
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
                 SELECT sequence_schema, sequence_name, data_type
                 FROM information_schema.sequences
                 WHERE sequence_schema = {}
                 ORDER BY sequence_name
                 `,
-        [schemaName]
-      );
-      objects = rows
-        ? rows.map((row) => ({
-            schema: cell(row, 'sequence_schema'),
-            name: cell(row, 'sequence_name'),
-            data_type: cell(row, 'data_type'),
-          }))
-        : [];
-    } else if (objectType === 'extension') {
-      // Extensions are not schema-specific
-      const rows = await sqlDriver.executeQuery(
-        `
+      [schemaName]
+    );
+    objects = rows
+      ? rows.map((row) => ({
+          schema: cell(row, 'sequence_schema'),
+          name: cell(row, 'sequence_name'),
+          data_type: cell(row, 'data_type'),
+        }))
+      : [];
+  } else if (objectType === 'extension') {
+    // Extensions are not schema-specific
+    const rows = await sqlDriver.executeQuery(
+      `
                 SELECT extname, extversion, extrelocatable
                 FROM pg_extension
                 ORDER BY extname
                 `
-      );
-      objects = rows
-        ? rows.map((row) => ({
-            name: cell(row, 'extname'),
-            version: cell(row, 'extversion'),
-            relocatable: cell(row, 'extrelocatable'),
-          }))
-        : [];
-    } else {
-      return formatError(`Unsupported object type: ${objectType}`);
-    }
-
-    return formatTextResponse(toJson(objects));
-  } catch (error) {
-    log('ERROR', `Error listing objects: ${errorMessage(error)}`);
-    return formatError(error);
+    );
+    objects = rows
+      ? rows.map((row) => ({
+          name: cell(row, 'extname'),
+          version: cell(row, 'extversion'),
+          relocatable: cell(row, 'extrelocatable'),
+        }))
+      : [];
+  } else {
+    return formatError(`Unsupported object type: ${objectType}`);
   }
+
+  return formatTextResponse(toJson(objects));
 }
 
 async function tableDetails(
@@ -278,58 +266,53 @@ async function getObjectDetails(
   objectName: string,
   objectType: string
 ): Promise<CallToolResult> {
-  try {
-    let result: unknown;
+  let result: unknown;
 
-    if (objectType === 'table' || objectType === 'view') {
-      result = await tableDetails(sqlDriver, schemaName, objectName, objectType);
-    } else if (objectType === 'sequence') {
-      const rows = await SafeSqlDriver.executeParamQuery(
-        sqlDriver,
-        `
+  if (objectType === 'table' || objectType === 'view') {
+    result = await tableDetails(sqlDriver, schemaName, objectName, objectType);
+  } else if (objectType === 'sequence') {
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
                 SELECT sequence_schema, sequence_name, data_type, start_value, increment
                 FROM information_schema.sequences
                 WHERE sequence_schema = {} AND sequence_name = {}
                 `,
-        [schemaName, objectName]
-      );
-      const row = rows?.[0];
-      result = row
-        ? {
-            schema: cell(row, 'sequence_schema'),
-            name: cell(row, 'sequence_name'),
-            data_type: cell(row, 'data_type'),
-            start_value: cell(row, 'start_value'),
-            increment: cell(row, 'increment'),
-          }
-        : {};
-    } else if (objectType === 'extension') {
-      const rows = await SafeSqlDriver.executeParamQuery(
-        sqlDriver,
-        `
+      [schemaName, objectName]
+    );
+    const row = rows?.[0];
+    result = row
+      ? {
+          schema: cell(row, 'sequence_schema'),
+          name: cell(row, 'sequence_name'),
+          data_type: cell(row, 'data_type'),
+          start_value: cell(row, 'start_value'),
+          increment: cell(row, 'increment'),
+        }
+      : {};
+  } else if (objectType === 'extension') {
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
                 SELECT extname, extversion, extrelocatable
                 FROM pg_extension
                 WHERE extname = {}
                 `,
-        [objectName]
-      );
-      const row = rows?.[0];
-      result = row
-        ? {
-            name: cell(row, 'extname'),
-            version: cell(row, 'extversion'),
-            relocatable: cell(row, 'extrelocatable'),
-          }
-        : {};
-    } else {
-      return formatError(`Unsupported object type: ${objectType}`);
-    }
-
-    return formatTextResponse(toJson(result));
-  } catch (error) {
-    log('ERROR', `Error getting object details: ${errorMessage(error)}`);
-    return formatError(error);
+      [objectName]
+    );
+    const row = rows?.[0];
+    result = row
+      ? {
+          name: cell(row, 'extname'),
+          version: cell(row, 'extversion'),
+          relocatable: cell(row, 'extrelocatable'),
+        }
+      : {};
+  } else {
+    return formatError(`Unsupported object type: ${objectType}`);
   }
+
+  return formatTextResponse(toJson(result));
 }
 
 async function explainQuery(
@@ -338,62 +321,47 @@ async function explainQuery(
   analyze: boolean,
   hypotheticalIndexes: Record<string, unknown>[]
 ): Promise<CallToolResult> {
-  try {
-    const explainTool = new ExplainPlanTool(sqlDriver);
-    let result: ExplainPlanArtifact | ErrorResult;
+  const explainTool = new ExplainPlanTool(sqlDriver);
+  let result: ExplainPlanArtifact | ErrorResult;
 
-    // If hypothetical indexes are specified, check for HypoPG extension
-    if (hypotheticalIndexes.length > 0) {
-      if (analyze) {
-        return formatError('Cannot use analyze and hypothetical indexes together');
-      }
-      const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(sqlDriver);
+  // If hypothetical indexes are specified, check for HypoPG extension
+  if (hypotheticalIndexes.length > 0) {
+    if (analyze) {
+      return formatError('Cannot use analyze and hypothetical indexes together');
+    }
+    const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(sqlDriver);
 
-      // If hypopg is not installed, return the message
-      if (!isHypopgInstalled) {
-        return formatTextResponse(hypopgMessage);
-      }
-
-      result = await explainTool.explainWithHypotheticalIndexes(sql, hypotheticalIndexes);
-    } else if (analyze) {
-      result = await explainTool.explainAnalyze(sql);
-    } else {
-      result = await explainTool.explain(sql);
+    // If hypopg is not installed, return the message
+    if (!isHypopgInstalled) {
+      return formatTextResponse(hypopgMessage);
     }
 
-    if (result instanceof ExplainPlanArtifact) {
-      return formatTextResponse(result.toText());
-    }
-    return formatError(result);
-  } catch (error) {
-    log('ERROR', `Error explaining query: ${errorMessage(error)}`);
-    return formatError(error);
+    result = await explainTool.explainWithHypotheticalIndexes(sql, hypotheticalIndexes);
+  } else if (analyze) {
+    result = await explainTool.explainAnalyze(sql);
+  } else {
+    result = await explainTool.explain(sql);
   }
+
+  if (result instanceof ExplainPlanArtifact) {
+    return formatTextResponse(result.toText());
+  }
+  return formatError(result);
 }
 
 async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<CallToolResult> {
-  try {
-    const rows = await sqlDriver.executeQuery(sql);
-    if (rows === null) {
-      return formatTextResponse('No results');
-    }
-    return formatTextResponse(toJson(rows.map((r) => r.cells)));
-  } catch (error) {
-    log('ERROR', `Error executing query: ${errorMessage(error)}`);
-    return formatError(error);
+  const rows = await sqlDriver.executeQuery(sql);
+  if (rows === null) {
+    return formatTextResponse('No results');
   }
+  return formatTextResponse(toJson(rows.map((r) => r.cells)));
 }
 
 async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: number): Promise<CallToolResult> {
-  try {
-    const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
-    const dtaTool = new TextPresentation(sqlDriver, indexTuning);
-    const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
-    return formatTextResponse(toJson(result));
-  } catch (error) {
-    log('ERROR', `Error analyzing workload: ${errorMessage(error)}`);
-    return formatError(error);
-  }
+  const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
+  const dtaTool = new TextPresentation(sqlDriver, indexTuning);
+  const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
+  return formatTextResponse(toJson(result));
 }
 
 async function analyzeQueryIndexes(
@@ -408,15 +376,10 @@ async function analyzeQueryIndexes(
     return formatError(`Please provide a list of up to ${MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.`);
   }
 
-  try {
-    const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
-    const dtaTool = new TextPresentation(sqlDriver, indexTuning);
-    const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
-    return formatTextResponse(toJson(result));
-  } catch (error) {
-    log('ERROR', `Error analyzing queries: ${errorMessage(error)}`);
-    return formatError(error);
-  }
+  const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
+  const dtaTool = new TextPresentation(sqlDriver, indexTuning);
+  const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
+  return formatTextResponse(toJson(result));
 }
 
 async function analyzeDbHealth(sqlDriver: SqlExecutor, healthType: string): Promise<CallToolResult> {
@@ -425,22 +388,17 @@ async function analyzeDbHealth(sqlDriver: SqlExecutor, healthType: string): Prom
 }
 
 async function getTopQueries(sqlDriver: SqlExecutor, sortBy: string, limit: number): Promise<CallToolResult> {
-  try {
-    const topQueriesTool = new TopQueriesCalc(sqlDriver);
+  const topQueriesTool = new TopQueriesCalc(sqlDriver);
 
-    if (sortBy === 'resources') {
-      return formatTextResponse(await topQueriesTool.getTopResourceQueries());
-    }
-    if (sortBy === 'mean_time' || sortBy === 'total_time') {
-      return formatTextResponse(
-        await topQueriesTool.getTopQueriesByTime(limit, sortBy === 'mean_time' ? 'mean' : 'total')
-      );
-    }
-    return formatError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.");
-  } catch (error) {
-    log('ERROR', `Error getting slow queries: ${errorMessage(error)}`);
-    return formatError(error);
+  if (sortBy === 'resources') {
+    return formatTextResponse(await topQueriesTool.getTopResourceQueries());
   }
+  if (sortBy === 'mean_time' || sortBy === 'total_time') {
+    return formatTextResponse(
+      await topQueriesTool.getTopQueriesByTime(limit, sortBy === 'mean_time' ? 'mean' : 'total')
+    );
+  }
+  return formatError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.");
 }
 
 function accessModeClause({ accessMode, statementTimeoutSeconds: seconds }: DatabaseRegistry): string {
@@ -493,76 +451,96 @@ export function createServer(registry: DatabaseRegistry): McpServer {
   // Per MCP session: createServer runs once per session.
   const calls = new RunningCalls();
 
-  /** Run a tool body against a named database; access failures become tool errors. */
-  const onDatabase = async (
-    tool: string,
-    database: string,
-    signal: AbortSignal,
-    fn: (sqlDriver: SqlExecutor) => Promise<CallToolResult>
-  ): Promise<CallToolResult> => {
-    try {
-      return await calls.track(tool, database, signal, (callSignal) =>
-        registry.use(database, fn, { signal: callSignal })
-      );
-    } catch (error) {
-      // Errors thrown by the tool body keep their own handling; only access failures are reported here.
-      if (error instanceof DatabaseAccessError) {
-        return formatError(error);
+  /**
+   * Register a tool that runs against a named database: adds the required `database` argument, tracks the call for
+   * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except database access failures).
+   */
+  const registerDatabaseTool = <Shape extends ZodRawShapeCompat>(
+    name: string,
+    {
+      errorLog,
+      inputSchema,
+      ...config
+    }: { description: string; annotations: ToolAnnotations; errorLog: string; inputSchema: Shape },
+    body: (sqlDriver: SqlExecutor, args: ShapeOutput<Shape>) => Promise<CallToolResult>
+  ): void => {
+    const fullSchema = { database: databaseSchema, ...inputSchema };
+    server.registerTool<ZodRawShapeCompat, ZodRawShapeCompat>(
+      name,
+      { ...config, inputSchema: fullSchema },
+      async (validated, { signal }) => {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the SDK has parsed the arguments against fullSchema, but its callback type cannot follow a generic shape
+        const args = validated as ShapeOutput<typeof fullSchema>;
+        const run = async (sqlDriver: SqlExecutor): Promise<CallToolResult> => {
+          try {
+            return await body(sqlDriver, args);
+          } catch (error) {
+            log('ERROR', `${errorLog}: ${errorMessage(error)}`);
+            return formatError(error);
+          }
+        };
+        try {
+          return await calls.track(name, args.database, signal, (callSignal) =>
+            registry.use(args.database, run, { signal: callSignal })
+          );
+        } catch (error) {
+          // Failures inside the tool body are handled by `run`; only access failures reach here.
+          if (error instanceof DatabaseAccessError) {
+            return formatError(error);
+          }
+          throw error;
+        }
       }
-      throw error;
-    }
+    );
   };
 
-  server.registerTool(
+  registerDatabaseTool(
     'list_schemas',
     {
       description: 'List all schemas in the database',
-      inputSchema: { database: databaseSchema },
+      inputSchema: {},
       annotations: { title: 'List Schemas', readOnlyHint: true },
+      errorLog: 'Error listing schemas',
     },
-    ({ database }, { signal }) => onDatabase('list_schemas', database, signal, (sqlDriver) => listSchemas(sqlDriver))
+    (sqlDriver) => listSchemas(sqlDriver)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'list_objects',
     {
       description: 'List objects in a schema',
       inputSchema: {
-        database: databaseSchema,
         schema_name: z.string().describe('Schema name'),
         object_type: objectTypeSchema,
       },
       annotations: { title: 'List Objects', readOnlyHint: true },
+      errorLog: 'Error listing objects',
     },
-    ({ database, schema_name, object_type }, { signal }) =>
-      onDatabase('list_objects', database, signal, (sqlDriver) => listObjects(sqlDriver, schema_name, object_type))
+    (sqlDriver, { schema_name, object_type }) => listObjects(sqlDriver, schema_name, object_type)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'get_object_details',
     {
       description: 'Show detailed information about a database object',
       inputSchema: {
-        database: databaseSchema,
         schema_name: z.string().describe('Schema name'),
         object_name: z.string().describe('Object name'),
         object_type: objectTypeSchema,
       },
       annotations: { title: 'Get Object Details', readOnlyHint: true },
+      errorLog: 'Error getting object details',
     },
-    ({ database, schema_name, object_name, object_type }, { signal }) =>
-      onDatabase('get_object_details', database, signal, (sqlDriver) =>
-        getObjectDetails(sqlDriver, schema_name, object_name, object_type)
-      )
+    (sqlDriver, { schema_name, object_name, object_type }) =>
+      getObjectDetails(sqlDriver, schema_name, object_name, object_type)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'explain_query',
     {
       description:
         'Explains the execution plan for a SQL query, showing how the database will execute it and provides detailed cost estimates.',
       inputSchema: {
-        database: databaseSchema,
         sql: z.string().describe('SQL query to explain'),
         analyze: z
           .boolean()
@@ -577,71 +555,61 @@ export function createServer(registry: DatabaseRegistry): McpServer {
           .describe(HYPOTHETICAL_INDEXES_DESCRIPTION),
       },
       annotations: { title: 'Explain Query', readOnlyHint: true },
+      errorLog: 'Error explaining query',
     },
-    ({ database, sql, analyze, hypothetical_indexes }, { signal }) =>
-      onDatabase('explain_query', database, signal, (sqlDriver) =>
-        explainQuery(sqlDriver, sql, analyze, hypothetical_indexes)
-      )
+    (sqlDriver, { sql, analyze, hypothetical_indexes }) => explainQuery(sqlDriver, sql, analyze, hypothetical_indexes)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'analyze_workload_indexes',
     {
       description: 'Analyze frequently executed queries in the database and recommend optimal indexes',
       inputSchema: {
-        database: databaseSchema,
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
       annotations: { title: 'Analyze Workload Indexes', readOnlyHint: true },
+      errorLog: 'Error analyzing workload',
     },
-    ({ database, max_index_size_mb }, { signal }) =>
-      onDatabase('analyze_workload_indexes', database, signal, (sqlDriver) =>
-        analyzeWorkloadIndexes(sqlDriver, max_index_size_mb)
-      )
+    (sqlDriver, { max_index_size_mb }) => analyzeWorkloadIndexes(sqlDriver, max_index_size_mb)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'analyze_query_indexes',
     {
       description: 'Analyze a list of (up to 10) SQL queries and recommend optimal indexes',
       inputSchema: {
-        database: databaseSchema,
         queries: z.array(z.string()).describe('List of Query strings to analyze'),
         max_index_size_mb: maxIndexSizeSchema,
         method: methodSchema,
       },
       annotations: { title: 'Analyze Query Indexes', readOnlyHint: true },
+      errorLog: 'Error analyzing queries',
     },
-    ({ database, queries, max_index_size_mb }, { signal }) =>
-      onDatabase('analyze_query_indexes', database, signal, (sqlDriver) =>
-        analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb)
-      )
+    (sqlDriver, { queries, max_index_size_mb }) => analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'analyze_db_health',
     {
       description: HEALTH_DESCRIPTION,
       inputSchema: {
-        database: databaseSchema,
         health_type: z
           .string()
           .default('all')
           .describe(`Optional. Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}.`),
       },
       annotations: { title: 'Analyze Database Health', readOnlyHint: true },
+      errorLog: 'Error analyzing database health',
     },
-    ({ database, health_type }, { signal }) =>
-      onDatabase('analyze_db_health', database, signal, (sqlDriver) => analyzeDbHealth(sqlDriver, health_type))
+    (sqlDriver, { health_type }) => analyzeDbHealth(sqlDriver, health_type)
   );
 
-  server.registerTool(
+  registerDatabaseTool(
     'get_top_queries',
     {
       description: `Reports the slowest or most resource-intensive queries using data from the '${PG_STAT_STATEMENTS}' extension.`,
       inputSchema: {
-        database: databaseSchema,
         sort_by: z
           .string()
           .default('resources')
@@ -656,9 +624,9 @@ export function createServer(registry: DatabaseRegistry): McpServer {
           .describe('Number of queries to return when ranking based on mean_time or total_time'),
       },
       annotations: { title: 'Get Top Queries', readOnlyHint: true },
+      errorLog: 'Error getting slow queries',
     },
-    ({ database, sort_by, limit }, { signal }) =>
-      onDatabase('get_top_queries', database, signal, (sqlDriver) => getTopQueries(sqlDriver, sort_by, limit))
+    (sqlDriver, { sort_by, limit }) => getTopQueries(sqlDriver, sort_by, limit)
   );
 
   // execute_sql is described according to the access mode
@@ -675,17 +643,16 @@ export function createServer(registry: DatabaseRegistry): McpServer {
             readOnlyHint: true,
           },
         };
-  server.registerTool(
+  registerDatabaseTool(
     'execute_sql',
     {
       ...executeSqlConfig,
       inputSchema: {
-        database: databaseSchema,
         sql: z.string().default('all').describe('SQL to run'),
       },
+      errorLog: 'Error executing query',
     },
-    ({ database, sql }, { signal }) =>
-      onDatabase('execute_sql', database, signal, (sqlDriver) => executeSql(sqlDriver, sql))
+    (sqlDriver, { sql }) => executeSql(sqlDriver, sql)
   );
 
   server.registerTool(
@@ -1144,10 +1111,7 @@ export async function main(argv: string[]): Promise<void> {
 
   const resolved = exitOnCliError(() => resolveConfig(options, process.env, (path) => readFileSync(path, 'utf-8')));
 
-  const registry = new DatabaseRegistry({
-    ...resolved,
-    getSqlDriver: (mode, conn, driverOptions) => deps.getSqlDriver(mode, conn, driverOptions),
-  });
+  const registry = new DatabaseRegistry(resolved);
   const { accessMode } = registry;
   log(
     'INFO',

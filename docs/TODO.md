@@ -170,9 +170,33 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 `STRUCT_FIELD_TYPES` in `src/sql/allowlists.ts` describes parse-tree shape, not policy, and `src/sql/pg-ast.ts` imports it from there. Move it next to the parser, add `IndexStmt.relation`, and expose one value classifier that both the visitor traversal (`pg-ast.ts`) and the validator (`src/sql/safe-sql.ts`) use, so the two walkers cannot disagree.
 
-## 2026-11-26 · Minor · Refactor · Python-shaped data contracts
+## 2026-11-26 · Major · Refactor · Python-shaped data contracts
 
-`RowResult { cells }` wraps every row and each module decodes cells ad hoc; `QueryWeight` and `IndexConfiguration` are positional tuples; several functions return `[boolean, string]`; `IndexRecommendation` is mostly forwarding getters. Replace them with plain row records, named object shapes and shared cell readers.
+Data moves through the code in shapes carried over from Python, with no types behind them. It is the root of several entries here: "Objects, arrays and dates are stringified as `[object Object]` and similar", "Missing or non-numeric costs and NULL counters become 0" and "A zero-column SELECT is reported as "no result set"".
+
+Rows:
+
+- `RowResult { cells }` (`src/sql/sql-driver.ts`) wraps every row and has no behaviour. `executeWithClient` copies each row into it, and the callers that pass rows through unwrap or copy them again (`rows.map((r) => r.cells)`, `{ ...row.cells }`). It is used 39 times in 15 files of `src/` and 12 times in 5 test files.
+- `executeQuery` returns `RowResult[] | null`, where `null` means the statement had no result set. Only `execute_sql` (`src/tools/analysis.ts`) needs that; every other caller writes `rows ?? []` or `result?.[0]?.cells.x`.
+- Each module decodes cells itself with `String(...)`, `Number(...)` and `Boolean(...)`, or a local helper: `toInt` (`src/index/index-opt-base.ts`), `toMb` and `nullableText` (`src/database-health/index-health-calc.ts`), a second `nullableText` (`constraint-health-calc.ts`), `toBigInt` (`sequence-health-calc.ts`), `stringValue` (`src/index/dta-calc.ts`) and `cell` (`src/tools/objects.ts`). None checks the value, so a misspelt column or a NULL becomes `"undefined"`, `NaN` or `false` without an error. `src/tools/objects.ts` keeps `unknown` up to the output, including a `Map<unknown, ...>`.
+
+Shapes inside the advisor and explain code:
+
+- `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are positional tuples.
+- Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
+- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
+- `WorkloadEntry` (`index-opt-base.ts`) and `ColumnStats` (`src/sql/bind-params.ts`) are `Record<string, unknown>`.
+- A failure is an `ErrorResult` (`src/artifacts.ts`) told apart from an `ExplainPlanArtifact` by `instanceof`, or a mutable `error: string | null` on `IndexTuningResult`.
+
+What to do, in this order; none of it changes the tool surface:
+
+1. Make a row a plain `Record<string, unknown>` and delete `RowResult`. Let `executeQuery` always return an array, and give `execute_sql` the "no result set" signal another way, for example a result that also carries the column names.
+2. Add one module of strict cell readers (`src/sql/cells.ts`: text, nullable text, integer, bigint, boolean, numeric). A reader throws on a missing column or an unexpected type and owns the `pg` rules: `int8` as `number` or `bigint`, `numeric` as a string, JSON for objects and arrays, ISO 8601 for dates. Each module maps its rows to a named interface once, at the query, so nothing after that handles `unknown`. This removes the local helpers and the eight `typescript/no-base-to-string` disables. Decide for each column whether NULL is legal, because a strict reader turns today's silent `NaN` into an error. Do not replace this with `executeQuery<T>()` and a cast, which checks nothing; a zod schema per query would work but costs a parse per row and more code for about 30 small queries.
+3. Replace the tuples with named objects: `{ query, stmt, weight }`, `{ indexes, cost }`, a boolean for the version requirement, and `{ installed: true } | { installed: false; message }` for hypopg.
+4. Turn `IndexRecommendation` and `IndexRecommendationAnalysis` into readonly interfaces, with the improvement multiples as functions. Check `Set<IndexRecommendation>` in `src/index/dta-calc.ts` while there: a JavaScript `Set` compares objects by identity, so it does not remove two recommendations for the same index the way a Python set with `__eq__` did. Key by `IndexDefinition.key`, as `configurationKey` does.
+5. Report failures one way, by throwing or with a discriminated union, and leave `formatError` (`src/tools/result.ts`) as the only place that builds the tool's error result.
+
+Steps 1 and 2 are mechanical but wide: they touch the driver, `tests/support/fake-pool.ts` and the five test files. The tool output has its own entry, "Index advisor output is untyped and formats numbers as text".
 
 ## 2026-11-26 · Minor · Tooling · `promise-function-async` and `strict-boolean-expressions` are switched off
 
@@ -324,3 +348,14 @@ About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and 
 ## 2026-11-28 · Minor · Feature · `naturalSize` uses decimal units
 
 `naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor results (`src/index/presentation.ts`) and traces. `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024; it changes tool output, so mention it in the release notes.
+
+## 2026-11-28 · Minor · Feature · Index advisor output is untyped and formats numbers as text
+
+`analyze_query_indexes` and `analyze_workload_indexes` build their result in `src/index/presentation.ts` as `Record<string, unknown>`, in the shape the Python server printed:
+
+- `recommendations` is an array, or the sentence `No index recommendations found.` when there are none.
+- Costs and improvement multiples are strings made by `formatFixed` (`"12.3"`, `"inf"`), and `query_impact` uses `"∞"` for a zero new cost.
+- `total_size_bytes` and `index_estimated_size` hold `naturalSize` text such as `1.0 kB`, not a byte count.
+- `_langfuse_trace` carries the advisor's trace lines unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` is set to something other than `true`, which costs tokens on every call.
+
+No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate any result. Give the result a zod schema with one type per field: numbers as numbers, the unit in the key name (`size_bytes`), an empty array for no recommendations, and the trace off by default. Then declare it as the tool's `outputSchema` and return `structuredContent` next to the text; the other tools with JSON results can follow. Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It settles "`naturalSize` uses decimal units" for these two tools.

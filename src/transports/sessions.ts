@@ -61,7 +61,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   /** A request for the session is being served. */
-  begin(id: string): void {
+  #begin(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
       entry.inFlight += 1;
@@ -71,7 +71,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   /** A request for the session finished; with none left, the idle timer starts afresh. */
-  end(id: string): void {
+  #end(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
       entry.inFlight = Math.max(0, entry.inFlight - 1);
@@ -83,9 +83,9 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
 
   /** Keeps the session's idle timer stopped until the response closes. */
   hold(id: string, res: ServerResponse): void {
-    this.begin(id);
+    this.#begin(id);
     res.once('close', () => {
-      this.end(id);
+      this.#end(id);
     });
   }
 

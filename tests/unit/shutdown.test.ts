@@ -48,7 +48,7 @@ test('the stdio client going away closes the registry main created and exits wit
   const exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
 
   await main(['--database=app'], transports);
-  const onClientGone = transports.runStdio.mock.calls[0]?.[1];
+  const onClientGone = transports.stdio.mock.calls[0]?.[1];
   onClientGone?.();
 
   await vi.waitFor(() => {

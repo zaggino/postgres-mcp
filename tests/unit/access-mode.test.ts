@@ -30,9 +30,9 @@ describe('command line access mode', () => {
 
     await main(['--database=app', '--access-mode=restricted'], transports);
 
-    const factory = transports.runStdio.mock.calls[0]?.[0];
+    const factory = transports.stdio.mock.calls[0]?.[0];
     if (!factory) {
-      throw new Error('runStdio was not called');
+      throw new Error('stdio was not called');
     }
     const client = await connectClient(factory());
     const { tools } = await client.listTools();

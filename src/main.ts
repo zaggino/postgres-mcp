@@ -7,12 +7,11 @@ import { DatabaseRegistry } from './database-registry.ts';
 import { errorMessage } from './errors.ts';
 import { log } from './log.ts';
 import { createServer } from './server.ts';
+import type { AccessMode } from './sql/driver-factory.ts';
+import type { Transports } from './transports/index.ts';
+import { defaultTransports } from './transports/index.ts';
 import type { HttpServerOptions } from './transports/request-guard.ts';
-import { warnIfExposed } from './transports/request-guard.ts';
-import { startSseServer } from './transports/sse.ts';
-import { runStdio } from './transports/stdio.ts';
-import { startStreamableHttpServer } from './transports/streamable-http.ts';
-import type { ServerFactory } from './transports/types.ts';
+import { LOOPBACK_HOSTS } from './transports/request-guard.ts';
 
 let shutdownInProgress = false;
 
@@ -57,18 +56,15 @@ function installSignalHandlers(registry: DatabaseRegistry): void {
   };
 }
 
-/** The transports `main` starts; tests pass stubs. */
-export interface Transports {
-  runStdio: (createMcpServer: ServerFactory, onClientGone: () => void) => Promise<unknown>;
-  runSse: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<unknown>;
-  runStreamableHttp: (createMcpServer: ServerFactory, options: HttpServerOptions) => Promise<unknown>;
+function warnIfExposed(http: HttpServerOptions, accessMode: AccessMode): void {
+  if (!LOOPBACK_HOSTS.has(http.host)) {
+    const hostChecks = http.allowedHosts === 'any' ? ' Host checks are disabled by --allowed-hosts=*.' : '';
+    log(
+      'WARNING',
+      `Listening on ${http.host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
+    );
+  }
 }
-
-const defaultTransports: Transports = {
-  runStdio,
-  runSse: startSseServer,
-  runStreamableHttp: startStreamableHttpServer,
-};
 
 export async function main(argv: string[], transports: Transports = defaultTransports): Promise<void> {
   const options = exitOnCliError(() => parseCli(argv));
@@ -88,19 +84,18 @@ export async function main(argv: string[], transports: Transports = defaultTrans
 
   installSignalHandlers(registry);
 
-  const http = httpOptions(options);
-  if (http) {
-    warnIfExposed(http, accessMode);
-  }
-
   const factory = () => createServer(registry);
-  if (http === undefined) {
-    await transports.runStdio(factory, () => {
+  if (options.transport === 'stdio') {
+    await transports.stdio(factory, () => {
       void shutdown(registry);
     });
-  } else if (options.transport === 'sse') {
-    await transports.runSse(factory, http);
-  } else {
-    await transports.runStreamableHttp(factory, http);
+    return;
   }
+
+  const http = httpOptions(options);
+  if (http === undefined) {
+    throw new Error(`No HTTP options for transport ${options.transport}`);
+  }
+  warnIfExposed(http, accessMode);
+  await transports[options.transport](factory, http);
 }

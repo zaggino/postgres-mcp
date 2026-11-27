@@ -1,7 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { log } from '../log.ts';
-
 /** `'any'` accepts every value; otherwise the accepted entries. */
 export type AllowList = 'any' | readonly string[];
 
@@ -20,16 +18,6 @@ export interface HttpServerOptions {
   port: number;
   /** Minutes without a request before a session is closed; 0 = never (default: DEFAULT_SESSION_IDLE_MINUTES). */
   sessionIdleMinutes?: number;
-}
-
-export function warnIfExposed(http: HttpServerOptions, accessMode: string): void {
-  if (!LOOPBACK_HOSTS.has(http.host)) {
-    const hostChecks = http.allowedHosts === 'any' ? ' Host checks are disabled by --allowed-hosts=*.' : '';
-    log(
-      'WARNING',
-      `Listening on ${http.host}: the server is reachable from the network with no authentication.${hostChecks} Anyone who can connect can run queries in ${accessMode.toUpperCase()} mode.`
-    );
-  }
 }
 
 /** The hostname of a Host header value or allow-list entry, and whether it names a port. */

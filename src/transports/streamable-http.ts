@@ -7,20 +7,73 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerHandle } from './http.ts';
-import {
-  headerValue,
-  listenGuarded,
-  logCloseFailure,
-  parseRequestUrl,
-  readBody,
-  sendBodyTooLarge,
-  sendJsonRpcError,
-} from './http.ts';
+import { listenGuarded, logCloseFailure, parseRequestUrl } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
 import type { ServerFactory } from './types.ts';
 
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
 type McpSessions = SessionStore<StreamableHTTPServerTransport>;
+
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let overflowed = false;
+    req.on('data', (chunk: Buffer) => {
+      if (overflowed) {
+        return;
+      }
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        // Keep the socket open so the client can read the 413.
+        overflowed = true;
+        chunks.length = 0;
+        reject(new RangeError('Request body too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('error', reject);
+    req.on('end', () => {
+      if (overflowed) {
+        return;
+      }
+      const text = Buffer.concat(chunks).toString('utf-8');
+      if (!text) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(text));
+      } catch {
+        reject(new SyntaxError('Parse error: Invalid JSON'));
+      }
+    });
+  });
+}
+
+function sendJsonRpcError(res: ServerResponse, status: number, code: number, message: string): void {
+  if (res.headersSent) {
+    return;
+  }
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }));
+}
+
+function sendBodyTooLarge(req: IncomingMessage, res: ServerResponse): void {
+  res.setHeader('Connection', 'close');
+  sendJsonRpcError(res, 413, -32_600, 'Request body too large');
+  res.once('finish', () => {
+    req.destroy();
+  });
+}
+
+function headerValue(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
 
 async function startMcpSession(
   createMcpServer: ServerFactory,

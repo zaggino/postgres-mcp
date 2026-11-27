@@ -20,9 +20,9 @@ describe('transport selection', () => {
 
     await main([DATABASE_ARG, '--transport=stdio'], transports);
 
-    expect(transports.runStdio).toHaveBeenCalledOnce();
-    expect(transports.runSse).not.toHaveBeenCalled();
-    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
+    expect(transports.stdio).toHaveBeenCalledOnce();
+    expect(transports.sse).not.toHaveBeenCalled();
+    expect(transports['streamable-http']).not.toHaveBeenCalled();
   });
 
   it('--transport=sse runs only the SSE transport', async () => {
@@ -30,9 +30,9 @@ describe('transport selection', () => {
 
     await main([DATABASE_ARG, '--transport=sse'], transports);
 
-    expect(transports.runStdio).not.toHaveBeenCalled();
-    expect(transports.runSse).toHaveBeenCalledOnce();
-    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
+    expect(transports.stdio).not.toHaveBeenCalled();
+    expect(transports.sse).toHaveBeenCalledOnce();
+    expect(transports['streamable-http']).not.toHaveBeenCalled();
   });
 
   it('--transport=streamable-http runs only the streamable HTTP transport', async () => {
@@ -40,9 +40,9 @@ describe('transport selection', () => {
 
     await main([DATABASE_ARG, '--transport=streamable-http'], transports);
 
-    expect(transports.runStdio).not.toHaveBeenCalled();
-    expect(transports.runSse).not.toHaveBeenCalled();
-    expect(transports.runStreamableHttp).toHaveBeenCalledOnce();
+    expect(transports.stdio).not.toHaveBeenCalled();
+    expect(transports.sse).not.toHaveBeenCalled();
+    expect(transports['streamable-http']).toHaveBeenCalledOnce();
   });
 
   it('defaults to the stdio transport', async () => {
@@ -50,9 +50,9 @@ describe('transport selection', () => {
 
     await main([DATABASE_ARG], transports);
 
-    expect(transports.runStdio).toHaveBeenCalledOnce();
-    expect(transports.runSse).not.toHaveBeenCalled();
-    expect(transports.runStreamableHttp).not.toHaveBeenCalled();
+    expect(transports.stdio).toHaveBeenCalledOnce();
+    expect(transports.sse).not.toHaveBeenCalled();
+    expect(transports['streamable-http']).not.toHaveBeenCalled();
   });
 
   it('accepts a separate value for --transport', async () => {
@@ -60,7 +60,7 @@ describe('transport selection', () => {
 
     await main([DATABASE_ARG, '--transport', 'sse'], transports);
 
-    expect(transports.runSse).toHaveBeenCalledOnce();
+    expect(transports.sse).toHaveBeenCalledOnce();
   });
 });
 
@@ -80,7 +80,7 @@ describe('transport host and port', () => {
       transports
     );
 
-    expect(transports.runStreamableHttp).toHaveBeenCalledWith(expect.any(Function), {
+    expect(transports['streamable-http']).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
       port: 9000,
       allowedHosts: ['mcp.example', 'other.example:9000'],
@@ -98,7 +98,7 @@ describe('transport host and port', () => {
       transports
     );
 
-    expect(transports.runSse).toHaveBeenCalledWith(expect.any(Function), {
+    expect(transports.sse).toHaveBeenCalledWith(expect.any(Function), {
       host: '0.0.0.0',
       port: 8080,
       allowedHosts: 'any',

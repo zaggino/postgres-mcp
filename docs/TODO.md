@@ -199,7 +199,7 @@ Of the `promise-function-async` findings, 24 are in `tests/`, and most of the re
 Replacing a truthiness check on a nullable string or boolean changes which values pass, for example `""`. Triage these five first, because they are not that case:
 
 - `!this.timeout` in `src/sql/safe-sql.ts`, where `0` means no timeout.
-- `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/server.ts`.
+- `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/tools/objects.ts`.
 
 Go through the findings, keep the upstream behaviour (or record a deliberate difference), and switch the rules back on.
 
@@ -310,3 +310,11 @@ Untested: `cancel_query` in one session cannot list or cancel another session's 
 ## 2026-11-27 · Minor · Refactor · Each tool is split between `src/server.ts` and `src/tools/`
 
 `createServer` in `src/server.ts` holds each database tool's name, description, zod schema and description constants, while its body lives in `src/tools/objects.ts` or `src/tools/analysis.ts`; nine lambdas map the snake_case arguments to positional parameters, so adding a parameter touches two files and the adapter. Let the tools modules export whole tool definitions (name, description, annotations, `errorLog`, `inputSchema`, `body(sqlDriver, args)`, typed through a small `defineDatabaseTool` helper; `execute_sql`'s as a function of the access mode) and have `createServer` loop over them, leaving it the register helper, `list_databases` and `cancel_query`. Regroup the tools by what they do while at it: `analysis.ts` also holds `execute_sql` and `explain_query`.
+
+## 2026-11-27 · Minor · Refactor · `offersCancelQuery` lives in the instructions module
+
+`offersCancelQuery` in `src/server-instructions.ts` decides whether `createServer` (`src/server.ts`) registers `cancel_query`, and `server.ts` imports it back from the module that only renders the instructions text. Let `createServer` (or `DatabaseRegistry`, which owns the access mode) make that decision and pass it to `serverInstructions`, so the instructions module only renders text.
+
+## 2026-11-27 · Minor · Tests · Shutdown state is module-level
+
+`src/main.ts` keeps `shutdownInProgress` and `removeSignalHandlers` as module variables, so `shutdown` refuses to run twice per module load and `tests/unit/shutdown.test.ts` has to re-import `main.ts` after `vi.resetModules()` for every test. Hold that state in an object that `main` creates (and `shutdown` receives), so tests can run it without reloading the module.

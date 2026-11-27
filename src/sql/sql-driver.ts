@@ -3,6 +3,8 @@ import net from 'node:net';
 import type { CustomTypesConfig } from 'pg';
 import pg from 'pg';
 
+import { queuedPool } from './connection-queue.ts';
+
 const INT8_OID = 20;
 const URL_PREFIX = /^(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?<netloc>[^/?#]*)/u;
 const EMBEDDED_URL = /(?<head>postgres(?:ql)?:\/\/[^:]+:)(?<password>[^@]+)(?<tail>@[^/\s]+)/gu;
@@ -28,7 +30,8 @@ export interface ClientLike {
 }
 
 export interface PoolLike {
-  connect: () => Promise<ClientLike>;
+  /** Checks out a client; an aborted `signal` stops a checkout that is still waiting for a free client. */
+  connect: (signal?: AbortSignal) => Promise<ClientLike>;
   end: () => Promise<void>;
 }
 
@@ -75,7 +78,10 @@ async function untilAborted<T>(
   } catch (error) {
     if (error instanceof QueryCancelledError && onLate) {
       promise.then(onLate).catch((lateError: unknown) => {
-        logError(`Error after a cancelled wait: ${errorMessage(lateError)}`);
+        // A wait that ended because of this abort has nothing more to report.
+        if (lateError !== signal.reason) {
+          logError(`Error after a cancelled wait: ${errorMessage(lateError)}`);
+        }
       });
     }
     throw error;
@@ -212,6 +218,8 @@ const CANCEL_REQUEST_CODE = 80_877_102;
 const APPLICATION_NAME = 'postgres-mcp';
 /** How long a call waits for a free client when all of the pool's connections are busy. */
 const POOL_WAIT_TIMEOUT_MS = 30_000;
+/** Connections per database pool. */
+const POOL_MAX = 5;
 /** How long opening one new connection may take, so an unreachable database fails fast. */
 const CONNECT_TIMEOUT_MS = 10_000;
 
@@ -244,7 +252,7 @@ export function poolConfig(connectionString: string, env: NodeJS.ProcessEnv = pr
   }
   return {
     connectionString,
-    max: 5,
+    max: POOL_MAX,
     connectionTimeoutMillis: POOL_WAIT_TIMEOUT_MS,
     types: customTypes,
     ...(uriHasApplicationName || env.PGAPPNAME ? {} : { application_name: APPLICATION_NAME }),
@@ -297,30 +305,35 @@ function pgPool(config: pg.PoolConfig): PoolLike {
   pool.on('error', (error) => {
     logError(`Idle connection pool error: ${error.message}`);
   });
-  return {
-    async connect() {
-      const client = await pool.connect();
-      return {
-        async query(text, values) {
-          const result: pg.QueryResult | pg.QueryResult[] = values
-            ? await client.query(text, [...values])
-            : await client.query(text);
-          return Array.isArray(result) ? result : [result];
-        },
-        release(destroy) {
-          client.release(destroy);
-        },
-        async cancel() {
-          try {
-            await sendCancelRequest(client);
-          } catch (error) {
-            logError(`Error cancelling query: ${errorMessage(error)}`);
-          }
-        },
-      };
+  // Checkouts wait in queuedPool, which a cancel can leave, instead of in pg-pool's queue, which it cannot.
+  return queuedPool(
+    {
+      async connect() {
+        const client = await pool.connect();
+        return {
+          async query(text, values) {
+            const result: pg.QueryResult | pg.QueryResult[] = values
+              ? await client.query(text, [...values])
+              : await client.query(text);
+            return Array.isArray(result) ? result : [result];
+          },
+          release(destroy) {
+            client.release(destroy);
+          },
+          async cancel() {
+            try {
+              await sendCancelRequest(client);
+            } catch (error) {
+              logError(`Error cancelling query: ${errorMessage(error)}`);
+            }
+          },
+        };
+      },
+      end: () => pool.end(),
     },
-    end: () => pool.end(),
-  };
+    POOL_MAX,
+    POOL_WAIT_TIMEOUT_MS
+  );
 }
 
 /** A factory for real pg pools; `connectTimeoutMs` bounds opening each connection. */
@@ -636,7 +649,7 @@ export class SqlDriver {
    */
   async #checkout(conn: DbConnPool): Promise<ClientLike> {
     const pool = await untilAborted(conn.poolConnect(), this.signal);
-    const client = await untilAborted(pool.connect(), this.signal, (late) => {
+    const client = await untilAborted(pool.connect(this.signal), this.signal, (late) => {
       late.release();
     }).catch((error: unknown) => {
       if (error instanceof QueryCancelledError) {

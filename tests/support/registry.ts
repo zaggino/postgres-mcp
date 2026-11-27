@@ -1,7 +1,7 @@
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import type { ExplicitDatabase, RegistryOptions } from '../../src/database-registry.ts';
 import { deps } from '../../src/server.ts';
-import { AccessMode } from '../../src/sql/driver-factory.ts';
+import { AccessMode, defaultStatementTimeoutSeconds } from '../../src/sql/driver-factory.ts';
 import type { QueryHandler } from './fake-pool.ts';
 import { createFakePool } from './fake-pool.ts';
 
@@ -23,10 +23,11 @@ export function createTestRegistry(
   } = {}
 ) {
   const fakes = new Map<string, FakePool>();
+  const accessMode = options.accessMode ?? AccessMode.UNRESTRICTED;
   const registry = new DatabaseRegistry({
-    accessMode: options.accessMode ?? AccessMode.UNRESTRICTED,
+    accessMode,
     idleMinutes: 0,
-    statementTimeoutSeconds: options.statementTimeoutSeconds,
+    statementTimeoutSeconds: options.statementTimeoutSeconds ?? defaultStatementTimeoutSeconds(accessMode),
     databases: [
       ...names.map((name): ExplicitDatabase => ({
         name,

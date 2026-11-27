@@ -96,11 +96,11 @@ To run the published package instead of a clone, use `npx` as the command and `"
 
 Select the mode with `--access-mode=restricted` (the default) or `--access-mode=unrestricted`.
 
-Postgres cancels any statement that runs longer than `--statement-timeout` seconds (default 30 in restricted mode, none in unrestricted mode; `0` disables it). The limit is set with `SET LOCAL statement_timeout` in the statement's transaction, so it holds even if the server loses the connection. Cancelling a tool call from the client cancels its running statement. In unrestricted mode the `cancel_query` tool lets the agent do the same: called without arguments it lists the session's running calls, and with a `call_id` it cancels that call. This only helps when the client can make a call while another is running, or has given up waiting for one.
+Postgres cancels any statement that runs longer than `--statement-timeout` seconds (default 30 in restricted mode, none in unrestricted mode; `0` disables it). Postgres enforces the limit itself (`SET statement_timeout` on the connection before each call), so a statement is stopped even if the server stops waiting for it. In unrestricted mode, SQL can change `statement_timeout` itself. Cancelling a tool call from the client cancels its running statement. In unrestricted mode the `cancel_query` tool lets the agent do the same: called without arguments it lists the session's running calls, and with a `call_id` it cancels that call. This only helps when the client can make a call while another is running, or has given up waiting for one.
 
 ## Multiple databases
 
-One server process serves every database you name. Every tool except `list_databases` takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
+One server process serves every database you name. Every tool except `list_databases` (and `cancel_query` in unrestricted mode) takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
 
 ```
 { databases: [{ database, source, state, idle_seconds_left, error? }], servers: [{ server, prefix, error? }] }

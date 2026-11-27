@@ -25,6 +25,7 @@ test('shutdown on SIGTERM closes the registry and exits with 143', async () => {
   const registry = new DatabaseRegistry({
     accessMode: AccessMode.UNRESTRICTED,
     idleMinutes: 0,
+    statementTimeoutSeconds: 0,
     databases: [],
     servers: [],
   });

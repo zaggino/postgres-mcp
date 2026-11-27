@@ -4,6 +4,8 @@
   "accessMode": "restricted",
   // Minutes without a call in flight before a pool closes; 0 never closes. --idle-minutes wins.
   "idleMinutes": 10,
+  // Seconds after which Postgres cancels a statement; 0 means none. Default 30 in restricted mode, 0 in unrestricted. --statement-timeout wins.
+  "statementTimeoutSeconds": 30,
   // Databases by name. A uri is a literal URI or contains ${VAR} references expanded from the environment.
   "databases": {
     "app": { "uri": "${APP_DATABASE_URI}" },

@@ -3,10 +3,15 @@ import { parse, printParseErrorCode } from 'jsonc-parser';
 import { z } from 'zod';
 
 import type { CliOptions } from './cli.ts';
-import { CliError, MAX_IDLE_MINUTES, MAX_STATEMENT_TIMEOUT_SECONDS } from './cli.ts';
+import { CliError, MAX_IDLE_MINUTES } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
 import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
-import { ACCESS_MODES, DEFAULT_ACCESS_MODE, defaultStatementTimeoutSeconds } from './sql/driver-factory.ts';
+import {
+  ACCESS_MODES,
+  DEFAULT_ACCESS_MODE,
+  defaultStatementTimeoutSeconds,
+  MAX_STATEMENT_TIMEOUT_SECONDS,
+} from './sql/driver-factory.ts';
 
 export const DEFAULT_IDLE_MINUTES = 10;
 

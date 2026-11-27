@@ -1,4 +1,5 @@
 import { expect, it as test, vi } from 'vitest';
+import { z } from 'zod';
 
 import { createServer } from '../../src/server.ts';
 import { noRowsResult } from '../support/fake-pool.ts';
@@ -25,9 +26,11 @@ test('cancel_query lists the running call, cancels it by id, and the call ends w
   let callId = '';
   await vi.waitFor(async () => {
     const text = await callToolText(client, 'cancel_query', {});
-    const listed: unknown = JSON.parse(text);
+    const listed = z
+      .array(z.object({ call_id: z.string(), tool: z.string(), database: z.string() }))
+      .parse(JSON.parse(text));
     expect(listed).toMatchObject([{ tool: 'execute_sql', database: 'app' }]);
-    callId = /"call_id":"(?<id>[^"]+)"/u.exec(text)?.groups?.id ?? '';
+    callId = listed[0]?.call_id ?? '';
   });
 
   const cancelled: unknown = JSON.parse(await callToolText(client, 'cancel_query', { call_id: callId }));

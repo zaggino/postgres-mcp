@@ -42,6 +42,12 @@ function logError(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new QueryCancelledError();
+  }
+}
+
 /** Raised when the caller's AbortSignal cancelled the statement. Deliberately not a pg.DatabaseError. */
 export class QueryCancelledError extends Error {
   constructor(options?: { cause?: unknown }) {
@@ -54,10 +60,12 @@ export class QueryCancelledError extends Error {
 export class QueryTimeoutError extends Error {
   readonly seconds: number;
 
-  constructor(seconds: number, { restricted = false, cause }: { restricted?: boolean; cause?: unknown } = {}) {
+  constructor(seconds: number, { cause }: { cause?: unknown } = {}) {
     super(
-      `Query execution timed out after ${seconds} seconds${restricted ? ' in restricted mode' : ''}. Consider simplifying your query or increasing the timeout.`,
-      { cause }
+      `Query execution timed out after ${seconds} seconds. Consider simplifying your query or increasing the timeout.`,
+      {
+        cause,
+      }
     );
     this.name = 'QueryTimeoutError';
     this.seconds = seconds;
@@ -149,6 +157,7 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
     typeof backend.processID !== 'number' ||
     typeof backend.secretKey !== 'number'
   ) {
+    logError('Cannot cancel query: backend key unavailable');
     return Promise.resolve();
   }
   const { processID, secretKey } = backend;
@@ -161,6 +170,10 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
   const { host, port } = client;
   return new Promise<void>((resolve) => {
     const socket = host.startsWith('/') ? net.connect(`${host}/.s.PGSQL.${port}`) : net.connect(port, host);
+    // Sent unencrypted, as libpq and pg do (see docs/TODO.md); the timeout keeps a blackholed host from holding the socket.
+    socket.setTimeout(5000, () => {
+      socket.destroy();
+    });
     socket.once('connect', () => {
       socket.end(message);
     });
@@ -211,11 +224,26 @@ interface ExecutionOptions {
   signal: AbortSignal | undefined;
 }
 
-function mapExecutionError(error: unknown, { statementTimeoutSeconds, signal }: ExecutionOptions): unknown {
+interface ErrorContext {
+  statementTimeoutSeconds: number;
+  signal: AbortSignal | undefined;
+  /** performance.now() just before the user query was sent; null if it never was. */
+  queryStartedAt: number | null;
+}
+
+function mapExecutionError(error: unknown, { statementTimeoutSeconds, signal, queryStartedAt }: ErrorContext): unknown {
   if (signal?.aborted) {
     return new QueryCancelledError({ cause: error });
   }
-  if (statementTimeoutSeconds > 0 && error instanceof pg.DatabaseError && error.code === '57014') {
+  // A 57014 is a timeout only when the query ran at least the timeout; any other cancel (e.g. pg_cancel_backend
+  // from elsewhere) passes through. Compared by elapsed time, not message text, so it is locale-independent.
+  if (
+    statementTimeoutSeconds > 0 &&
+    error instanceof pg.DatabaseError &&
+    error.code === '57014' &&
+    queryStartedAt !== null &&
+    performance.now() - queryStartedAt >= statementTimeoutSeconds * 1000
+  ) {
     logError(`Query execution timed out after ${statementTimeoutSeconds} seconds`);
     return new QueryTimeoutError(statementTimeoutSeconds, { cause: error });
   }
@@ -226,22 +254,20 @@ async function runUserQuery(
   client: ClientLike,
   query: string,
   params: readonly unknown[] | null | undefined,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  onSend: () => void
 ): Promise<QueryResultLike[]> {
-  if (signal?.aborted) {
-    throw new QueryCancelledError();
-  }
+  throwIfCancelled(signal);
   const onAbort = () => {
     void client.cancel();
   };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    onSend();
     const results = await (params && params.length > 0 ? client.query(query, params) : client.query(query));
     // A cancel request sent as the query finished can still land on the backend's next statement, so a
     // cancelled call fails here and its connection is destroyed instead of returning to the pool.
-    if (signal?.aborted) {
-      throw new QueryCancelledError();
-    }
+    throwIfCancelled(signal);
     return results;
   } finally {
     signal?.removeEventListener('abort', onAbort);
@@ -258,15 +284,21 @@ async function executeWithClient(
   // node-postgres runs in autocommit, so a transaction is opened explicitly
   // for every query to keep the closing COMMIT/ROLLBACK meaningful.
   let transactionStarted = false;
+  let queryStartedAt: number | null = null;
   try {
     await client.query(forceReadonly ? 'BEGIN TRANSACTION READ ONLY' : 'BEGIN');
     transactionStarted = true;
 
     if (statementTimeoutSeconds > 0) {
-      await client.query(`SET LOCAL statement_timeout = ${Math.round(statementTimeoutSeconds * 1000)}`);
+      // Session-level, not SET LOCAL: SET LOCAL ends with the transaction, so unrestricted SQL such as
+      // `COMMIT; SELECT pg_sleep(100)` escaped the limit. A session SET survives a user COMMIT within the call,
+      // and every call re-issues it.
+      await client.query(`SET statement_timeout = ${statementTimeoutSeconds * 1000}`);
     }
 
-    const results = await runUserQuery(client, query, params, signal);
+    const results = await runUserQuery(client, query, params, signal, () => {
+      queryStartedAt = performance.now();
+    });
     const last = results.at(-1);
 
     const rows = last && last.fields.length > 0 ? last.rows : null;
@@ -284,7 +316,7 @@ async function executeWithClient(
       }
     }
     logError(`Error executing query: ${errorMessage(error)}`);
-    throw mapExecutionError(error, options);
+    throw mapExecutionError(error, { statementTimeoutSeconds, signal, queryStartedAt });
   }
 }
 
@@ -432,10 +464,8 @@ export class SqlDriver {
     params?: readonly unknown[] | null,
     forceReadonly = false
   ): Promise<RowResult[] | null> {
-    // Checked before the try so a call cancelled before it started does not invalidate the pool.
-    if (this.signal?.aborted) {
-      throw new QueryCancelledError();
-    }
+    // Cancel and timeout never invalidate the pool; checking before the try avoids connecting at all.
+    throwIfCancelled(this.signal);
     try {
       const conn = this.conn ?? this.connect();
       const pool = await conn.poolConnect();
@@ -444,9 +474,11 @@ export class SqlDriver {
       const client = await pool.connect().catch((error: unknown) => {
         throw new Error(errorMessage(error), { cause: error });
       });
-      if (this.signal?.aborted) {
+      try {
+        throwIfCancelled(this.signal);
+      } catch (error) {
         client.release();
-        throw new QueryCancelledError();
+        throw error;
       }
       let destroy = false;
       try {
@@ -462,8 +494,10 @@ export class SqlDriver {
         client.release(destroy);
       }
     } catch (error) {
-      // Any failure, including a user syntax error, invalidates the pool.
-      this.conn?.markInvalid(error);
+      // Any other failure, including a user syntax error, invalidates the pool.
+      if (!(error instanceof QueryCancelledError || error instanceof QueryTimeoutError)) {
+        this.conn?.markInvalid(error);
+      }
       throw error;
     }
   }

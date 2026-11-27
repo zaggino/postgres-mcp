@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 interface RunningCall {
   controller: AbortController;
   database: string;
@@ -17,22 +15,24 @@ export interface RunningCallInfo {
 /** The database-tool calls of one MCP session that have started and not yet settled. */
 export class RunningCalls {
   private readonly calls = new Map<string, RunningCall>();
+  #next = 0;
 
-  /** Register a call. The returned signal aborts on the caller's signal or on `cancel(id)`; run `done` when the call settles. */
-  start(tool: string, database: string, signal: AbortSignal): { done: () => void; id: string; signal: AbortSignal } {
+  /** Run `fn` as a registered call. Its signal aborts on the caller's signal or on `cancel(id)`; the entry is removed when `fn` settles. */
+  async track<T>(
+    tool: string,
+    database: string,
+    signal: AbortSignal,
+    fn: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
     const controller = new AbortController();
-    let id = randomUUID().slice(0, 8);
-    while (this.calls.has(id)) {
-      id = randomUUID().slice(0, 8);
-    }
+    this.#next += 1;
+    const id = String(this.#next);
     this.calls.set(id, { controller, database, startedAt: Date.now(), tool });
-    return {
-      id,
-      signal: AbortSignal.any([signal, controller.signal]),
-      done: () => {
-        this.calls.delete(id);
-      },
-    };
+    try {
+      return await fn(AbortSignal.any([signal, controller.signal]));
+    } finally {
+      this.calls.delete(id);
+    }
   }
 
   /** Running calls in start order. */

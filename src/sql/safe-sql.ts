@@ -17,6 +17,15 @@ const STMT_NOT_ALLOWED =
   'Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other read-only statements are allowed. Received';
 const SQL_COMMENT_PREFIX = '/* postgres-mcp */';
 
+/** The timeout error as upstream words it in restricted mode. */
+export class RestrictedQueryTimeoutError extends QueryTimeoutError {
+  constructor(seconds: number, options?: { cause?: unknown }) {
+    super(seconds, options);
+    this.message = `Query execution timed out after ${seconds} seconds in restricted mode. Consider simplifying your query or increasing the timeout.`;
+    this.name = 'RestrictedQueryTimeoutError';
+  }
+}
+
 /** What SafeSqlDriver wraps; a SqlDriver satisfies it. */
 export interface SqlExecutor {
   /** The connection pool behind the executor, when it has one; keys per-connection caches. */
@@ -202,7 +211,7 @@ export class SafeSqlDriver implements SqlExecutor {
       return await this.sqlDriver.executeQuery(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
     } catch (error) {
       if (error instanceof QueryTimeoutError) {
-        throw new QueryTimeoutError(error.seconds, { restricted: true, cause: error.cause });
+        throw new RestrictedQueryTimeoutError(error.seconds, { cause: error.cause });
       }
       throw error;
     }

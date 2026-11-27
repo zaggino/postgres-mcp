@@ -20,8 +20,12 @@ test('a statement Postgres cancels for the timeout is reported as a timeout with
     },
   });
   const client = await connectClient(createServer(registry));
+  // The fake fails at once; make the query appear to have run past the 30 second timeout.
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => (now += 60_000));
 
   const result = await client.callTool({ name: 'execute_sql', arguments: { database: 'app', sql: SLOW_READ } });
+  vi.restoreAllMocks();
 
   expect(result).toEqual({
     content: [

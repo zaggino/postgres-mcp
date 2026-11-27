@@ -46,6 +46,7 @@ test('a Postgres error while checking out a connection is reported with isError'
   const registry = new DatabaseRegistry({
     accessMode: AccessMode.UNRESTRICTED,
     idleMinutes: 0,
+    statementTimeoutSeconds: 0,
     databases: [{ name: 'app', source: 'cli', uri: { uri: 'postgresql://u:p@h:5432/app' } }],
     servers: [],
     poolFactory: () => {

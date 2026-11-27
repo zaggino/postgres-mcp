@@ -26,8 +26,13 @@ test('the instructions state the access mode in effect and where to report serve
 test('the instructions point to cancel_query only in unrestricted mode', async () => {
   const clause = 'Call cancel_query to list running calls or cancel one by call_id.';
 
-  await expect(instructions({ accessMode: AccessMode.UNRESTRICTED })).resolves.toContain(clause);
-  await expect(instructions({ accessMode: AccessMode.RESTRICTED })).resolves.not.toContain('cancel_query');
+  const unrestricted = await instructions({ accessMode: AccessMode.UNRESTRICTED });
+  const restricted = await instructions({ accessMode: AccessMode.RESTRICTED });
+
+  expect(unrestricted).toContain(clause);
+  expect(unrestricted).toContain('Every tool except list_databases and cancel_query requires a "database" argument.');
+  expect(restricted).not.toContain('cancel_query');
+  expect(restricted).toContain('Every tool except list_databases requires a "database" argument.');
 });
 
 test('the instructions state a non-default statement timeout', async () => {

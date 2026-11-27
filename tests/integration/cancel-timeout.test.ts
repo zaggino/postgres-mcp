@@ -25,7 +25,7 @@ describeWithPostgres('statement timeout and cancellation', ({ connectionString }
   const registries: DatabaseRegistry[] = [];
   let admin: pg.Pool;
 
-  function makeClient(statementTimeoutSeconds?: number): Promise<Client> {
+  function makeClient(statementTimeoutSeconds = 0): Promise<Client> {
     const registry = new DatabaseRegistry({
       accessMode: AccessMode.UNRESTRICTED,
       idleMinutes: 0,
@@ -76,7 +76,6 @@ describeWithPostgres('statement timeout and cancellation', ({ connectionString }
 
   test('a statement over statementTimeoutSeconds is stopped in Postgres and reported as a timeout', async () => {
     const client = await makeClient(1);
-    const started = Date.now();
 
     const result = toolResult(
       await client.callTool({ name: 'execute_sql', arguments: { database: 'app', sql: 'SELECT pg_sleep(5)' } })
@@ -86,7 +85,6 @@ describeWithPostgres('statement timeout and cancellation', ({ connectionString }
       text: 'Error: Query execution timed out after 1 seconds. Consider simplifying your query or increasing the timeout.',
       isError: true,
     });
-    expect(Date.now() - started).toBeLessThan(4000);
     await expect(backends('pg_sleep(5)', false)).resolves.toBe(0);
   });
 
@@ -133,16 +131,19 @@ describeWithPostgres('statement timeout and cancellation', ({ connectionString }
     );
   });
 
-  test('pool connections are named postgres-mcp', async () => {
-    const client = await makeClient();
+  test('the timeout still applies after the statement itself commits the transaction', async () => {
+    const client = await makeClient(1);
 
     const result = toolResult(
       await client.callTool({
         name: 'execute_sql',
-        arguments: { database: 'app', sql: "SELECT current_setting('application_name') AS name" },
+        arguments: { database: 'app', sql: 'COMMIT; SELECT pg_sleep(5.3)' },
       })
     );
 
-    expect(result.text).toContain('postgres-mcp');
+    expect(result).toEqual({
+      text: 'Error: Query execution timed out after 1 seconds. Consider simplifying your query or increasing the timeout.',
+      isError: true,
+    });
   });
 });

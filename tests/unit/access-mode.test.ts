@@ -16,7 +16,7 @@ describe(getSqlDriver, () => {
     [AccessMode.UNRESTRICTED, SqlDriver],
     [AccessMode.RESTRICTED, SafeSqlDriver],
   ])('returns the driver for %s mode', (accessMode, expectedType) => {
-    const driver = getSqlDriver(accessMode, new DbConnPool());
+    const driver = getSqlDriver(accessMode, new DbConnPool(), { statementTimeoutSeconds: 0 });
 
     expect(driver).toBeInstanceOf(expectedType);
   });

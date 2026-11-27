@@ -454,11 +454,18 @@ function accessModeClause({ accessMode, statementTimeoutSeconds: seconds }: Data
     : 'Access mode is unrestricted: statements can write and have no timeout.';
 }
 
+/** Whether the cancel_query tool is registered; it is only in unrestricted mode. */
+function offersCancelQuery(registry: DatabaseRegistry): boolean {
+  return registry.accessMode === AccessMode.UNRESTRICTED;
+}
+
 /** Sent to every client at initialization; each clause costs tokens in every session, so keep them short. */
 function serverInstructions(registry: DatabaseRegistry): string {
   const { explicit, serverCount, prefixed } = registry.describe();
   const clauses = [
-    'Every tool except list_databases requires a "database" argument.',
+    offersCancelQuery(registry)
+      ? 'Every tool except list_databases and cancel_query requires a "database" argument.'
+      : 'Every tool except list_databases requires a "database" argument.',
     explicit.length > 0 ? `Configured databases: ${explicit.join(', ')}.` : '',
     serverCount > 0
       ? `More databases are discovered on ${serverCount} server(s); call list_databases to see them all.`
@@ -466,9 +473,7 @@ function serverInstructions(registry: DatabaseRegistry): string {
     prefixed ? "Discovered names carry their server's prefix; inside the database the name is unprefixed." : '',
     accessModeClause(registry),
     'Cancelling a call cancels its running statement.',
-    registry.accessMode === AccessMode.UNRESTRICTED
-      ? 'Call cancel_query to list running calls or cancel one by call_id.'
-      : '',
+    offersCancelQuery(registry) ? 'Call cancel_query to list running calls or cancel one by call_id.' : '',
     'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, connection, configuration or server failure).',
     'The health, top-queries and index tools report failures in their output instead.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
@@ -485,25 +490,26 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     { instructions: serverInstructions(registry) }
   );
 
-  /** Run a tool body against a named database; access failures become tool errors. */
+  // Per MCP session: createServer runs once per session.
   const calls = new RunningCalls();
+
+  /** Run a tool body against a named database; access failures become tool errors. */
   const onDatabase = async (
     tool: string,
     database: string,
     signal: AbortSignal,
     fn: (sqlDriver: SqlExecutor) => Promise<CallToolResult>
   ): Promise<CallToolResult> => {
-    const call = calls.start(tool, database, signal);
     try {
-      return await registry.use(database, fn, { signal: call.signal });
+      return await calls.track(tool, database, signal, (callSignal) =>
+        registry.use(database, fn, { signal: callSignal })
+      );
     } catch (error) {
       // Errors thrown by the tool body keep their own handling; only access failures are reported here.
       if (error instanceof DatabaseAccessError) {
         return formatError(error);
       }
       throw error;
-    } finally {
-      call.done();
     }
   };
 
@@ -700,7 +706,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     }
   );
 
-  if (registry.accessMode === AccessMode.UNRESTRICTED) {
+  if (offersCancelQuery(registry)) {
     server.registerTool(
       'cancel_query',
       {

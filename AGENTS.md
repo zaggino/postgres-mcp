@@ -35,7 +35,7 @@ Node >= 26, pnpm 12 (`packageManager` in `package.json`).
 
 **`src/cli.ts`** owns CLI parsing: the flags (`parseCli`), `USAGE` and `HELP`, `CliError` and `exitOnCliError`, and `httpOptions`, the one mapping from flags to `HttpServerOptions`.
 
-**`src/config.ts`** turns the CLI flags (`--database`, `--config`, `--idle-minutes`, `--access-mode`) and the optional JSON config file (zod, strict) into `DatabaseRegistry` options. `${VAR}` expansion happens there; an unset variable becomes a per-entry error, not a startup failure.
+**`src/config.ts`** turns the CLI flags (`--database`, `--config`, `--idle-minutes`, `--access-mode`) and the optional JSONC config file (`jsonc-parser`, then zod, strict) into `DatabaseRegistry` options. `${VAR}` expansion happens there; an unset variable becomes a per-entry error, not a startup failure.
 
 **`src/database-registry.ts`** is the `DatabaseRegistry`, which owns the access mode and builds every driver: tools call `registry.use(name, fn(sqlDriver))`, and `main` wires `deps.getSqlDriver` into it. It holds a lazily created `DbConnPool` per database, closed after `idleMinutes` with no call in flight, plus discovery of databases on config `servers` (`pg_database` query, include/exclude globs, prefix). Discovery re-runs on `list_databases` and on an unknown name.
 

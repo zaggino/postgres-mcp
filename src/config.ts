@@ -1,5 +1,5 @@
 import type { ParseError } from 'jsonc-parser';
-import { parse } from 'jsonc-parser';
+import { parse, printParseErrorCode } from 'jsonc-parser';
 import { z } from 'zod';
 
 import type { CliOptions } from './cli.ts';
@@ -98,13 +98,18 @@ function readConfig(path: string, readFile: (path: string) => string): z.infer<t
   } catch (error) {
     throw new CliError(`cannot read config file ${path}: ${errorMessage(error)}`, { cause: error });
   }
-  // JSONC: comments and trailing commas are allowed. The error names only the offset, never the text around
-  // it, which can be part of a literal URI with a password.
+  // JSONC: comments and trailing commas are allowed (without allowTrailingComma the parser reports them as
+  // errors). The error names the position and the error code, never the text around it, which can be part of
+  // a literal URI with a password.
   const errors: ParseError[] = [];
   const json: unknown = parse(text, errors, { allowTrailingComma: true });
   const [firstError] = errors;
   if (firstError) {
-    throw new CliError(`invalid JSON in config file ${path} at position ${firstError.offset}`);
+    const lines = text.slice(0, firstError.offset).split('\n');
+    const column = (lines.at(-1)?.length ?? 0) + 1;
+    throw new CliError(
+      `invalid JSON in config file ${path} at position ${firstError.offset} (line ${lines.length} column ${column}): ${printParseErrorCode(firstError.error)}`
+    );
   }
   const parsed = configSchema.safeParse(json);
   if (!parsed.success) {

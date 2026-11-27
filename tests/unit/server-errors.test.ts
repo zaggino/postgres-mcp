@@ -4,7 +4,7 @@ import { expect, it as test, vi } from 'vitest';
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import { createServer } from '../../src/server.ts';
 import { AccessMode } from '../../src/sql/driver-factory.ts';
-import { createFakePool, noRowsResult } from '../support/fake-pool.ts';
+import { createFakePool, databaseError, noRowsResult } from '../support/fake-pool.ts';
 import { connectClient } from '../support/mcp-client.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
@@ -14,6 +14,9 @@ async function executeSql(accessMode: AccessMode, database: string, sql: string)
     handler: ({ text }) => {
       if (text.includes('1/0')) {
         throw new pg.DatabaseError('division by zero', 0, 'error');
+      }
+      if (text.includes('pg_sleep')) {
+        throw databaseError('terminating connection due to administrator command', '57P01');
       }
       return [noRowsResult];
     },
@@ -26,6 +29,15 @@ test('an error Postgres raises for the statement keeps the plain upstream result
   const result = await executeSql(AccessMode.UNRESTRICTED, 'app', 'SELECT 1/0');
 
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: division by zero' }] });
+});
+
+test('Postgres ending the connection mid-statement is reported with isError', async () => {
+  const result = await executeSql(AccessMode.UNRESTRICTED, 'app', 'SELECT pg_sleep(10)');
+
+  expect(result).toEqual({
+    content: [{ type: 'text', text: 'Error: terminating connection due to administrator command' }],
+    isError: true,
+  });
 });
 
 test('an unknown database is reported with isError', async () => {

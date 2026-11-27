@@ -10,7 +10,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import pg from 'pg';
 import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
@@ -28,6 +27,7 @@ import { AccessMode } from './sql/driver-factory.ts';
 import { checkHypopgInstallationStatus } from './sql/extension-utils.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import { SafeSqlDriver } from './sql/safe-sql.ts';
+import { isStatementError } from './sql/sql-driver.ts';
 import { TopQueriesCalc } from './top-queries/top-queries-calc.ts';
 import type { HttpServerOptions } from './transports/request-guard.ts';
 import { guardRequests, LOOPBACK_HOSTS } from './transports/request-guard.ts';
@@ -55,12 +55,13 @@ function formatTextResponse(text: string): CallToolResult {
 
 /**
  * Upstream's `Error: ...` text. A failure Postgres raised for the statement keeps upstream's plain result; any other
- * failure (configuration, connection, restricted-mode rejection, timeout, argument check, internal) sets `isError`.
+ * failure (configuration, connection including a FATAL report, restricted-mode rejection, timeout, argument check,
+ * internal) sets `isError`.
  */
 function formatError(error: unknown): CallToolResult {
   const [message, cause] = error instanceof ErrorResult ? [error.toText(), error.cause] : [errorMessage(error), error];
   const result = formatTextResponse(`Error: ${message}`);
-  return cause instanceof pg.DatabaseError ? result : { ...result, isError: true };
+  return isStatementError(cause) ? result : { ...result, isError: true };
 }
 
 function cell(row: { cells: Record<string, unknown> }, name: string): unknown {
@@ -434,7 +435,7 @@ function serverInstructions(registry: DatabaseRegistry): string {
     'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, connection, configuration or server failure).',
     'The health, top-queries and index tools report failures in their output instead.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
-    'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools).',
+    'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools). list_databases shows the last connection error of each database.',
     `Report any problem with this MCP server to the user (bugs, confusing output, missing tools or arguments) and suggest an issue at ${packageJson.bugs.url}.`,
   ];
   return clauses.filter((clause) => clause !== '').join(' ');

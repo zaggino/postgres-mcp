@@ -2,7 +2,7 @@ import type { AccessMode } from './sql/driver-factory.ts';
 import { getSqlDriver as defaultGetSqlDriver } from './sql/driver-factory.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
 import type { PoolFactory } from './sql/sql-driver.ts';
-import { DbConnPool, defaultPoolFactory, obfuscatePassword } from './sql/sql-driver.ts';
+import { DbConnPool, defaultPoolFactory, maskError } from './sql/sql-driver.ts';
 
 export type UriSpec = { uri: string } | { error: string };
 
@@ -37,6 +37,8 @@ export interface DatabaseListing {
   state: 'open' | 'closed' | 'error';
   idle_seconds_left: number | null;
   error?: string;
+  /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
+  last_error?: string;
 }
 
 export interface ServerListing {
@@ -110,15 +112,6 @@ function databaseUri(serverUri: string, datname: string, name: string): UriSpec 
   return { uri: url.toString() };
 }
 
-/**
- * An error message with any password masked. An echo of `uri` itself is replaced as a whole first, because the
- * pattern-based masking can miss a password containing `@` or other unusual characters.
- */
-function maskError(error: unknown, uri: string): string {
-  const message = errorMessage(error).replaceAll(uri, String(obfuscatePassword(uri)));
-  return String(obfuscatePassword(message));
-}
-
 function globToRegExp(glob: string): RegExp {
   const pattern = glob
     .replaceAll(REGEX_METACHARACTERS, String.raw`\$&`)
@@ -151,6 +144,7 @@ class IdlePool {
   #timer: NodeJS.Timeout | null = null;
   #deadline: number | null = null;
   #retired = false;
+  #lastError: string | null = null;
 
   constructor(uri: string, poolFactory: PoolFactory, idleMinutes: number) {
     this.#uri = uri;
@@ -162,7 +156,8 @@ class IdlePool {
     return this.#uri;
   }
 
-  // A pool marked invalid by a failed query is still held, and its idle timer still runs, so it counts as open.
+  // A pool invalidated by a connection-level failure is still held until the next call rebuilds it, and its idle timer
+  // still runs, so it counts as open.
   get isOpen(): boolean {
     return Boolean(this.#conn?.pool);
   }
@@ -172,12 +167,17 @@ class IdlePool {
     return this.#retired && this.#inFlight === 0;
   }
 
+  /** Why the last call could not reach the database; carried from a closed pool into the next until a call reaches it. */
+  get lastError(): string | null {
+    return this.#conn ? this.#conn.lastError : this.#lastError;
+  }
+
   get secondsLeft(): number | null {
     return this.#deadline === null ? null : Math.max(0, Math.ceil((this.#deadline - Date.now()) / 1000));
   }
 
   async use<T>(fn: (conn: DbConnPool) => Promise<T>): Promise<T> {
-    this.#conn ??= new DbConnPool(this.#uri, this.#poolFactory);
+    this.#conn ??= new DbConnPool(this.#uri, this.#poolFactory, this.#lastError);
     const conn = this.#conn;
     this.#inFlight += 1;
     this.#clearTimer();
@@ -213,6 +213,9 @@ class IdlePool {
   #detach(): DbConnPool | null {
     const conn = this.#conn;
     this.#conn = null;
+    if (conn) {
+      this.#lastError = conn.lastError;
+    }
     return conn;
   }
 
@@ -370,6 +373,7 @@ export class DatabaseRegistry {
           state: 'error' in uri ? 'error' : poolState(pool),
           idle_seconds_left: pool?.secondsLeft ?? null,
           ...('error' in uri && { error: uri.error }),
+          ...(pool?.lastError && { last_error: pool.lastError }),
         };
       })
       .sort((a, b) => (a.database < b.database ? -1 : Number(a.database > b.database)));

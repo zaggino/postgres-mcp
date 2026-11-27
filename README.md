@@ -18,12 +18,14 @@ Differences from upstream:
 - SQL is parsed with the PostgreSQL 18 grammar (`libpg-query`) instead of the PostgreSQL 17 grammar (pglast).
 - Sample values taken from table statistics are quoted as literals when the index advisor fills query parameters. Upstream inserted them into the SQL unescaped.
 - The index advisor quotes table and column names as literals in its catalog lookup. Upstream inserted them into the SQL unescaped.
-- An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure, restricted-mode refusal, statement timeout or cancellation, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
+- An `Error: ...` tool result sets `isError` when the SQL got no answer from Postgres (unknown database, configuration or connection failure including a FATAL report from Postgres, restricted-mode refusal, statement timeout or cancellation, a rejected argument value); the text is unchanged. Upstream returns every failure as a plain text result. `analyze_db_health`, `get_top_queries` and the two index tools still report their failures in their output, as upstream does.
 - Error messages and stderr logs do not include the SQL text, plans or parse trees of a query. Upstream included the full query. A database or parser error can still quote the token it failed at.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
 - Statement timeouts are enforced by Postgres (`statement_timeout`), so a statement that runs too long is stopped; `--statement-timeout` sets the limit in either mode (default 30 seconds in restricted mode, none in unrestricted mode). Upstream stops waiting after 30 seconds in restricted mode and leaves the statement running.
 - Cancelling a tool call (`notifications/cancelled`) cancels its running statement in Postgres. In unrestricted mode a new `cancel_query` tool lists the session's running calls and cancels one by id. Upstream ignores cancellation.
+- Only a connection-level failure (a lost connection, any error that is not from Postgres, a FATAL error, or SQLSTATE class 08 or 28, 53300, 57P01 to 57P03) invalidates a database's pool and discards its connection. A statement Postgres rejects leaves both in use. Upstream reconnects the whole pool after any error, a syntax error included.
+- Opening a connection times out after 10 seconds; waiting for a free connection in a busy pool still times out after 30. Upstream waits 30 seconds for either. A cancelled call stops waiting for a connection at once and gives up its place in the queue.
 - Connections set `application_name` to `postgres-mcp` unless the connection URI or `PGAPPNAME` sets one.
 - The SQL comment marker is `/* postgres-mcp */` and hypothetical index names start with `postgres_mcp_idx_`.
 - One server serves many databases. Every database tool takes a required `database` argument and there is a new `list_databases` tool, so the tool schemas differ from upstream. Databases are named with `--database` flags or a `--config` file, which can also discover the databases of a server; pools open lazily and close when idle (`--idle-minutes`). `DATABASE_URI` and the positional `database_url` are removed. See [Multiple databases](#multiple-databases).
@@ -103,10 +105,11 @@ Postgres cancels any statement that runs longer than `--statement-timeout` secon
 One server process serves every database you name. Every tool except `list_databases` (and `cancel_query` in unrestricted mode) takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
 
 ```
-{ databases: [{ database, source, state, idle_seconds_left, error? }], servers: [{ server, prefix, error? }] }
+{ databases: [{ database, source, state, idle_seconds_left, error?, last_error? }], servers: [{ server, prefix, error? }] }
 ```
 
 - `source` is `cli`, `config` or `server` (discovered); `state` is `open`, `closed` or `error`; `idle_seconds_left` is the time until an open pool closes, or `null`.
+- `error` is a configuration problem that keeps the database from being used; `last_error` is why the last call could not reach the database (password masked), and disappears once a call reaches it.
 - `servers[].server` is the server's `host:port` only (no user name, password or query parameters); `error` reports a failed discovery.
 
 ### Config file

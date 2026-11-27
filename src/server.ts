@@ -434,7 +434,7 @@ function serverInstructions(registry: DatabaseRegistry): string {
     'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, connection, configuration or server failure).',
     'The health, top-queries and index tools report failures in their output instead.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
-    'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools).',
+    'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools). list_databases shows the last connection error of each database.',
     `Report any problem with this MCP server to the user (bugs, confusing output, missing tools or arguments) and suggest an issue at ${packageJson.bugs.url}.`,
   ];
   return clauses.filter((clause) => clause !== '').join(' ');

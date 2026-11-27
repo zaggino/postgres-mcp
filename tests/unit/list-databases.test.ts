@@ -76,3 +76,24 @@ test('a tool call for a database whose environment variable is unset returns the
 
   expect(text).toBe('Error: Database "app": environment variable MCP_APP_DATABASE_URI is not set');
 });
+
+test('list_databases shows why the last call could not reach a database, password masked, until a call reaches it', async () => {
+  let reachable = false;
+  const { registry } = createTestRegistry(['a'], {
+    handler: ({ text }) => {
+      if (text === 'SELECT 1' && !reachable) {
+        throw new Error('could not connect to postgresql://u:p@h:5432/a');
+      }
+      return [rowsResult([{ answer: 42 }])];
+    },
+  });
+  const client = await connectClient(createServer(registry));
+  await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 42 AS answer' });
+  expect(JSON.parse(await callToolText(client, 'list_databases'))).toMatchObject({
+    databases: [{ database: 'a', state: 'closed', last_error: 'could not connect to postgresql://u:****@h:5432/a' }],
+  });
+
+  reachable = true;
+  await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 42 AS answer' });
+  await expect(callToolText(client, 'list_databases')).resolves.not.toContain('last_error');
+});

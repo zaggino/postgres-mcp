@@ -48,6 +48,56 @@ function throwIfCancelled(signal: AbortSignal | undefined): void {
   }
 }
 
+/**
+ * Waits for `promise` unless `signal` aborts first, in which case it rejects with QueryCancelledError and a value
+ * that resolves afterwards goes to `onLate`, so a client checked out after the cancel is still released.
+ */
+async function untilAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  onLate?: (value: T) => void
+): Promise<T> {
+  if (!signal) {
+    return await promise;
+  }
+  const aborted = Promise.withResolvers<never>();
+  const onAbort = () => {
+    aborted.reject(new QueryCancelledError());
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  if (signal.aborted) {
+    onAbort();
+  }
+  try {
+    return await Promise.race([promise, aborted.promise]);
+  } catch (error) {
+    if (error instanceof QueryCancelledError && onLate) {
+      promise.then(onLate).catch((lateError: unknown) => {
+        logError(`Error after a cancelled wait: ${errorMessage(lateError)}`);
+      });
+    }
+    throw error;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * Whether a failure means the connection itself is unusable, as opposed to Postgres rejecting the statement on a
+ * healthy connection. A statement error is a pg.DatabaseError below FATAL outside SQLSTATE class 08 (connection
+ * exception); a socket error, an unexpected disconnect or a FATAL/PANIC report is connection-level.
+ */
+function isConnectionLevelError(error: unknown): boolean {
+  if (error instanceof QueryCancelledError) {
+    return false;
+  }
+  const reported = error instanceof QueryTimeoutError ? error.cause : error;
+  if (!(reported instanceof pg.DatabaseError)) {
+    return true;
+  }
+  return reported.severity === 'FATAL' || reported.severity === 'PANIC' || (reported.code?.startsWith('08') ?? false);
+}
+
 /** Raised when the caller's AbortSignal cancelled the statement. Deliberately not a pg.DatabaseError. */
 export class QueryCancelledError extends Error {
   constructor(options?: { cause?: unknown }) {
@@ -125,12 +175,32 @@ const customTypes: CustomTypesConfig = {
 
 const CANCEL_REQUEST_CODE = 80_877_102;
 const APPLICATION_NAME = 'postgres-mcp';
+/** How long a call waits for a free client when all of the pool's connections are busy. */
+const POOL_WAIT_TIMEOUT_MS = 30_000;
+/** How long opening one new connection may take, so an unreachable database fails fast. */
+export const CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * A pg.Client with its own connect timeout. pg-pool applies `connectionTimeoutMillis` both to waiting for a free
+ * client and to opening a new connection; the client's own, shorter timeout fires first for the latter.
+ */
+function clientWithConnectTimeout(connectTimeoutMs: number): typeof pg.Client {
+  return class extends pg.Client {
+    constructor(config?: string | pg.ClientConfig) {
+      super(typeof config === 'string' ? config : { ...config, connectionTimeoutMillis: connectTimeoutMs });
+    }
+  };
+}
 
 /**
  * Pool config for a connection string. pg lets a connection string's own parameters override config fields but
  * lets config.application_name beat PGAPPNAME, so the default is set only when neither the URI nor PGAPPNAME has one.
  */
-export function poolConfig(connectionString: string, env: NodeJS.ProcessEnv = process.env): pg.PoolConfig {
+export function poolConfig(
+  connectionString: string,
+  env: NodeJS.ProcessEnv = process.env,
+  connectTimeoutMs = CONNECT_TIMEOUT_MS
+): pg.PoolConfig {
   let uriHasApplicationName = false;
   try {
     uriHasApplicationName = new URL(connectionString).searchParams.has('application_name');
@@ -140,7 +210,8 @@ export function poolConfig(connectionString: string, env: NodeJS.ProcessEnv = pr
   return {
     connectionString,
     max: 5,
-    connectionTimeoutMillis: 30_000,
+    connectionTimeoutMillis: POOL_WAIT_TIMEOUT_MS,
+    Client: clientWithConnectTimeout(connectTimeoutMs),
     types: customTypes,
     ...(uriHasApplicationName || env.PGAPPNAME ? {} : { application_name: APPLICATION_NAME }),
   };
@@ -187,8 +258,16 @@ function sendCancelRequest(client: pg.PoolClient): Promise<void> {
   });
 }
 
-export const defaultPoolFactory: PoolFactory = (connectionString) => {
-  const pool = new pg.Pool(poolConfig(connectionString));
+/** A factory for real pg pools; `connectTimeoutMs` bounds opening each connection. */
+export const createPoolFactory =
+  (connectTimeoutMs = CONNECT_TIMEOUT_MS): PoolFactory =>
+  (connectionString) =>
+    pgPool(connectionString, connectTimeoutMs);
+
+export const defaultPoolFactory: PoolFactory = createPoolFactory();
+
+function pgPool(connectionString: string, connectTimeoutMs: number): PoolLike {
+  const pool = new pg.Pool(poolConfig(connectionString, process.env, connectTimeoutMs));
   pool.on('error', (error) => {
     logError(`Idle connection pool error: ${error.message}`);
   });
@@ -216,12 +295,14 @@ export const defaultPoolFactory: PoolFactory = (connectionString) => {
     },
     end: () => pool.end(),
   };
-};
+}
 
 interface ExecutionOptions {
   forceReadonly: boolean;
   statementTimeoutSeconds: number;
   signal: AbortSignal | undefined;
+  /** Called when the transaction could not be rolled back, so the connection must not be reused. */
+  onRollbackFailed: () => void;
 }
 
 interface ErrorContext {
@@ -312,6 +393,7 @@ async function executeWithClient(
       try {
         await client.query('ROLLBACK');
       } catch (rollbackError) {
+        options.onRollbackFailed();
         logError(`Error rolling back transaction: ${errorMessage(rollbackError)}`);
       }
     }
@@ -409,9 +491,20 @@ export class DbConnPool {
     }
   }
 
+  /** Invalidates the pool after a connection-level failure, so the next call reconnects. */
   markInvalid(error: unknown): void {
     this.isValid = false;
-    this.lastError = obfuscatePassword(errorMessage(error)) ?? '';
+    this.recordError(error);
+  }
+
+  /**
+   * Records a connection-level failure without invalidating the pool. An echo of the connection URL is masked as a
+   * whole first, because the pattern-based masking can miss a password containing `@` or other unusual characters.
+   */
+  recordError(error: unknown): void {
+    const url = this.connectionUrl;
+    const message = url ? errorMessage(error).replaceAll(url, String(obfuscatePassword(url))) : errorMessage(error);
+    this.lastError = obfuscatePassword(message) ?? '';
   }
 }
 
@@ -463,41 +556,56 @@ export class SqlDriver {
     params?: readonly unknown[] | null,
     forceReadonly = false
   ): Promise<RowResult[] | null> {
-    // Cancel and timeout never invalidate the pool; checking before the try avoids connecting at all.
+    // Checking before connecting avoids opening a connection for a call that is already cancelled.
     throwIfCancelled(this.signal);
+    const conn = this.conn ?? this.connect();
+    // A failed connection attempt has already invalidated and closed the pool and recorded its error.
+    const pool = await untilAborted(conn.poolConnect(), this.signal);
+    // A checkout failure (credentials, too many connections, a full pool) can be a pg.DatabaseError; rewrapping
+    // keeps it from passing as the statement's own error, which the tool result reports without isError. It is
+    // recorded but does not invalidate the pool: pg retries new connections itself, and rebuilding a busy pool
+    // would only open more connections.
+    const client = await untilAborted(pool.connect(), this.signal, (late) => {
+      late.release();
+    }).catch((error: unknown) => {
+      if (error instanceof QueryCancelledError) {
+        throw error;
+      }
+      conn.recordError(error);
+      throw new Error(errorMessage(error), { cause: error });
+    });
+    if (this.signal?.aborted) {
+      client.release();
+      throw new QueryCancelledError();
+    }
+    let rollbackFailed = false;
+    let destroy = true;
     try {
-      const conn = this.conn ?? this.connect();
-      const pool = await conn.poolConnect();
-      // A checkout failure (credentials, too many connections) can be a pg.DatabaseError; rewrapping keeps it
-      // from passing as the statement's own error, which the tool result reports without isError.
-      const client = await pool.connect().catch((error: unknown) => {
-        throw new Error(errorMessage(error), { cause: error });
+      const rows = await executeWithClient(client, query, params, {
+        forceReadonly,
+        statementTimeoutSeconds: this.statementTimeoutSeconds,
+        signal: this.signal,
+        onRollbackFailed: () => {
+          rollbackFailed = true;
+        },
       });
-      try {
-        throwIfCancelled(this.signal);
-      } catch (error) {
-        client.release();
-        throw error;
-      }
-      let destroy = false;
-      try {
-        return await executeWithClient(client, query, params, {
-          forceReadonly,
-          statementTimeoutSeconds: this.statementTimeoutSeconds,
-          signal: this.signal,
-        });
-      } catch (error) {
-        destroy = true;
-        throw error;
-      } finally {
-        client.release(destroy);
-      }
+      destroy = false;
+      conn.lastError = null;
+      return rows;
     } catch (error) {
-      // Any other failure, including a user syntax error, invalidates the pool.
-      if (!(error instanceof QueryCancelledError || error instanceof QueryTimeoutError)) {
-        this.conn?.markInvalid(error);
+      // A statement Postgres rejected leaves the connection usable once rolled back; a cancelled call's connection
+      // is destroyed because a late cancel request could hit its next statement.
+      const connectionLevel = isConnectionLevelError(error);
+      destroy = connectionLevel || rollbackFailed || error instanceof QueryCancelledError;
+      if (connectionLevel) {
+        conn.markInvalid(error);
+      } else {
+        // The database answered, so an earlier connection error no longer applies.
+        conn.lastError = null;
       }
       throw error;
+    } finally {
+      client.release(destroy);
     }
   }
 }

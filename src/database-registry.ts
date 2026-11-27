@@ -37,6 +37,8 @@ export interface DatabaseListing {
   state: 'open' | 'closed' | 'error';
   idle_seconds_left: number | null;
   error?: string;
+  /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
+  last_error?: string;
 }
 
 export interface ServerListing {
@@ -151,6 +153,7 @@ class IdlePool {
   #timer: NodeJS.Timeout | null = null;
   #deadline: number | null = null;
   #retired = false;
+  #lastError: string | null = null;
 
   constructor(uri: string, poolFactory: PoolFactory, idleMinutes: number) {
     this.#uri = uri;
@@ -172,6 +175,11 @@ class IdlePool {
     return this.#retired && this.#inFlight === 0;
   }
 
+  /** The connection-level error of the last finished call, kept after the pool closes; null after a success. */
+  get lastError(): string | null {
+    return this.#lastError;
+  }
+
   get secondsLeft(): number | null {
     return this.#deadline === null ? null : Math.max(0, Math.ceil((this.#deadline - Date.now()) / 1000));
   }
@@ -184,6 +192,7 @@ class IdlePool {
     try {
       return await fn(conn);
     } finally {
+      this.#lastError = conn.lastError;
       this.#inFlight -= 1;
       if (this.#inFlight === 0) {
         if (this.#retired) {
@@ -370,6 +379,7 @@ export class DatabaseRegistry {
           state: 'error' in uri ? 'error' : poolState(pool),
           idle_seconds_left: pool?.secondsLeft ?? null,
           ...('error' in uri && { error: uri.error }),
+          ...(pool?.lastError && { last_error: pool.lastError }),
         };
       })
       .sort((a, b) => (a.database < b.database ? -1 : Number(a.database > b.database)));

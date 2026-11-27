@@ -6,17 +6,9 @@ Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-
 
 `src/server.ts` installs handlers for SIGTERM and SIGINT and reacts to stdin closing, but not to SIGHUP. Whether a reply written after the client closed stdout (EPIPE) ends the process without closing the pool has not been checked; `zaggino/lazy-pg-mcp` records that failure for itself. Handle SIGHUP, and route a stdout `error` through `shutdown()` if the check shows the problem.
 
-## 2026-11-26 · Minor · Bug · Connecting to an unreachable database waits 30 s
-
-The statement timeout is now `statement_timeout`, set by `SqlDriver` in `src/sql/sql-driver.ts` once a connection is held, so an unreachable host no longer produces the query-timeout message; the connection error is reported. What remains: connecting waits the pool's `connectionTimeoutMillis` of 30 s before failing, as long as the restricted-mode statement timeout. Give connecting its own, shorter timeout so an unreachable database fails fast.
-
 ## 2026-11-26 · Minor · Docs · `AGENTS.md` lacks two rules that `zaggino/lazy-pg-mcp` has
 
 Its agent instructions require the file itself to be updated in the same change that makes a statement in it wrong, and a lesson to be recorded for any non-obvious pitfall, not only after a correction from the user. Its tests follow "one test file per behaviour". Decide which of these to adopt in `AGENTS.md`.
-
-## 2026-11-26 · Major · Bug · Connection pool is invalidated after any query error
-
-`SqlDriver` in `src/sql/sql-driver.ts` calls `markInvalid` on any failure, including a user's syntax error, so the next call reconnects the whole pool. Only connection-level failures should invalidate it.
 
 ## 2026-11-26 · Minor · Bug · Table-size estimate always falls back to 10 MB
 
@@ -170,10 +162,6 @@ Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt
 
 The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Required reviewers cannot simply be added to `main`: the `release-please` job uses it too and would then wait for approval on every push. Move the `publish` job to its own environment (and the npm trusted publisher with it) with required reviewers, "Prevent self-review" on and admin bypass off, or the person who triggers a run can approve it alone. (Creating `v*` tags, which the publish guard trusts, is already limited to admins by the "release tags: creation" ruleset.)
 
-## 2026-11-26 · Minor · Bug · A failed query destroys its pooled connection
-
-`SqlDriver.executeQuery` in `src/sql/sql-driver.ts` calls `client.release(true)` after any failure, so a user's syntax error discards a healthy connection.
-
 ## 2026-11-26 · Minor · Refactor · `ALLOWED_EXTENSIONS` is unreachable in restricted mode
 
 `CREATE EXTENSION` cannot run in a read-only transaction, so the allowlist in `src/sql/allowlists.ts` never takes effect. Trim it or document why it stays.
@@ -271,10 +259,6 @@ Discovery of the databases on a config `servers` entry builds each database URI 
 
 `IdlePool` in `src/database-registry.ts` has `#retired` and `isFinished`, and the registry keeps its own `#retired` set that `#retireStalePools` sweeps only on the next discovery. Let `retire()` return a promise that settles once the pool has drained and closed, and remove the pool from the set when it settles; `isFinished` and the sweep go.
 
-## 2026-11-26 · Minor · Observability · `list_databases` does not show why a database cannot connect
-
-When an explicit database fails to connect, `DbConnPool.close` drops the pool and `list_databases` reports it as `closed` with no error, the same as an idle pool. `DbConnPool.lastError` has the reason, but `SqlDriver.executeQuery` also sets it on every SQL error (the entry "Connection pool is invalidated after any query error"), so showing it now would mark a database as broken after a typo. Fix that entry first, then add a masked `last_error` to each database in `list_databases`.
-
 ## 2026-11-26 · Minor · Tests · Gaps in the multi-database tests
 
 Untested so far: `--idle-minutes` and config `idleMinutes` above 35791 are rejected; `list_databases` shows `open` with a counting-down `idle_seconds_left` after a successful call; a server whose `${VAR}` is unset shows the error in `servers[].error` and its databases are unknown; an invalid `--database` name, a duplicate name, an unreadable config file. Add one case each to `tests/unit/config.test.ts` and `tests/unit/database-registry.test.ts`.
@@ -314,10 +298,6 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 ## 2026-11-27 · Minor · Security · Query cancel requests are sent without TLS
 
 `sendCancelRequest` in `src/sql/sql-driver.ts` sends the CancelRequest (backend pid and secret key) over plain TCP even when the connection uses TLS, as libpq and pg do; an observer on the network path can then cancel that connection's statements. Postgres 18 / protocol 3.2 allows cancel over TLS; send it over TLS when the connection uses it.
-
-## 2026-11-27 · Minor · Bug · Cancelling a call that waits for a connection does not stop the wait
-
-`SqlDriver.executeQuery` awaits `poolConnect()` and `pool.connect()` without the call's signal, so a call queued behind a full pool (5 connections) waits up to the 30 s connection timeout before it notices the cancel.
 
 ## 2026-11-27 · Minor · Bug · list_databases and discovery ignore cancellation
 

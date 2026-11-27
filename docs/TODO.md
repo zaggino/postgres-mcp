@@ -6,9 +6,14 @@ Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-
 
 The server ignores the client's `notifications/cancelled`, and unrestricted mode has no call timeout at all, so a statement runs in postgres to its end. `zaggino/lazy-pg-mcp` works around this from outside by removing the backend and terminating its sessions. Do it in the server: cancel the running statement when the tool call's abort signal fires, and add a configurable call timeout that applies in both access modes. The restricted-mode side (the 30 s timeout that leaves the statement running) is the entry "Restricted-mode timeout is client-side only"; fix the two together.
 
-## 2026-11-26 · Minor · Feature · The server sends no `instructions` at initialize
+## 2026-11-26 · Minor · Feature · Server instructions give no guidance beyond the `database` argument
 
-`serverInstructions` in `src/server.ts` only tells the model that every tool except `list_databases` needs a `database` argument and which databases exist, so a model has no other guidance on the server's behaviour. Extend the text: the access mode in effect, that a result starting with `Error:` comes from the query and not from the server, what to check when the database cannot be reached, and where to report a server bug.
+`serverInstructions` in `src/server.ts` only tells the model that every tool except `list_databases` needs a `database` argument and which databases exist, so a model has no other guidance on the server's behaviour. Add the following, keeping each clause short (the text costs tokens in every session, about 35 now):
+
+- **Server errors vs SQL errors.** The instructions should say a result starting with `Error:` comes from the query, not from the server, but that does not hold yet: `formatError` prefixes every failure with `Error:`, the server's own (unknown database, unset `${VAR}`, restricted-mode rejection, connection failure) as well as SQL errors. Make server-raised failures distinguishable first (for example `isError: true` or a distinct prefix; check upstream's output and the pinned surface), then state the rule.
+- **How to diagnose failures.** Relay the error text to the user first, then check the likely configuration causes: an unset `${VAR}` in the config, wrong credentials, an unreachable host, a role without grants (which also makes the `information_schema` listings come back empty; see "Object listings read `information_schema`, which hides objects the role cannot access").
+- **Suggest opening issues.** If a failure still looks like a server bug, or a change to the server would make working with the databases easier (a missing tool or argument, an unclear description or error message), tell the user and suggest an issue at https://github.com/zaggino/postgres-mcp/issues (`bugs.url` in `package.json`).
+- **Timeouts and cancellation.** State the access mode in effect and its limits: restricted mode abandons a call after 30 s but the statement keeps running in postgres, unrestricted mode has no timeout, and cancelling a call does not stop its SQL. Update the clause when "A cancelled or long-running tool call cannot be stopped" and "Restricted-mode timeout is client-side only" are fixed.
 
 ## 2026-11-26 · Minor · Observability · Connections carry no `application_name`
 
@@ -328,3 +333,27 @@ On SSE, `POST /messages` returns 202 before the tool runs and the result travels
 ## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
 
 `SessionStore` in `src/transports/sessions.ts` and `IdlePool` in `src/database-registry.ts` each hold a per-entry `setTimeout`, with the in-flight rule and `unref` written twice. A shared `IdleTimer` (start, pause while busy, clear) would serve both.
+
+## 2026-11-27 · Minor · Refactor · Resolve each discovery server once instead of per discovery and per listing
+
+`src/database-registry.ts` parses a server's URI in `isPostgresUrl`, `serverUriWithDefaults` and `serverLabel` on every discovery and every `list_databases`, and `#discoverSource` and `list()` each branch on `'uri' in source.uri`. The source URI cannot change after construction, so resolve it once when the registry is built into `{ uri, label } | { error }` (protocol check, port and database defaults, label) and keep it on `SourceState`. That removes the repeated parsing and the branches, and the label is then the host of the connect URI by construction. Decide whether a non-postgres URI keeps its host label next to its error.
+
+## 2026-11-27 · Minor · Tests · An explicit database in a server URI is not tested to survive the defaults
+
+The port is covered: `tests/unit/list-databases.test.ts` labels a `:5433` server and `tests/unit/database-registry.test.ts` a `?port=6543` one. The database is not: every discovery test either leaves it out or uses `/postgres`, which equals the default, so a bug in `serverUriWithDefaults` that always replaced the database would pass. Add a case with an explicit non-default database (for example `postgresql://u:p@h:6543/other`: discovery connects to `other`) and one for the trailing-slash form `postgresql://u:p@h:6543/` (database becomes `postgres`, port kept).
+
+## 2026-11-27 · Minor · Performance · `list_databases` output repeats the same fields for every database
+
+Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. `list_databases` is a fork-only tool, so its output shape is not pinned to upstream, but the tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
+
+## 2026-11-27 · Minor · Bug · Object listings read `information_schema`, which hides objects the role cannot access
+
+`list_schemas`, `list_objects` and `get_object_details` in `src/server.ts` query `information_schema.schemata`, `.tables`, `.sequences`, `.columns` and `.table_constraints`. Those views show only objects the current role owns or holds a privilege on, so a role without grants gets `[]` for a schema that has tables, which looks like an empty schema rather than missing permissions. Seen with a read-only role on a database with ~150 tables: `list_objects` style queries returned nothing while `pg_tables` listed all of them. Inherited from upstream. A divergence would read `pg_catalog` (`pg_namespace`, `pg_class`, `pg_attribute`, `pg_constraint`) and report what the role can do with each object, using the privilege check for its kind (`has_table_privilege` for tables and views, `has_sequence_privilege` for sequences). Visibility also differs by view: a role with SELECT on a table sees its columns, but `information_schema.table_constraints` shows constraints only to the table's owner or a role with a privilege other than SELECT, so `get_object_details` can show a readable table without its constraints. Check every query stays within the restricted-mode allowlists.
+
+## 2026-11-27 · Minor · Docs · Server instructions do not say discovered names carry a prefix
+
+A database discovered on a config `servers` entry with a `prefix` is exposed as `<prefix><name>` (for example `dev-sales`), while `current_database()` and anything else inside Postgres report `sales`. `serverInstructions` in `src/server.ts` does not mention the mapping, so an agent can take the mismatch for a wrong connection. A clause such as "discovered names carry their server's prefix; inside the database the name is unprefixed" costs about 20 tokens per session. Add it only if agents are seen tripping on it.
+
+## 2026-11-27 · Minor · Bug · Shutdown waits without limit for running statements
+
+`shutdown()` in `src/server.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to 30 s in restricted mode and with no bound in unrestricted mode. On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. Fix this together with "A cancelled or long-running tool call cannot be stopped", which needs the same cancel path.

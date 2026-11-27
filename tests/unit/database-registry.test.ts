@@ -157,6 +157,17 @@ test('a name that rediscovery moves to another server gets a new pool and the ol
   expect(second?.fake.queries.map((q) => q.text)).toContainEqual(expect.stringContaining('SELECT 1 AS one'));
 });
 
+test('a server uri without port or database discovers through the postgres database on port 5432', async () => {
+  const { urls, poolFactory } = setup(datnames(['one']));
+  const reg = registry({ poolFactory, servers: [source({ uri: { uri: 'postgresql://u:p@h' } })] });
+
+  const { servers } = await reg.list();
+  await reg.use('one', query);
+
+  expect(urls).toEqual(['postgresql://u:p@h:5432/postgres', 'postgresql://u:p@h:5432/one']);
+  expect(servers).toEqual([{ server: 'h:5432', prefix: '' }]);
+});
+
 test('a second call restarts the idle timer', async () => {
   const { fakes, poolFactory } = setup();
   const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });

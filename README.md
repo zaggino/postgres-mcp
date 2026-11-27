@@ -112,12 +112,12 @@ One server process serves every database you name. Every tool except `list_datab
 | `accessMode`        | `restricted` | `unrestricted` or `restricted`. `--access-mode` wins.                                                                                           |
 | `idleMinutes`       | `10`         | Minutes without a call in flight before a pool closes; `0` never closes; at most 35791 (the longest timer Node accepts). `--idle-minutes` wins. |
 | `databases`         | none         | Map of database name to `{ "uri": ... }`. Names are free-form strings.                                                                          |
-| `servers[].uri`     | required     | A `postgres://` or `postgresql://` URL of a server whose databases are discovered.                                                              |
+| `servers[].uri`     | required     | A `postgres://` or `postgresql://` URL of a server whose databases are discovered; port and database are optional.                              |
 | `servers[].prefix`  | `""`         | Prepended to each discovered database name.                                                                                                     |
 | `servers[].include` | `["*"]`      | Globs of database names to keep.                                                                                                                |
 | `servers[].exclude` | `[]`         | Globs of database names to drop.                                                                                                                |
 
-Globs support `*` and `?` only and are matched against the whole database name (before the prefix). Discovery lists `pg_database` entries that allow connections and are not templates. A discovered database is reached with the server URI whose path is replaced by the database name, so discovery needs a URL-form server URI: key/value DSNs and a `dbname=` query parameter are not supported.
+Globs support `*` and `?` only and are matched against the whole database name (before the prefix). Discovery lists `pg_database` entries that allow connections and are not templates. It connects with the server URI, defaulting the port to `5432` and, when the URI names no database, the database to `postgres` (not the user name, as `pg` would), so `postgresql://user:password@host` is enough. A discovered database is reached with the server URI whose path is replaced by the database name, so discovery needs a URL-form server URI: key/value DSNs and a `dbname=` query parameter are not supported.
 
 If the same name is found on more than one server, calls to it fail until you set distinct `prefix` values. An explicitly named database wins over a discovered one with the same name.
 

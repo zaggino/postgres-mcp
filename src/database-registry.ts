@@ -53,6 +53,8 @@ export class DatabaseAccessError extends Error {}
 
 export const NOT_A_POSTGRES_URL = 'Server uri must be a postgres:// or postgresql:// URL';
 
+const DEFAULT_PORT = '5432';
+const DEFAULT_DATABASE = 'postgres';
 const DISCOVERY_QUERY = 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname';
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
 const REGEX_METACHARACTERS = /[.+^${}()|[\]\\]/gu;
@@ -64,10 +66,21 @@ function errorMessage(error: unknown): string {
 /** Only host and port: user names and query parameters stay out of tool output. */
 function serverLabel(uri: string): string {
   try {
-    return new URL(uri).host;
+    const url = new URL(uri);
+    return url.port ? url.host : `${url.host}:${DEFAULT_PORT}`;
   } catch {
     return '';
   }
+}
+
+/** A server URI with pg's defaults made explicit: port 5432, and the `postgres` database instead of the user name. */
+function serverUriWithDefaults(serverUri: string): string {
+  const url = new URL(serverUri);
+  url.port ||= DEFAULT_PORT;
+  if (url.pathname === '' || url.pathname === '/') {
+    url.pathname = `/${DEFAULT_DATABASE}`;
+  }
+  return url.toString();
 }
 
 /**
@@ -413,11 +426,11 @@ export class DatabaseRegistry {
       state.error = source.uri.error;
       return;
     }
-    const serverUri = source.uri.uri;
-    if (!isPostgresUrl(serverUri)) {
+    if (!isPostgresUrl(source.uri.uri)) {
       state.error = NOT_A_POSTGRES_URL;
       return;
     }
+    const serverUri = serverUriWithDefaults(source.uri.uri);
 
     try {
       state.pool ??= new IdlePool(serverUri, this.#poolFactory, this.#idleMinutes);

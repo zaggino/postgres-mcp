@@ -12,6 +12,7 @@
   // Servers whose databases are discovered from pg_database.
   "servers": [
     {
+      // postgresql://user:password@host is enough: the port defaults to 5432 and the database to "postgres".
       "uri": "${STAGING_SERVER_URI}",
       // Prepended to each discovered database name.
       "prefix": "staging-",

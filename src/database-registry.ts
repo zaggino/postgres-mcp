@@ -53,6 +53,8 @@ export class DatabaseAccessError extends Error {}
 
 export const NOT_A_POSTGRES_URL = 'Server uri must be a postgres:// or postgresql:// URL';
 
+const DEFAULT_PORT = '5432';
+const DEFAULT_DATABASE = 'postgres';
 const DISCOVERY_QUERY = 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname';
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
 const REGEX_METACHARACTERS = /[.+^${}()|[\]\\]/gu;
@@ -61,13 +63,33 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Only host and port: user names and query parameters stay out of tool output. */
+/**
+ * Only host and port of the URI discovery connects with: user names and query parameters stay out of tool output.
+ * A `port` query parameter is the port pg uses, so it wins over the URL's own.
+ */
 function serverLabel(uri: string): string {
   try {
-    return new URL(uri).host;
+    if (!isPostgresUrl(uri)) {
+      return new URL(uri).host;
+    }
+    const url = new URL(serverUriWithDefaults(uri));
+    return url.hostname ? `${url.hostname}:${url.searchParams.get('port') ?? url.port}` : '';
   } catch {
     return '';
   }
+}
+
+/**
+ * The URI discovery connects with: a missing port becomes 5432 and a missing database `postgres`, instead of what pg
+ * would pick (`PGPORT`, and `PGDATABASE` or the user name), so a bare `postgresql://user:password@host` works.
+ */
+function serverUriWithDefaults(serverUri: string): string {
+  const url = new URL(serverUri);
+  url.port ||= DEFAULT_PORT;
+  if (url.pathname === '' || url.pathname === '/') {
+    url.pathname = `/${DEFAULT_DATABASE}`;
+  }
+  return url.toString();
 }
 
 /**
@@ -413,11 +435,11 @@ export class DatabaseRegistry {
       state.error = source.uri.error;
       return;
     }
-    const serverUri = source.uri.uri;
-    if (!isPostgresUrl(serverUri)) {
+    if (!isPostgresUrl(source.uri.uri)) {
       state.error = NOT_A_POSTGRES_URL;
       return;
     }
+    const serverUri = serverUriWithDefaults(source.uri.uri);
 
     try {
       state.pool ??= new IdlePool(serverUri, this.#poolFactory, this.#idleMinutes);

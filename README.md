@@ -63,7 +63,7 @@ MCP_APP_DATABASE_URI="postgresql://user:pass@host:5432/db" \
   node dist/index.js --database=app --access-mode=restricted
 ```
 
-Or pass `--config=/path/to/postgres-mcp.config.json` to use a [config file](#multiple-databases) instead. `--database` and `--config` are mutually exclusive, and one of them is required.
+Or pass `--config=/path/to/postgres-mcp.config.jsonc` to use a [config file](#multiple-databases) instead. `--database` and `--config` are mutually exclusive, and one of them is required.
 
 ### Configure your AI assistant
 
@@ -104,7 +104,7 @@ One server process serves every database you name. Every tool except `list_datab
 
 ### Config file
 
-`--config FILE` reads a JSON file; see [postgres-mcp.config.example.json](postgres-mcp.config.example.json). Unknown keys are rejected, every key is optional, but at least one database or server is required.
+`--config FILE` reads a JSONC file (JSON with `//` and `/* */` comments and trailing commas; plain JSON works too); see [postgres-mcp.config.example.jsonc](postgres-mcp.config.example.jsonc). Unknown keys are rejected, every key is optional, but at least one database or server is required.
 
 | Key                 | Default        | Description                                                                                                                                     |
 | ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -189,7 +189,7 @@ postgres-mcp [options] (--database NAME ... | --config FILE)
 | Option                   | Default        | Description                                                                                                                      |
 | ------------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `--database`             | none           | Database to serve; repeatable. URI from `MCP_<NAME>_DATABASE_URI`. Exclusive with `--config`.                                    |
-| `--config`               | none           | JSON [config file](#config-file). Exclusive with `--database`.                                                                   |
+| `--config`               | none           | JSONC [config file](#config-file). Exclusive with `--database`.                                                                  |
 | `--idle-minutes`         | `10`           | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
 | `--access-mode`          | `unrestricted` | `unrestricted` or `restricted`.                                                                                                  |
 | `--transport`            | `stdio`        | `stdio`, `sse` or `streamable-http`.                                                                                             |

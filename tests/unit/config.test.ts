@@ -98,11 +98,24 @@ describe('config file', () => {
     expect(result.databases[0]?.uri).toEqual({ error: 'environment variable MISSING is not set' });
   });
 
-  it('reports invalid JSON by position without quoting the file', () => {
-    const text = '{"databases": {"a": {"uri": "postgres://u:hunter2@h/d" }}';
+  it('accepts comments and trailing commas', () => {
+    const text = `{
+      // line comment
+      "databases": {
+        /* block comment */
+        "app": { "uri": "postgres://h/app", },
+      },
+    }`;
+    const result = resolveConfig(cli({ configPath: 'c.jsonc' }), {}, () => text);
+
+    expect(result.databases).toEqual([{ name: 'app', source: 'config', uri: { uri: 'postgres://h/app' } }]);
+  });
+
+  it('reports invalid JSON by position, line, column and error code without quoting the file', () => {
+    const text = '{\n  // c\n  "databases": {"a": {"uri": "postgres://u:hunter2@h/d" }}';
     const read = () => resolveConfig(cli({ configPath: 'c.json' }), {}, () => text);
 
-    expect(read).toThrow(/invalid JSON in config file c\.json at position \d+/u);
+    expect(read).toThrow('invalid JSON in config file c.json at position 67 (line 3 column 59): CloseBraceExpected');
     expect(read).not.toThrow(/hunter2/u);
   });
 

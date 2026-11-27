@@ -72,7 +72,7 @@ options:
   --database NAME       Database to serve; repeatable. The connection URI is
                         read from MCP_<NAME>_DATABASE_URI (name uppercased,
                         '-' becomes '_'). Exclusive with --config
-  --config FILE         JSON config file naming databases and servers to
+  --config FILE         JSONC config file naming databases and servers to
                         discover databases on. Exclusive with --database
   --idle-minutes N      Close a database's pool after N idle minutes
                         (default: 10, 0 = never)

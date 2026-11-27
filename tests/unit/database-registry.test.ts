@@ -168,6 +168,15 @@ test('a server uri without port or database discovers through the postgres datab
   expect(servers).toEqual([{ server: 'h:5432', prefix: '' }]);
 });
 
+test('list labels a server with the port of its port query parameter', async () => {
+  const { poolFactory } = setup(datnames([]));
+  const reg = registry({ poolFactory, servers: [source({ uri: { uri: 'postgresql://u:p@h?port=6543' } })] });
+
+  const { servers } = await reg.list();
+
+  expect(servers).toEqual([{ server: 'h:6543', prefix: '' }]);
+});
+
 test('a second call restarts the idle timer', async () => {
   const { fakes, poolFactory } = setup();
   const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });

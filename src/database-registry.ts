@@ -63,17 +63,26 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Only host and port: user names and query parameters stay out of tool output. */
+/**
+ * Only host and port of the URI discovery connects with: user names and query parameters stay out of tool output.
+ * A `port` query parameter is the port pg uses, so it wins over the URL's own.
+ */
 function serverLabel(uri: string): string {
   try {
-    const url = new URL(uri);
-    return url.port ? url.host : `${url.host}:${DEFAULT_PORT}`;
+    if (!isPostgresUrl(uri)) {
+      return new URL(uri).host;
+    }
+    const url = new URL(serverUriWithDefaults(uri));
+    return url.hostname ? `${url.hostname}:${url.searchParams.get('port') ?? url.port}` : '';
   } catch {
     return '';
   }
 }
 
-/** A server URI with pg's defaults made explicit: port 5432, and the `postgres` database instead of the user name. */
+/**
+ * The URI discovery connects with: a missing port becomes 5432 and a missing database `postgres`, instead of what pg
+ * would pick (`PGPORT`, and `PGDATABASE` or the user name), so a bare `postgresql://user:password@host` works.
+ */
 function serverUriWithDefaults(serverUri: string): string {
   const url = new URL(serverUri);
   url.port ||= DEFAULT_PORT;

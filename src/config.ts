@@ -6,7 +6,7 @@ import type { CliOptions } from './cli.ts';
 import { CliError, MAX_IDLE_MINUTES } from './cli.ts';
 import type { DiscoverySource, ExplicitDatabase, RegistryOptions, UriSpec } from './database-registry.ts';
 import { NOT_A_POSTGRES_URL, isPostgresUrl } from './database-registry.ts';
-import { ACCESS_MODES, AccessMode } from './sql/driver-factory.ts';
+import { ACCESS_MODES, DEFAULT_ACCESS_MODE } from './sql/driver-factory.ts';
 
 export const DEFAULT_IDLE_MINUTES = 10;
 
@@ -139,19 +139,31 @@ export function resolveConfig(
     throw new CliError('arguments --database and --config are mutually exclusive');
   }
 
-  if (cli.configPath === undefined) {
-    if (cli.databases.length === 0) {
-      throw new CliError('no databases configured: pass --database NAME or --config FILE');
-    }
-    return {
-      accessMode: cli.accessMode ?? AccessMode.UNRESTRICTED,
-      idleMinutes: cli.idleMinutes ?? DEFAULT_IDLE_MINUTES,
-      databases: cliDatabases(cli.databases, env),
-      servers: [],
-    };
+  if (cli.configPath === undefined && cli.databases.length === 0) {
+    throw new CliError('no databases configured: pass --database NAME or --config FILE');
   }
+  const { settings, sources } =
+    cli.configPath === undefined
+      ? { settings: {}, sources: { databases: cliDatabases(cli.databases, env), servers: [] } }
+      : fromConfigFile(cli.configPath, env, readFile);
 
-  const config = readConfig(cli.configPath, readFile);
+  return {
+    accessMode: cli.accessMode ?? settings.accessMode ?? DEFAULT_ACCESS_MODE,
+    idleMinutes: cli.idleMinutes ?? settings.idleMinutes ?? DEFAULT_IDLE_MINUTES,
+    ...sources,
+  };
+}
+
+/** The settings and database sources of a config file; precedence over the CLI is applied by the caller. */
+function fromConfigFile(
+  path: string,
+  env: NodeJS.ProcessEnv,
+  readFile: (path: string) => string
+): {
+  settings: Pick<z.infer<typeof configSchema>, 'accessMode' | 'idleMinutes'>;
+  sources: Pick<RegistryOptions, 'databases' | 'servers'>;
+} {
+  const config = readConfig(path, readFile);
   const databases: ExplicitDatabase[] = Object.entries(config.databases ?? {}).map(([name, entry]) => ({
     name,
     source: 'config',
@@ -159,13 +171,7 @@ export function resolveConfig(
   }));
   const servers = (config.servers ?? []).map((server, index) => configServer(server, index, env));
   if (databases.length === 0 && servers.length === 0) {
-    throw new CliError(`invalid config file ${cli.configPath}: define at least one database or server`);
+    throw new CliError(`invalid config file ${path}: define at least one database or server`);
   }
-
-  return {
-    accessMode: cli.accessMode ?? config.accessMode ?? AccessMode.UNRESTRICTED,
-    idleMinutes: cli.idleMinutes ?? config.idleMinutes ?? DEFAULT_IDLE_MINUTES,
-    databases,
-    servers,
-  };
+  return { settings: config, sources: { databases, servers } };
 }

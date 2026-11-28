@@ -181,7 +181,9 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         queryWeights,
         [...seed].map((idx) => idx.indexDefinition)
       );
-      const candidateIndexes = new Set(allCandidates.map((c) => new IndexRecommendation(c.table, c.columns, c.using)));
+      const candidateIndexes = new Set(
+        allCandidates.map((c) => new IndexRecommendation(c.table, c.columns, c.using, 0, c.potentialProblematicReason))
+      );
       for (const idx of seed) {
         candidateIndexes.delete(idx);
       }

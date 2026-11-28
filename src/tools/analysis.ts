@@ -60,7 +60,7 @@ function advisorResponse({ result, trace }: AdvisorOutput): CallToolResult {
 
 export async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: number): Promise<CallToolResult> {
   const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
-  const dtaTool = new TextPresentation(sqlDriver, indexTuning);
+  const dtaTool = new TextPresentation(indexTuning);
   const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
   return advisorResponse(result);
 }
@@ -70,16 +70,14 @@ export async function analyzeQueryIndexes(
   queries: string[],
   maxIndexSizeMb: number
 ): Promise<CallToolResult> {
-  // Thrown, not returned: every failure of a tool with an outputSchema reaches the handler, which sets isError
-  if (queries.length === 0) {
-    throw new UsageError('Please provide a non-empty list of queries to analyze.');
-  }
+  // Thrown, not returned: every failure of a tool with an outputSchema reaches the handler, which sets isError.
+  // TextPresentation.analyzeQueries rejects an empty list.
   if (queries.length > MAX_NUM_INDEX_TUNING_QUERIES) {
     throw new UsageError(`Please provide a list of up to ${MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.`);
   }
 
   const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
-  const dtaTool = new TextPresentation(sqlDriver, indexTuning);
+  const dtaTool = new TextPresentation(indexTuning);
   const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
   return advisorResponse(result);
 }

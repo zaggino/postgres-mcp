@@ -19,7 +19,7 @@ function presentation(): TextPresentation {
     session.dtaTraces = ['trace line'];
     return Promise.resolve(session);
   });
-  return new TextPresentation(driver, tuning);
+  return new TextPresentation(tuning);
 }
 
 /** A presentation whose advisor recommends one index, with the given costs and problem reason. */
@@ -43,9 +43,17 @@ function presentationWithRecommendation(baseCost: number, newCost: number, reaso
     return Promise.resolve(session);
   });
   vi.spyOn(tuning, 'getExplainPlanWithIndexes').mockImplementation((_query, indexes) =>
-    Promise.resolve({ Plan: { 'Node Type': 'Seq Scan', 'Total Cost': indexes.length > 0 ? newCost : baseCost } })
+    Promise.resolve({
+      Plan: {
+        'Node Type': indexes.length > 0 ? 'Index Scan' : 'Seq Scan',
+        'Startup Cost': 0,
+        'Total Cost': indexes.length > 0 ? newCost : baseCost,
+        'Plan Rows': 10,
+        'Plan Width': 4,
+      },
+    })
   );
-  return new TextPresentation(driver, tuning);
+  return new TextPresentation(tuning);
 }
 
 afterEach(() => {
@@ -55,7 +63,7 @@ afterEach(() => {
 test('index recommendations leave out the advisor trace unless it is requested', async () => {
   vi.stubEnv('POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE', undefined);
 
-  const output = await presentation().analyzeQueries(['SELECT 1']);
+  const output = await presentation().analyzeQueries(['SELECT 1'], 10_000);
 
   expect(output.trace).toBeUndefined();
 });
@@ -63,32 +71,46 @@ test('index recommendations leave out the advisor trace unless it is requested',
 test('POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true adds the advisor trace to index recommendations', async () => {
   vi.stubEnv('POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE', 'true');
 
-  const output = await presentation().analyzeQueries(['SELECT 1']);
+  const output = await presentation().analyzeQueries(['SELECT 1'], 10_000);
 
   expect(output.trace).toEqual(['trace line']);
 });
 
 test('a recommendation reports raw numbers, the size in bytes and a long text warning', async () => {
-  const { result } = await presentationWithRecommendation(100, 25, 'long_text_column').analyzeQueries(['SELECT 1']);
+  const { result } = await presentationWithRecommendation(100, 25, 'long_text_column').analyzeQueries(
+    ['SELECT 1'],
+    10_000
+  );
 
   const parsed = advisorResultSchema.parse(result);
   expect(parsed.summary).toMatchObject({ total_recommendations: 1, improvement_multiple: 4, total_size_bytes: 8192 });
   expect(parsed.recommendations[0]).toMatchObject({ index_size_bytes: 8192 });
   expect(parsed.recommendations[0]?.warning).toContain('long text column');
   expect(parsed.query_impact[0]).toMatchObject({ base_cost: 100, new_cost: 25, improvement_multiple: 4 });
-  expect(parsed.query_impact[0]?.before_explain_plan).not.toContain('```');
+  expect(parsed.query_impact[0]?.before_explain_plan).toMatch(/^→ Seq Scan/u);
+  expect(parsed.query_impact[0]?.after_explain_plan).toMatch(/^→ Index Scan/u);
 });
 
 test('a cost that is not finite is reported as null', async () => {
-  const { result } = await presentationWithRecommendation(Number.POSITIVE_INFINITY, 25, null).analyzeQueries([
-    'SELECT 1',
-  ]);
+  const { result } = await presentationWithRecommendation(Number.POSITIVE_INFINITY, 25, null).analyzeQueries(
+    ['SELECT 1'],
+    10_000
+  );
 
   expect(result.summary).toMatchObject({ base_cost: null, new_cost: 25, improvement_multiple: null });
 });
 
+test('an infinite new cost has no improvement multiple', async () => {
+  const { result } = await presentationWithRecommendation(100, Number.POSITIVE_INFINITY, null).analyzeQueries(
+    ['SELECT 1'],
+    10_000
+  );
+
+  expect(result.summary).toMatchObject({ base_cost: 100, new_cost: null, improvement_multiple: null });
+});
+
 test('an index that takes the cost to zero has no improvement multiple, the same in every section', async () => {
-  const { result } = await presentationWithRecommendation(100, 0, null).analyzeQueries(['SELECT 1']);
+  const { result } = await presentationWithRecommendation(100, 0, null).analyzeQueries(['SELECT 1'], 10_000);
 
   const multiples = [
     result.summary.improvement_multiple,

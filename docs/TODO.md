@@ -263,9 +263,9 @@ Shapes carried over from Python that TypeScript would write as named objects and
 
 - `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
 - Two functions return a tuple: `checkPostgresVersionRequirement` (`src/sql/extension-utils.ts`) returns `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
-- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
+- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds forwarding getters and `toIndex()`.
 
-Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces. No output changes.
 
 ## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
 
@@ -308,3 +308,7 @@ _BREAKING CHANGE REQUIRED_
 ## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
 
 With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result.
+
+## 2026-11-28 · Minor · Bug · A zero workload cost is reported as a base cost of 1
+
+`generateRecommendations` in `src/index/index-opt-base.ts` computes the base cost as `evaluateConfigurationCost(...) || 1`, so a workload the planner costs at 0 reports `base_cost: 1` in the advisor's `benefit_*` objects and summary, and its improvement multiple is computed against that 1. `costBenefit` (`src/index/advisor-result.ts`) already reports a zero cost as a null multiple; drop the fallback so the real cost reaches the output.

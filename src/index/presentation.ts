@@ -1,9 +1,8 @@
 import { ExplainPlanArtifact } from '../artifacts.ts';
 import { UsageError } from '../errors.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
-import type { SqlExecutor } from '../sql/safe-sql.ts';
 import type { AdvisorRecommendation, AdvisorResult, QueryImpact } from './advisor-result.ts';
-import { costBenefit } from './advisor-result.ts';
+import { costBenefit, NO_COSTS } from './advisor-result.ts';
 import type { IndexTuningResult } from './index-opt-base.ts';
 import { IndexTuningBase } from './index-opt-base.ts';
 
@@ -19,10 +18,10 @@ const LONG_TEXT_WARNING =
   '(i.e., more than 8191 bytes).';
 
 interface ExecuteAnalysisOptions {
-  limit?: number;
-  maxIndexSizeMb?: number;
-  minAvgTimeMs?: number;
-  minCalls?: number;
+  limit: number;
+  maxIndexSizeMb: number;
+  minAvgTimeMs: number;
+  minCalls: number;
   queryList?: string[];
 }
 
@@ -35,11 +34,9 @@ function warningFor(reason: string | null): string | undefined {
 
 /** Presentation of index tuning recommendations as the advisor tools' structured result. */
 export class TextPresentation {
-  readonly sqlDriver: SqlExecutor;
   readonly indexTuning: IndexTuningBase;
 
-  constructor(sqlDriver: SqlExecutor, indexTuning: IndexTuningBase) {
-    this.sqlDriver = sqlDriver;
+  constructor(indexTuning: IndexTuningBase) {
     this.indexTuning = indexTuning;
   }
 
@@ -47,7 +44,7 @@ export class TextPresentation {
    * Analyze the query history (frequently executed and costly queries) and
    * recommend indexes.
    */
-  analyzeWorkload(maxIndexSizeMb = 10_000): Promise<AdvisorOutput> {
+  analyzeWorkload(maxIndexSizeMb: number): Promise<AdvisorOutput> {
     return this.executeAnalysis({
       minCalls: 50,
       minAvgTimeMs: 5,
@@ -57,7 +54,7 @@ export class TextPresentation {
   }
 
   /** Analyze a list of SQL queries and recommend indexes. */
-  analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<AdvisorOutput> {
+  analyzeQueries(queries: string[], maxIndexSizeMb: number): Promise<AdvisorOutput> {
     // An empty list would fall through to the pg_stat_statements workload
     if (queries.length === 0) {
       return Promise.reject(new UsageError('No queries provided for analysis'));
@@ -74,13 +71,7 @@ export class TextPresentation {
 
   /** Execute indexing analysis; resolves with the recommendations, rejects when the analysis fails. */
   async executeAnalysis(options: ExecuteAnalysisOptions): Promise<AdvisorOutput> {
-    const session = await this.indexTuning.analyzeWorkload({
-      queryList: options.queryList,
-      minCalls: options.minCalls ?? 50,
-      minAvgTimeMs: options.minAvgTimeMs ?? 5,
-      limit: options.limit ?? 100,
-      maxIndexSizeMb: options.maxIndexSizeMb ?? 10_000,
-    });
+    const session = await this.indexTuning.analyzeWorkload(options);
 
     const analyses = session.recommendations;
     const [first] = analyses;
@@ -88,8 +79,7 @@ export class TextPresentation {
     const result: AdvisorResult = {
       summary: {
         total_recommendations: analyses.length,
-        // With no recommendation both costs are unknown, so the summary reports null
-        ...costBenefit(first?.progressiveBaseCost ?? Number.NaN, last?.progressiveRecommendationCost ?? Number.NaN),
+        ...(first && last ? costBenefit(first.progressiveBaseCost, last.progressiveRecommendationCost) : NO_COSTS),
         total_size_bytes: analyses.reduce((total, rec) => total + rec.estimatedSizeBytes, 0),
       },
       recommendations: this.buildRecommendationsList(session),

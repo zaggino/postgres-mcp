@@ -23,6 +23,23 @@ export interface ResultSet {
   rows: Row[];
 }
 
+/** One column of a Table: its name and its Postgres type OID. */
+export interface TableColumn {
+  name: string;
+  typeOid: number;
+}
+
+/** The last statement's result with rows as arrays, so duplicate column names keep every value. No columns means no result set. */
+export interface Table {
+  columns: readonly TableColumn[];
+  rows: unknown[][];
+}
+
+export interface ArrayResultLike {
+  fields: readonly { name: string; dataTypeID: number }[];
+  rows: unknown[][];
+}
+
 export interface QueryResultLike {
   fields: readonly { name: string }[];
   rows: Row[];
@@ -31,6 +48,8 @@ export interface QueryResultLike {
 export interface ClientLike {
   /** One result per statement; a single statement yields a one-element array. */
   query: (text: string, values?: readonly unknown[]) => Promise<QueryResultLike[]>;
+  /** Like `query` without parameters, with each row as an array of values in column order. */
+  queryArrays: (text: string) => Promise<ArrayResultLike[]>;
   release: (destroy?: boolean) => void;
   /** Asks Postgres to cancel whatever this client's backend is running. Never rejects. */
   cancel: () => Promise<void>;
@@ -282,6 +301,13 @@ function pgPool(config: pg.PoolConfig): PoolLike {
             : await client.query(text);
           return Array.isArray(result) ? result : [result];
         },
+        async queryArrays(text) {
+          const result: pg.QueryArrayResult | pg.QueryArrayResult[] = await client.query({
+            text,
+            rowMode: 'array',
+          });
+          return Array.isArray(result) ? result : [result];
+        },
         release(destroy) {
           client.release(destroy);
         },
@@ -337,13 +363,12 @@ function mapExecutionError(error: unknown, { statementTimeoutSeconds, signal, qu
   return error;
 }
 
-async function runUserQuery(
+async function runUserQuery<R>(
   client: ClientLike,
-  query: string,
-  params: readonly unknown[] | null | undefined,
+  run: () => Promise<R[]>,
   signal: AbortSignal | undefined,
   onSend: () => void
-): Promise<QueryResultLike[]> {
+): Promise<R[]> {
   throwIfCancelled(signal);
   const onAbort = () => {
     void client.cancel();
@@ -351,7 +376,7 @@ async function runUserQuery(
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
     onSend();
-    const results = await (params && params.length > 0 ? client.query(query, params) : client.query(query));
+    const results = await run();
     // A cancel request sent as the query finished can still land on the backend's next statement, so a
     // cancelled call fails here and its connection is destroyed instead of returning to the pool.
     throwIfCancelled(signal);
@@ -366,12 +391,12 @@ async function runUserQuery(
  * pool unless the connection may be unusable: a connection-level failure, a failed ROLLBACK, or a cancel after the
  * statement was sent (a late cancel request could hit the backend's next statement).
  */
-async function executeWithClient(
+async function executeWithClient<R, T>(
   client: ClientLike,
-  query: string,
-  params: readonly unknown[] | null | undefined,
+  run: () => Promise<R[]>,
+  toResult: (last: R | undefined) => T,
   options: ExecutionOptions
-): Promise<ResultSet> {
+): Promise<T> {
   const { forceReadonly, statementTimeoutSeconds, signal } = options;
   // node-postgres runs in autocommit, so a transaction is opened explicitly
   // for every query to keep the closing COMMIT/ROLLBACK meaningful.
@@ -389,15 +414,10 @@ async function executeWithClient(
       await client.query(`SET statement_timeout = ${statementTimeoutSeconds * 1000}`);
     }
 
-    const results = await runUserQuery(client, query, params, signal, () => {
+    const results = await runUserQuery(client, run, signal, () => {
       queryStartedAt = performance.now();
     });
-    const last = results.at(-1);
-
-    const result: ResultSet = {
-      columns: last ? last.fields.map((field) => field.name) : [],
-      rows: last ? last.rows : [],
-    };
+    const result = toResult(results.at(-1));
 
     await client.query(forceReadonly ? 'ROLLBACK' : 'COMMIT');
     transactionStarted = false;
@@ -595,12 +615,39 @@ export class SqlDriver {
   }
 
   async executeResultSet(query: string, params?: readonly unknown[] | null, forceReadonly = false): Promise<ResultSet> {
+    return await this.#execute(
+      (client) => (params && params.length > 0 ? client.query(query, params) : client.query(query)),
+      (last) => ({
+        columns: last ? last.fields.map((field) => field.name) : [],
+        rows: last ? last.rows : [],
+      }),
+      forceReadonly
+    );
+  }
+
+  /** Like executeResultSet without parameters, with rows as arrays so duplicate column names keep every value. */
+  async executeTable(query: string, forceReadonly = false): Promise<Table> {
+    return await this.#execute(
+      (client) => client.queryArrays(query),
+      (last) => ({
+        columns: last ? last.fields.map((field) => ({ name: field.name, typeOid: field.dataTypeID })) : [],
+        rows: last ? last.rows : [],
+      }),
+      forceReadonly
+    );
+  }
+
+  async #execute<R, T>(
+    run: (client: ClientLike) => Promise<R[]>,
+    toResult: (last: R | undefined) => T,
+    forceReadonly: boolean
+  ): Promise<T> {
     // Checking before connecting avoids opening a connection for a call that is already cancelled.
     throwIfCancelled(this.signal);
     const conn = this.conn ?? this.connect();
     const client = await this.#checkout(conn);
     try {
-      const result = await executeWithClient(client, query, params, {
+      const result = await executeWithClient(client, () => run(client), toResult, {
         forceReadonly,
         statementTimeoutSeconds: this.statementTimeoutSeconds,
         signal: this.signal,

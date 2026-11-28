@@ -11,6 +11,7 @@ import { MAX_NUM_INDEX_TUNING_QUERIES } from '../index/index-opt-base.ts';
 import type { AdvisorOutput } from '../index/presentation.ts';
 import { TextPresentation } from '../index/presentation.ts';
 import { toJson } from '../json.ts';
+import { decodeArrayColumns } from '../sql/array-types.ts';
 import { requireHypopg } from '../sql/extension-utils.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { TopQueriesCalc } from '../top-queries/top-queries-calc.ts';
@@ -44,12 +45,35 @@ export async function explainQuery(
   return formatError(result);
 }
 
+/**
+ * One JSON key per column, in column order. The first column with a name keeps it; a later duplicate becomes
+ * `<name>_N` with the lowest N >= 2 that is neither a column name of the result nor a key already assigned.
+ */
+export function uniqueColumnKeys(names: readonly string[]): string[] {
+  const taken = new Set(names);
+  const seen = new Set<string>();
+  return names.map((name) => {
+    let key = name;
+    if (seen.has(key)) {
+      let n = 2;
+      while (taken.has(`${name}_${n}`) || seen.has(`${name}_${n}`)) {
+        n += 1;
+      }
+      key = `${name}_${n}`;
+    }
+    seen.add(key);
+    return key;
+  });
+}
+
 export async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<CallToolResult> {
-  const { columns, rows } = await sqlDriver.executeResultSet(sql);
+  const { columns, rows } = await decodeArrayColumns(sqlDriver, await sqlDriver.executeTable(sql));
   if (columns.length === 0) {
     return formatTextResponse('No results');
   }
-  return formatTextResponse(toJson(rows));
+  const keys = uniqueColumnKeys(columns.map((column) => column.name));
+  const objects = rows.map((row) => Object.fromEntries(keys.map((key, index) => [key, row[index]])));
+  return formatTextResponse(toJson(objects));
 }
 
 /** The structured result, and the same result as JSON text; the debug trace goes into the text only. */

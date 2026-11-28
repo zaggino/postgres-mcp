@@ -4,7 +4,8 @@ import { expect, it as test, vi } from 'vitest';
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import { createServer } from '../../src/server.ts';
 import { AccessMode } from '../../src/sql/driver-factory.ts';
-import { createFakePool, databaseError, noRowsResult } from '../support/fake-pool.ts';
+import type { QueryHandler } from '../support/fake-pool.ts';
+import { createFakePool, databaseError, noRowsResult, rowsResult } from '../support/fake-pool.ts';
 import { connectClient } from '../support/mcp-client.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
@@ -80,19 +81,8 @@ test('a Postgres error while checking out a connection is reported with isError'
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: too many clients' }], isError: true });
 });
 
-async function callFailingTool(
-  name: string,
-  args: Record<string, unknown>,
-  failure: () => Error = () => new Error('socket hang up')
-) {
-  const { registry } = createTestRegistry(['app'], {
-    handler: ({ text }) => {
-      if (text.startsWith('BEGIN') || text.startsWith('ROLLBACK') || text === 'SELECT 1') {
-        return [noRowsResult];
-      }
-      throw failure();
-    },
-  });
+async function callTool(name: string, args: Record<string, unknown>, handler: QueryHandler) {
+  const { registry } = createTestRegistry(['app'], { handler });
   const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   try {
     const client = await connectClient(createServer(registry));
@@ -101,6 +91,19 @@ async function callFailingTool(
   } finally {
     stderr.mockRestore();
   }
+}
+
+function callFailingTool(
+  name: string,
+  args: Record<string, unknown>,
+  failure: () => Error = () => new Error('socket hang up')
+) {
+  return callTool(name, args, ({ text }) => {
+    if (text.startsWith('BEGIN') || text.startsWith('ROLLBACK') || text === 'SELECT 1') {
+      return [noRowsResult];
+    }
+    throw failure();
+  });
 }
 
 test('a tool failure that is not a Postgres rejection is logged with the tool label and reported with isError', async () => {
@@ -137,3 +140,40 @@ test('an invalid analyze_db_health type is reported with isError and not logged 
   expect(JSON.stringify(result.content)).toContain("Invalid health types provided: 'disk'");
   expect(logged.filter((line) => line.startsWith('ERROR'))).toEqual([]);
 });
+
+/** A database with only the named extensions installed (none available to install) and every table analyzed. */
+function withExtensions(...installed: string[]): QueryHandler {
+  return ({ text }) => {
+    if (text.includes('server_version')) {
+      return [rowsResult([{ server_version: '16.2' }])];
+    }
+    if (text.includes('FROM pg_extension')) {
+      return [rowsResult(installed.filter((name) => text.includes(`'${name}'`)).map(() => ({ extversion: '1.0' })))];
+    }
+    if (text.includes('last_analyze')) {
+      return [rowsResult([{ last_analyze: '2026-11-28 00:00:00+00' }])];
+    }
+    return [noRowsResult];
+  };
+}
+
+test.each([
+  ['get_top_queries', {}, [], 'CREATE EXTENSION pg_stat_statements'],
+  ['analyze_workload_indexes', {}, ['hypopg'], 'CREATE EXTENSION pg_stat_statements'],
+  ['analyze_query_indexes', { queries: ['SELECT 1'] }, [], 'CREATE EXTENSION hypopg'],
+  [
+    'explain_query',
+    { sql: 'SELECT 1', hypothetical_indexes: [{ table: 't', columns: ['a'] }] },
+    [],
+    'CREATE EXTENSION hypopg',
+  ],
+])(
+  '%s without its extension returns the install guidance with isError and logs no error',
+  async (name, args, installed, guidance) => {
+    const { result, logged } = await callTool(name, args, withExtensions(...installed));
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain(guidance);
+    expect(logged.filter((line) => line.startsWith('ERROR'))).toEqual([]);
+  }
+);

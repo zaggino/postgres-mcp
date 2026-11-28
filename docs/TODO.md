@@ -282,10 +282,10 @@ Changing a field's type breaks callers that read the current shape, so commit it
 Shapes carried over from Python that TypeScript would write as named objects and interfaces:
 
 - `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
-- Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
+- Two functions return a tuple: `checkPostgresVersionRequirement` (`src/sql/extension-utils.ts`) returns `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
 - `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
 
-Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Let `checkHypopgInstallationStatus` return the extension's status and let its two callers render the message, which also removes its `messageType` parameter. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
 
 ## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
 
@@ -323,7 +323,7 @@ _BREAKING CHANGE REQUIRED_
 
 ## 2026-11-28 · Minor · Bug · A `pg_stat_statements` that is installed but not preloaded passes the extension check
 
-`isPgStatStatementsInstalled` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
+`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
 
 ## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
 

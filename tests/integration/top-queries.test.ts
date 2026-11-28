@@ -1,26 +1,10 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test } from 'vitest';
 
+import { UsageError } from '../../src/errors.ts';
 import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
 import { TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
-
-const installedOverride = vi.hoisted(() => ({
-  value: null as boolean | null,
-}));
-
-// ESM imports cannot be monkeypatched, so the module is wrapped instead: the
-// real check runs unless a test installs an override.
-vi.mock('../../src/sql/extension-utils.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/sql/extension-utils.ts')>();
-  return {
-    ...actual,
-    isPgStatStatementsInstalled: (...args: Parameters<typeof actual.isPgStatStatementsInstalled>) =>
-      installedOverride.value === null
-        ? actual.isPgStatStatementsInstalled(...args)
-        : Promise.resolve(installedOverride.value),
-  };
-});
 
 /** Set up test data with sample queries to analyze. */
 async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
@@ -102,12 +86,10 @@ describeWithPostgres('top queries with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(() => {
-    installedOverride.value = null;
     sqlDriver = new SqlDriver({ engineUrl: postgres.connectionString() });
   });
 
   afterEach(async () => {
-    installedOverride.value = null;
     await sqlDriver.conn?.close();
   });
 
@@ -148,14 +130,12 @@ describeWithPostgres('top queries with a real database', (postgres) => {
     }
   });
 
-  test('returns installation instructions when pg_stat_statements is not installed', async () => {
-    const calc = new TopQueriesCalc(sqlDriver);
-    installedOverride.value = false;
+  test('rejects with installation instructions when pg_stat_statements is not installed', async () => {
+    await queryRows(sqlDriver, 'DROP EXTENSION IF EXISTS pg_stat_statements');
 
-    const result = await calc.getTopQueriesByTime();
+    const result = new TopQueriesCalc(sqlDriver).getTopQueriesByTime();
 
-    // Check that we get installation instructions
-    expect(result).toContain('not currently installed');
-    expect(result).toContain('CREATE EXTENSION');
+    await expect(result).rejects.toBeInstanceOf(UsageError);
+    await expect(result).rejects.toThrow('CREATE EXTENSION pg_stat_statements');
   });
 });

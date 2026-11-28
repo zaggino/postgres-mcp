@@ -9,7 +9,7 @@ import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
 import * as cell from '../sql/cells.ts';
-import { checkHypopgInstallationStatus, isPgStatStatementsInstalled } from '../sql/extension-utils.ts';
+import { requireHypopg, requirePgStatStatements } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -294,7 +294,10 @@ export abstract class IndexTuningBase implements DtaTracer {
       session.workload = this.getWorkloadFromFile(sqlFile);
     } else {
       session.workloadSource = 'query_store';
-      await this.requirePgStatStatements();
+      await requirePgStatStatements(
+        this.sqlDriver,
+        'read the workload from query statistics (or pass the queries to analyze_query_indexes instead)'
+      );
       session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
     }
 
@@ -326,11 +329,7 @@ export abstract class IndexTuningBase implements DtaTracer {
   /** Throws, with what to do about it, when the database cannot be tuned: hypopg missing or no table analyzed. */
   async runPrechecks(): Promise<void> {
     // Pre-check 1: HypoPG
-    const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(this.sqlDriver);
-
-    if (!isHypopgInstalled) {
-      throw new UsageError(hypopgMessage);
-    }
+    await requireHypopg(this.sqlDriver);
 
     // Pre-check 2: ANALYZE has been run at least once
     const result = await queryRows(
@@ -342,17 +341,6 @@ export abstract class IndexTuningBase implements DtaTracer {
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
           "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
           'Without up-to-date statistics, the index recommendations may be inaccurate.'
-      );
-    }
-  }
-
-  /** Throws when the workload cannot be read because pg_stat_statements is not installed. */
-  async requirePgStatStatements(): Promise<void> {
-    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
-      throw new UsageError(
-        'The pg_stat_statements extension is required to read the workload, but it is not installed in this ' +
-          "database. Run 'CREATE EXTENSION pg_stat_statements;' (it must also be in shared_preload_libraries), " +
-          'or pass the queries to analyze_query_indexes instead.'
       );
     }
   }

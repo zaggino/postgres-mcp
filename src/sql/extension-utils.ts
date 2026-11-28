@@ -1,3 +1,4 @@
+import { UsageError } from '../errors.ts';
 import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver, queryRows } from './safe-sql.ts';
@@ -149,67 +150,50 @@ export async function checkExtension(
 
 export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
-export async function isPgStatStatementsInstalled(sqlDriver: SqlExecutor): Promise<boolean> {
-  return (await checkExtension(sqlDriver, PG_STAT_STATEMENTS, false)).isInstalled;
+/** Throws a UsageError with install instructions when pg_stat_statements is not installed in the database. */
+export async function requirePgStatStatements(sqlDriver: SqlExecutor, purpose: string): Promise<void> {
+  if ((await checkExtension(sqlDriver, PG_STAT_STATEMENTS, false)).isInstalled) {
+    return;
+  }
+  throw new UsageError(
+    `The pg_stat_statements extension is required to ${purpose}, but it is not installed in this database.\n\n` +
+      'You can install it by running: `CREATE EXTENSION pg_stat_statements;` ' +
+      '(the server must also load it through `shared_preload_libraries`).\n\n' +
+      '**What does it do?** It records statistics (like execution time, number of calls, rows returned) for ' +
+      'every query executed against the database.\n\n' +
+      "**Is it safe?** Installing 'pg_stat_statements' is generally safe and a standard practice for performance " +
+      'monitoring. It adds overhead by tracking statistics, but this is usually negligible unless under extreme load.'
+  );
 }
 
-/** Returns `[isInstalled, message]` with installation instructions for HypoPG. */
-export async function checkHypopgInstallationStatus(
-  sqlDriver: SqlExecutor,
-  messageType: MessageType = 'markdown'
-): Promise<[boolean, string]> {
+/** Throws a UsageError with install instructions when HypoPG is not installed in the database. */
+export async function requireHypopg(sqlDriver: SqlExecutor): Promise<void> {
   const status = await checkExtension(sqlDriver, 'hypopg', false);
-
   if (status.isInstalled) {
-    return messageType === 'markdown'
-      ? [true, 'The **hypopg** extension is already installed.']
-      : [true, 'The hypopg extension is already installed.'];
+    return;
   }
 
   if (status.isAvailable) {
-    if (messageType === 'markdown') {
-      return [
-        false,
-        'The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed.\n\n' +
-          "You can ask me to install 'hypopg' using the 'execute_sql' tool.\n\n" +
-          "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. " +
-          'It adds a virtual layer that simulates indexes without actually creating them in the database. ' +
-          'It requires database privileges (often superuser) to install.\n\n' +
-          '**What does it do?** It allows you to create virtual indexes and test how they would affect query performance ' +
-          'without the overhead of actually creating the indexes.\n\n' +
-          "**How to undo?** If you later decide to remove it, you can ask me to run 'DROP EXTENSION hypopg;'.",
-      ];
-    }
-    return [
-      false,
-      'The hypopg extension is required to test hypothetical indexes, but it is not currently installed.\n' +
-        "You can ask me to install it using the 'execute_sql' tool.\n" +
-        'It is generally safe to install and allows testing indexes without creating them.',
-    ];
+    throw new UsageError(
+      'The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed.\n\n' +
+        "You can ask me to install 'hypopg' using the 'execute_sql' tool.\n\n" +
+        "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. " +
+        'It adds a virtual layer that simulates indexes without actually creating them in the database. ' +
+        'It requires database privileges (often superuser) to install.\n\n' +
+        '**What does it do?** It allows you to create virtual indexes and test how they would affect query performance ' +
+        'without the overhead of actually creating the indexes.\n\n' +
+        "**How to undo?** If you later decide to remove it, you can ask me to run 'DROP EXTENSION hypopg;'."
+    );
   }
 
   const majorVersion = String(await getPostgresVersion(sqlDriver));
-  // Extension is not available
-  if (messageType === 'markdown') {
-    return [
-      false,
-      'The **hypopg** extension is not available on this PostgreSQL server.\n\n' +
-        'To install HypoPG:\n' +
-        `1. For Debian/Ubuntu: \`sudo apt-get install postgresql-${majorVersion}-hypopg\`\n` +
-        `2. For RHEL/CentOS: \`sudo yum install postgresql${majorVersion}-hypopg\`\n` +
-        '3. For MacOS with Homebrew: `brew install hypopg`\n' +
-        '4. For other systems, build from source: `git clone https://github.com/HypoPG/hypopg`\n\n' +
-        'After installing the extension packages, connect to your database and run: `CREATE EXTENSION hypopg;`',
-    ];
-  }
-  return [
-    false,
-    'The hypopg extension is not available on this PostgreSQL server.\n' +
+  throw new UsageError(
+    'The **hypopg** extension is not available on this PostgreSQL server.\n\n' +
       'To install HypoPG:\n' +
-      `1. For Debian/Ubuntu: sudo apt-get install postgresql-${majorVersion}-hypopg\n` +
-      `2. For RHEL/CentOS: sudo yum install postgresql${majorVersion}-hypopg\n` +
-      '3. For MacOS with Homebrew: brew install hypopg\n' +
-      '4. For other systems, build from source: git clone https://github.com/HypoPG/hypopg\n' +
-      'After installing the extension packages, connect to your database and run: CREATE EXTENSION hypopg;',
-  ];
+      `1. For Debian/Ubuntu: \`sudo apt-get install postgresql-${majorVersion}-hypopg\`\n` +
+      `2. For RHEL/CentOS: \`sudo yum install postgresql${majorVersion}-hypopg\`\n` +
+      '3. For MacOS with Homebrew: `brew install hypopg`\n' +
+      '4. For other systems, build from source: `git clone https://github.com/HypoPG/hypopg`\n\n' +
+      'After installing the extension packages, connect to your database and run: `CREATE EXTENSION hypopg;`'
+  );
 }

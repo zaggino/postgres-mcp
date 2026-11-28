@@ -1,23 +1,8 @@
 import { toJson } from '../json.ts';
-import { logLine } from '../log.ts';
-import { PG_STAT_STATEMENTS, getPostgresVersion, isPgStatStatementsInstalled } from '../sql/extension-utils.ts';
+import { getPostgresVersion, requirePgStatStatements } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
-
-const INSTALL_PG_STAT_STATEMENTS_MESSAGE =
-  'The pg_stat_statements extension is required to ' +
-  'report slow queries, but it is not currently ' +
-  'installed.\n\n' +
-  'You can install it by running: ' +
-  '`CREATE EXTENSION pg_stat_statements;`\n\n' +
-  '**What does it do?** It records statistics (like ' +
-  'execution time, number of calls, rows returned) for ' +
-  'every query executed against the database.\n\n' +
-  "**Is it safe?** Installing 'pg_stat_statements' is " +
-  'generally safe and a standard practice for performance ' +
-  'monitoring. It adds overhead by tracking statistics, ' +
-  'but this is usually negligible unless under extreme load.';
 
 /** Column names for the pg_stat_statements view, which vary by PostgreSQL version. */
 export interface PgStatStatementsColumns {
@@ -72,11 +57,7 @@ export class TopQueriesCalc {
    * execution time or by `"mean"` execution time per call (default).
    */
   async getTopQueriesByTime(limit = 10, sortBy: 'total' | 'mean' = 'mean'): Promise<string> {
-    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
-      logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
-      // Return installation instructions if the extension is not installed
-      return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
-    }
+    await requirePgStatStatements(this.sqlDriver, 'report slow queries');
 
     // Get version-appropriate column names
     const pgVersion = await getPostgresVersion(this.sqlDriver);
@@ -109,11 +90,7 @@ export class TopQueriesCalc {
    * `fracThreshold` filters queries by their fraction of total usage.
    */
   async getTopResourceQueries(fracThreshold = 0.05): Promise<string> {
-    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
-      logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
-      // Return installation instructions if the extension is not installed
-      return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
-    }
+    await requirePgStatStatements(this.sqlDriver, 'report slow queries');
 
     // Get version-appropriate column names
     const pgVersion = await getPostgresVersion(this.sqlDriver);

@@ -6,8 +6,7 @@ import { TopQueriesCalc } from '../../../src/top-queries/top-queries-calc.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const extensionUtils = vi.hoisted(() => ({
-  PG_STAT_STATEMENTS: 'pg_stat_statements',
-  isPgStatStatementsInstalled: vi.fn(),
+  requirePgStatStatements: vi.fn(),
   getPostgresVersion: vi.fn(),
 }));
 
@@ -63,7 +62,7 @@ function executedQuery(executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSe
 describe(TopQueriesCalc, () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    extensionUtils.isPgStatStatementsInstalled.mockResolvedValue(true);
+    extensionUtils.requirePgStatStatements.mockResolvedValue(undefined);
   });
 
   it('sorts by total_time on PostgreSQL 12 when sorting by total', async () => {
@@ -130,17 +129,6 @@ describe(TopQueriesCalc, () => {
 
     expect(result).toContain('"calls":9007199254740993');
     expect(result).toContain('"mean_exec_time":"NaN"');
-  });
-
-  it('returns installation instructions when the extension is not installed', async () => {
-    const { driver, executeResultSet } = createDriver(13);
-    extensionUtils.isPgStatStatementsInstalled.mockResolvedValue(false);
-
-    const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
-
-    expect(result).toContain('extension is required to report');
-    expect(result).toContain('CREATE EXTENSION');
-    expect(executeResultSet).not.toHaveBeenCalled();
   });
 
   it('aliases the PostgreSQL 12 columns and zeroes wal_bytes in resource queries', async () => {

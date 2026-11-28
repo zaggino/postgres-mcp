@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { SequenceHealthCalc } from '../../../src/database-health/sequence-health-calc.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 describe('SequenceHealthCalc.parseSequenceName', () => {
   it('parses a simple unquoted sequence name', () => {
@@ -51,5 +52,28 @@ describe('SequenceHealthCalc.parseSequenceName', () => {
     const [schema, name] = SequenceHealthCalc.parseSequenceName('nextval(\'"my.seq"\'::regclass)');
     expect(schema).toBe('public');
     expect(name).toBe('my.seq');
+  });
+});
+
+describe('SequenceHealthCalc.sequenceDangerCheck', () => {
+  it('measures a smallint column against the smallint maximum', async () => {
+    const calc = new SequenceHealthCalc(
+      fakeExecutor((query) => {
+        if (query.includes('has_sequence_privilege')) {
+          return [{ readable: true, last_value: 32_000 }];
+        }
+        return [
+          {
+            table_schema: 'public',
+            table: 't',
+            column: 'id',
+            column_type: 'smallint',
+            default_value: "nextval('t_id_seq'::regclass)",
+          },
+        ];
+      })
+    );
+
+    await expect(calc.sequenceDangerCheck()).resolves.toContain('(32,000 of 32,767, 767 remaining)');
   });
 });

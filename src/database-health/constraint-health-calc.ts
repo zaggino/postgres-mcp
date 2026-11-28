@@ -1,4 +1,5 @@
-import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { nullableText, text } from '../sql/cells.ts';
+import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
 
 interface ConstraintMetrics {
   name: string;
@@ -8,9 +9,14 @@ interface ConstraintMetrics {
   table: string;
 }
 
-function nullableText(value: unknown): string | null {
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  return value === null || value === undefined ? null : String(value);
+function toConstraintMetrics(row: Row): ConstraintMetrics {
+  return {
+    schema: text(row, 'schema'),
+    table: text(row, 'table'),
+    name: text(row, 'name'),
+    referencedSchema: nullableText(row, 'referenced_schema'),
+    referencedTable: nullableText(row, 'referenced_table'),
+  };
 }
 
 export class ConstraintHealthCalc {
@@ -64,12 +70,6 @@ export class ConstraintHealthCalc {
                 con.convalidated = 'f'
         `);
 
-    return results.map((row) => ({
-      schema: String(row.schema),
-      table: String(row.table),
-      name: String(row.name),
-      referencedSchema: nullableText(row.referenced_schema),
-      referencedTable: nullableText(row.referenced_table),
-    }));
+    return results.map(toConstraintMetrics);
   }
 }

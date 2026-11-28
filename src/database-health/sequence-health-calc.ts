@@ -1,3 +1,4 @@
+import { bigint, boolean, text } from '../sql/cells.ts';
 import { identifier } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
@@ -14,18 +15,17 @@ interface SequenceMetrics {
   table: string;
 }
 
+const SMALLINT_MAX = 32_767n;
 const INTEGER_MAX = 2_147_483_647n;
 const BIGINT_MAX = 9_223_372_036_854_775_807n;
 const NEXTVAL_REFERENCE = /nextval\(\(?'(?<reference>[^']+)'/u;
 
-function toBigInt(value: unknown): bigint {
-  if (typeof value === 'bigint') {
-    return value;
+/** The largest value a sequence feeding a column of `columnType` can reach. */
+function maxValueFor(columnType: string): bigint {
+  if (columnType === 'smallint') {
+    return SMALLINT_MAX;
   }
-  if (typeof value === 'number' || typeof value === 'string') {
-    return BigInt(value);
-  }
-  throw new TypeError(`Unexpected sequence value: ${String(value)}`);
+  return columnType === 'integer' ? INTEGER_MAX : BIGINT_MAX;
 }
 
 /** What percentage of the sequence has been used. */
@@ -130,14 +130,14 @@ export class SequenceHealthCalc {
     const sequenceMetrics: SequenceMetrics[] = [];
     for (const seq of sequences) {
       // Parse the sequence name from default value
-      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(String(seq.default_value));
+      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(text(seq, 'default_value'));
       if (!sequence) {
         continue;
       }
 
       // Determine max value based on column type
-      const columnType = String(seq.column_type);
-      const maxValue = columnType === 'integer' ? INTEGER_MAX : BIGINT_MAX;
+      const columnType = text(seq, 'column_type');
+      const maxValue = maxValueFor(columnType);
 
       // Get sequence attributes
       const attrs = await SafeSqlDriver.executeParamQuery(
@@ -156,16 +156,16 @@ export class SequenceHealthCalc {
         continue;
       }
 
-      const lastValue = toBigInt(attr.last_value);
+      const lastValue = bigint(attr, 'last_value');
       sequenceMetrics.push({
         schema,
-        table: String(seq.table),
-        column: String(seq.column),
+        table: text(seq, 'table'),
+        column: text(seq, 'column'),
         sequence,
         columnType,
         lastValue,
         maxValue,
-        readable: Boolean(attr.readable),
+        readable: boolean(attr, 'readable'),
         isHealthy: Number(lastValue) / Number(maxValue) <= this.threshold,
       });
     }

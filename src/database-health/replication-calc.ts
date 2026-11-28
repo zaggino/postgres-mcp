@@ -1,8 +1,9 @@
-import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { boolean, nullableNumeric, nullableText, text } from '../sql/cells.ts';
+import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
 
 interface ReplicationSlot {
   active: boolean;
-  database: unknown;
+  database: string | null;
   slotName: string;
 }
 
@@ -16,10 +17,16 @@ interface ReplicationMetrics {
 type Feature = 'replication_lag' | 'replication_slots' | 'replicating';
 
 function describeSlot(slot: ReplicationSlot): string {
-  // Physical slots have no database; it is reported as "None".
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  const database = slot.database === null || slot.database === undefined ? 'None' : String(slot.database);
-  return `- ${slot.slotName} (database: ${database})`;
+  // Physical slots have no database, so only a logical slot names one.
+  return slot.database === null ? `- ${slot.slotName}` : `- ${slot.slotName} (database: ${slot.database})`;
+}
+
+function toReplicationSlot(row: Row): ReplicationSlot {
+  return {
+    slotName: text(row, 'slot_name'),
+    database: nullableText(row, 'database'),
+    active: boolean(row, 'active'),
+  };
 }
 
 export class ReplicationCalc {
@@ -92,7 +99,8 @@ export class ReplicationCalc {
 
   private async isReplica(): Promise<boolean> {
     const result = await this.sqlDriver.executeQuery('SELECT pg_is_in_recovery()');
-    return Boolean(result[0]?.pg_is_in_recovery);
+    const [row] = result;
+    return row ? boolean(row, 'pg_is_in_recovery') : false;
   }
 
   private async getReplicationLag(): Promise<number | null> {
@@ -106,8 +114,9 @@ export class ReplicationCalc {
         ? 'pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()'
         : 'pg_last_xlog_receive_location() = pg_last_xlog_replay_location()';
 
+    let result: Row[];
     try {
-      const result = await this.sqlDriver.executeQuery(`
+      result = await this.sqlDriver.executeQuery(`
                 SELECT
                     CASE
                         WHEN NOT pg_is_in_recovery() OR ${lagCondition} THEN 0
@@ -115,20 +124,14 @@ export class ReplicationCalc {
                     END
                 AS replication_lag
             `);
-      const [first] = result;
-      if (!first) {
-        return null;
-      }
-      const lag = first.replication_lag;
-      if (lag === null || lag === undefined) {
-        // A NULL lag (nothing replayed yet) disables the feature, as a failed query does.
-        throw new TypeError('replication_lag is NULL');
-      }
-      return Number(lag);
     } catch {
+      // Only a failing query marks the feature unsupported.
       this.featureSupport.set('replication_lag', false);
       return null;
     }
+    const [first] = result;
+    // A NULL lag (nothing replayed yet) is unknown for this call only; a later call may have a lag.
+    return first ? nullableNumeric(first, 'replication_lag') : null;
   }
 
   private async getReplicationSlots(): Promise<ReplicationSlot[]> {
@@ -136,23 +139,20 @@ export class ReplicationCalc {
       return [];
     }
 
+    let result: Row[];
     try {
-      const result = await this.sqlDriver.executeQuery(`
+      result = await this.sqlDriver.executeQuery(`
                 SELECT
                     slot_name,
                     database,
                     active
                 FROM pg_replication_slots
             `);
-      return result.map((row) => ({
-        slotName: String(row.slot_name),
-        database: row.database,
-        active: Boolean(row.active),
-      }));
     } catch {
       this.featureSupport.set('replication_slots', false);
       return [];
     }
+    return result.map(toReplicationSlot);
   }
 
   private async isReplicating(): Promise<boolean> {
@@ -174,7 +174,7 @@ export class ReplicationCalc {
     if (this.serverVersion === null) {
       const result = await this.sqlDriver.executeQuery('SHOW server_version_num');
       const [first] = result;
-      this.serverVersion = first ? Number.parseInt(String(first.server_version_num), 10) : 0;
+      this.serverVersion = first ? Number.parseInt(text(first, 'server_version_num'), 10) : 0;
     }
     return this.serverVersion;
   }

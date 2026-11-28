@@ -145,5 +145,23 @@ describeWithPostgres('database health with a real database', (postgres) => {
     expect(healthReport).toContain('Constraint health:');
     // Should detect duplicate index
     expect(healthReport).toContain('idx_orders_customer_dup');
+    // Each check reports a failure on its own line; against a real database none should fail.
+    expect(healthReport).not.toContain(': Error:');
+  });
+
+  test('reports a smallint sequence near its maximum next to a never-used sequence', async () => {
+    try {
+      await sqlDriver.executeQuery('CREATE TABLE test_small_ids (id SMALLSERIAL PRIMARY KEY)');
+      await sqlDriver.executeQuery('CREATE TABLE test_unused_ids (id SERIAL PRIMARY KEY)');
+      await sqlDriver.executeQuery("SELECT setval('test_small_ids_id_seq', 32000)");
+
+      const healthReport = await new DatabaseHealthTool(sqlDriver).health('sequence');
+
+      expect(healthReport).toContain("Sequence 'public.test_small_ids_id_seq' used for test_small_ids.id");
+      expect(healthReport).not.toContain('Error');
+    } finally {
+      await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_small_ids');
+      await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_unused_ids');
+    }
   });
 });

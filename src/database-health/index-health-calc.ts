@@ -1,4 +1,5 @@
-import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { boolean, integer, nullableText, numeric, text } from '../sql/cells.ts';
+import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 interface IndexInfo {
@@ -44,11 +45,6 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
-function nullableText(value: unknown): string | null {
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  return value === null || value === undefined ? null : String(value);
-}
-
 /** Whether the columns of an index start with all of `columns`. */
 function indexCovers(indexedColumns: readonly string[], columns: readonly string[]): boolean {
   return sameList(indexedColumns.slice(0, columns.length), columns);
@@ -70,8 +66,28 @@ function coversAsDuplicate(covering: IndexInfo, index: IndexInfo): boolean {
   );
 }
 
-function toMb(bytes: unknown): number {
-  return Math.trunc(Number(bytes)) / BYTES_PER_MB;
+function bytesToMb(bytes: number): number {
+  return Math.trunc(bytes) / BYTES_PER_MB;
+}
+
+function toIndexInfo(row: Row): IndexInfo {
+  // Unquote column names
+  const columns = text(row, 'columns')
+    .replace(') WHERE (', ' WHERE ')
+    .split(', ')
+    .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
+  return {
+    schema: text(row, 'schema'),
+    table: text(row, 'table'),
+    name: text(row, 'name'),
+    columns,
+    using: text(row, 'using'),
+    unique: boolean(row, 'unique'),
+    primary: boolean(row, 'primary'),
+    valid: boolean(row, 'valid'),
+    indexprs: nullableText(row, 'indexprs'),
+    indpred: nullableText(row, 'indpred'),
+  };
 }
 
 export class IndexHealthCalc {
@@ -286,10 +302,10 @@ export class IndexHealthCalc {
 
     const result = ['Bloated indexes found:'];
     for (const row of bloatedIndexes) {
-      const bloatMb = toMb(row.bloat_bytes);
-      const totalMb = toMb(row.index_bytes);
+      const bloatMb = bytesToMb(numeric(row, 'bloat_bytes'));
+      const totalMb = bytesToMb(numeric(row, 'index_bytes'));
       result.push(
-        `Index '${String(row.index)}' on table '${String(row.table)}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
+        `Index '${text(row, 'index')}' on table '${text(row, 'table')}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
       );
     }
 
@@ -329,25 +345,7 @@ export class IndexHealthCalc {
                 1, 2
         `);
 
-    const indexes = results.map((row): IndexInfo => {
-      // Unquote column names
-      const columns = String(row.columns)
-        .replace(') WHERE (', ' WHERE ')
-        .split(', ')
-        .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
-      return {
-        schema: String(row.schema),
-        table: String(row.table),
-        name: String(row.name),
-        columns,
-        using: String(row.using),
-        unique: Boolean(row.unique),
-        primary: Boolean(row.primary),
-        valid: Boolean(row.valid),
-        indexprs: nullableText(row.indexprs),
-        indpred: nullableText(row.indpred),
-      };
-    });
+    const indexes = results.map(toIndexInfo);
 
     this.cachedIndexes = indexes;
     return indexes;
@@ -386,12 +384,12 @@ export class IndexHealthCalc {
 
     const result = ['Rarely used indexes found:'];
     for (const row of unused) {
-      if (row.primary) {
+      if (boolean(row, 'primary')) {
         continue;
       }
-      const sizeMb = toMb(row.size_bytes);
+      const sizeMb = bytesToMb(integer(row, 'size_bytes'));
       result.push(
-        `Index '${String(row.index)}' on table '${String(row.table)}' has only been scanned ${String(row.index_scans)} times and uses ${sizeMb.toFixed(1)}MB of space`
+        `Index '${text(row, 'index')}' on table '${text(row, 'table')}' has only been scanned ${integer(row, 'index_scans')} times and uses ${sizeMb.toFixed(1)}MB of space`
       );
     }
 

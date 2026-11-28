@@ -120,3 +120,32 @@ test('an index that takes the cost to zero has no improvement multiple, the same
   ];
   expect(multiples).toEqual([null, null, null, null]);
 });
+
+test('a zero base cost has no improvement multiple', async () => {
+  const { result } = await presentationWithRecommendation(0, 25, null).analyzeQueries(['SELECT 1'], 10_000);
+
+  expect(result.summary).toMatchObject({ base_cost: 0, new_cost: 25, improvement_multiple: null });
+});
+
+test('a recommendation without a problem reason has no warning, and another reason gets the generic warning', async () => {
+  const plain = await presentationWithRecommendation(100, 25, null).analyzeQueries(['SELECT 1'], 10_000);
+  const wide = await presentationWithRecommendation(100, 25, 'wide').analyzeQueries(['SELECT 1'], 10_000);
+
+  expect(plain.result.recommendations[0]).not.toHaveProperty('warning');
+  expect(wide.result.recommendations[0]?.warning).toBe(
+    'This index is potentially problematic because it includes a wide column.'
+  );
+});
+
+test('a plan that cannot be read is reported as null plan text', async () => {
+  const unreadable = presentationWithRecommendation(100, 25, null);
+  vi.spyOn(unreadable.indexTuning, 'getExplainPlanWithIndexes').mockResolvedValue({});
+
+  const { result } = await unreadable.analyzeQueries(['SELECT 1'], 10_000);
+
+  expect(advisorResultSchema.parse(result).query_impact[0]).toMatchObject({
+    before_explain_plan: null,
+    after_explain_plan: null,
+    explain_plan_diff: null,
+  });
+});

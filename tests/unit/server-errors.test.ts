@@ -1,7 +1,9 @@
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import pg from 'pg';
 import { expect, it as test, vi } from 'vitest';
 
 import { DatabaseRegistry } from '../../src/database-registry.ts';
+import { isJsonObject } from '../../src/json.ts';
 import { createServer } from '../../src/server.ts';
 import { AccessMode } from '../../src/sql/driver-factory.ts';
 import type { QueryHandler } from '../support/fake-pool.ts';
@@ -198,4 +200,81 @@ test('analyze_query_indexes with nothing to recommend returns the empty structur
     recommendations: [],
     query_impact: [],
   });
+});
+
+test.each([
+  ['an empty list', [], 'No queries provided for analysis'],
+  ['more than 10 queries', Array.from({ length: 11 }, () => 'SELECT 1'), 'up to 10 queries'],
+])(
+  'analyze_query_indexes with %s is reported with isError and not logged as a server error',
+  async (_case, queries, message) => {
+    const { result, logged } = await callTool('analyze_query_indexes', { queries }, withExtensions('hypopg'));
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain(message);
+    expect(logged.filter((line) => line.startsWith('ERROR'))).toEqual([]);
+  }
+);
+
+/** A database where an index on users.name halves the cost of every plan. */
+function withRecommendableIndex(): QueryHandler {
+  const fallback = withExtensions('hypopg');
+  return (query) => {
+    const { text } = query;
+    if (text.includes('EXPLAIN')) {
+      const cost = text.includes('COSTS TRUE') ? 50 : 100;
+      const plan = { 'Node Type': 'Seq Scan', 'Startup Cost': 0, 'Total Cost': cost, 'Plan Rows': 10, 'Plan Width': 4 };
+      return [rowsResult([{ 'QUERY PLAN': [{ Plan: plan }] }])];
+    }
+    if (text.includes('FROM information_schema.columns c')) {
+      return [
+        rowsResult([
+          {
+            table_name: 'users',
+            column_name: 'name',
+            data_type: 'integer',
+            character_maximum_length: null,
+            avg_width: 4,
+            potential_long_text: false,
+          },
+        ]),
+      ];
+    }
+    if (text.includes('pg_stats')) {
+      return [rowsResult([{ total_width: 4, total_distinct: 100 }])];
+    }
+    if (text.includes('pg_total_relation_size')) {
+      return [rowsResult([{ rel_size: 100_000 }])];
+    }
+    return fallback(query);
+  };
+}
+
+test('analyze_query_indexes returns a recommendation as structuredContent and the same result as JSON text', async () => {
+  vi.stubEnv('POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE', 'true');
+  try {
+    const { result } = await callTool(
+      'analyze_query_indexes',
+      { queries: ["SELECT * FROM users WHERE name = 'x'"] },
+      withRecommendableIndex()
+    );
+
+    const { content, structuredContent, isError } = CallToolResultSchema.parse(result);
+    const [item] = content;
+    const fromText: unknown = JSON.parse(item?.type === 'text' ? item.text : '');
+    if (!isJsonObject(fromText)) {
+      throw new Error('Expected a JSON object');
+    }
+    const { _langfuse_trace: trace, ...textResult } = fromText;
+    expect(isError).toBeUndefined();
+    expect(structuredContent).toMatchObject({
+      summary: { total_recommendations: 1, base_cost: 100, new_cost: 50, improvement_multiple: 2 },
+      recommendations: [{ index_target_table: 'users', index_target_columns: ['name'] }],
+    });
+    expect(structuredContent).not.toHaveProperty('_langfuse_trace');
+    expect(textResult).toEqual(structuredContent);
+    expect(Array.isArray(trace)).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

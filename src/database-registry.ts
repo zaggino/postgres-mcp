@@ -41,7 +41,7 @@ export type DatabaseListing =
   | {
       database: string;
       state: 'open' | 'closed' | 'error';
-      /** Seconds until an open pool closes; absent while a call is running. */
+      /** Seconds until an open pool closes; absent while a call is running or when pools never close. */
       idle_seconds_left?: number;
       error?: string;
       /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
@@ -404,11 +404,11 @@ export class DatabaseRegistry {
         if (state === 'closed' && !lastError) {
           return name;
         }
-        const secondsLeft = state === 'open' ? pool?.secondsLeft : null;
+        const secondsLeft = pool?.isOpen ? pool.secondsLeft : null;
         return {
           database: name,
           state,
-          ...(typeof secondsLeft === 'number' && { idle_seconds_left: secondsLeft }),
+          ...(secondsLeft !== null && { idle_seconds_left: secondsLeft }),
           ...('error' in uri && { error: uri.error }),
           ...(lastError && { last_error: lastError }),
         };

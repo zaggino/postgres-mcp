@@ -379,6 +379,23 @@ test('a pool whose last query failed still lists as open while its idle timer ru
   expect(cli?.[0]).toMatchObject({ database: 'app', state: 'open', idle_seconds_left: 300 });
 });
 
+test('an open pool with a call running lists without idle seconds', async () => {
+  const { poolFactory } = setup();
+  const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
+  const { promise: gate, resolve: release } = Promise.withResolvers<undefined>();
+  const running = reg.use('app', async (driver) => {
+    await query(driver);
+    await gate;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+
+  const { cli } = await reg.list();
+
+  expect(cli).toEqual([{ database: 'app', state: 'open' }]);
+  release(undefined);
+  await running;
+});
+
 test('a pool that could not connect lists as closed with its error and no idle seconds', async () => {
   const { poolFactory } = setup(() => {
     throw new Error('connection refused');

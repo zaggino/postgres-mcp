@@ -165,7 +165,8 @@ export class ReplicationCalc {
   /**
    * Run an optional probe. Returns null when the server rejects the query (a missing view or privilege, an older
    * server) or restricted mode refuses it, so the feature counts as unsupported; any other failure, such as a
-   * timeout or a cancellation, propagates.
+   * timeout or a cancellation, propagates. Restricted mode refuses the WAL functions of the lag query, so lag is
+   * never reported there (see "Replication health check returns nothing in restricted mode" in docs/TODO.md).
    */
   async #tryQuery(sql: string): Promise<Row[] | null> {
     try {

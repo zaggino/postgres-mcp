@@ -4,8 +4,9 @@ import type { Row } from './sql-driver.ts';
  * Strict readers for one column of a result row. A reader narrows the value pg's type parsers produced (see
  * `customTypes` in `sql-driver.ts`) and throws a CellError naming the column on a missing column or a value of an
  * unexpected kind, so a misspelt column or an unexpected NULL fails loudly instead of becoming "undefined", NaN or
- * false. `single` throws a CellError for a wrong row count, so every reader failure is a CellError. The only conversions are `numeric`, which parses decimal text because pg leaves numeric as text, and
- * `bigint`, which widens a number.
+ * false. The only conversions are `numeric`, which parses decimal text because pg leaves numeric as text, and
+ * `bigint`, which widens a number. `single` also throws a CellError, for a wrong row count, so every failure in this
+ * module is one.
  */
 
 export class CellError extends Error {

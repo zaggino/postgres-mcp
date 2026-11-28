@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { paramSqlToQuery } from '../../../src/sql/literal.ts';
-import { SafeSqlDriver, queryRows } from '../../../src/sql/safe-sql.ts';
+import { QueryValidationError, SafeSqlDriver, queryRows } from '../../../src/sql/safe-sql.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const PREFIX = '/* postgres-mcp */ ';
@@ -221,6 +221,7 @@ describe(SafeSqlDriver, () => {
       'SELECT * FROM users WHERE (age > 21 AND active = true;',
     ];
     await expect(blockedWith('Failed to parse SQL statement', ...queries)).resolves.toBe(true);
+    await expect(queryRows(setup().safeDriver, 'SELECT * FRMO users;')).rejects.toBeInstanceOf(QueryValidationError);
   });
 
   it('blocks CREATE INDEX statements', async () => {

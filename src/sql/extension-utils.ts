@@ -30,7 +30,6 @@ export function resetPostgresVersionCache(): void {
 
 /**
  * Get the major PostgreSQL version as an integer (e.g. 16 for PostgreSQL 16.2).
- * Returns 0 if the version cannot be determined.
  */
 export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number> {
   const cached = versions.get(cacheKey(sqlDriver));
@@ -68,7 +67,7 @@ export async function checkPostgresVersionRequirement(
 
   return [
     false,
-    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion || 'unknown'}.`,
+    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion}.`,
   ];
 }
 
@@ -187,8 +186,7 @@ export async function checkHypopgInstallationStatus(
     ];
   }
 
-  const pgVersion = await getPostgresVersion(sqlDriver);
-  const majorVersion = pgVersion > 0 ? `${pgVersion}` : 'XX';
+  const majorVersion = String(await getPostgresVersion(sqlDriver));
   // Extension is not available
   if (messageType === 'markdown') {
     return [

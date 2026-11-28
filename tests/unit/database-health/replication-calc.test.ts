@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ReplicationCalc } from '../../../src/database-health/replication-calc.ts';
-import { QueryCancelledError } from '../../../src/sql/sql-driver.ts';
+import { QueryCancelledError, QueryTimeoutError } from '../../../src/sql/sql-driver.ts';
 import type { Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 import { databaseError } from '../../support/fake-pool.ts';
@@ -70,5 +70,11 @@ describe('replicationHealthCheck when the lag query fails', () => {
     const calc = new ReplicationCalc(replicaExecutor({ lagError: new QueryCancelledError() }));
 
     await expect(calc.replicationHealthCheck()).rejects.toThrow('Query cancelled');
+  });
+
+  it('rejects when the probe timed out instead of reporting the feature as unavailable', async () => {
+    const calc = new ReplicationCalc(replicaExecutor({ lagError: new QueryTimeoutError(30) }));
+
+    await expect(calc.replicationHealthCheck()).rejects.toBeInstanceOf(QueryTimeoutError);
   });
 });

@@ -16,7 +16,7 @@ Its agent instructions require the file itself to be updated in the same change 
 
 ## 2026-11-26 · Minor · Bug · Replication health check returns nothing in restricted mode
 
-`ReplicationCalc` in `src/database-health/replication-calc.ts` uses WAL functions such as `pg_last_wal_receive_lsn()` that are not in the function allowlist in `src/sql/allowlists.ts`. In restricted mode the lag query is rejected and the check reports nothing.
+`ReplicationCalc` in `src/database-health/replication-calc.ts` uses WAL functions such as `pg_last_wal_receive_lsn()` that are not in the function allowlist in `src/sql/allowlists.ts`. In restricted mode the lag query is rejected and the check reports nothing. `ReplicationCalc.#tryQuery` treats that `QueryValidationError` as "not available"; once the allowlist accepts the lag query, drop the `QueryValidationError` case there, so a later allowlist regression in internal SQL is reported instead of hidden.
 
 ## 2026-11-26 · Minor · Bug · Bind-parameter collector has a dead `AEXPR_OP` branch and may miss `IN (SELECT ...)`
 

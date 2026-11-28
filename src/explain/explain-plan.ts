@@ -52,18 +52,11 @@ function isTruthy(value: unknown): boolean {
   return Boolean(value);
 }
 
-function toColumnList(columns: unknown): unknown[] {
-  if (Array.isArray(columns)) {
-    return columns;
-  }
-  if (typeof columns === 'string') {
-    // oxlint-disable-next-line typescript/no-misused-spread -- mirrors upstream's list(str), see docs/TODO.md
-    return [...columns];
-  }
-  if (isJsonObject(columns)) {
-    return Object.keys(columns);
-  }
-  return [columns];
+/** A hypothetical index to simulate, as validated by the `explain_query` input schema. */
+export interface HypotheticalIndex {
+  table: string;
+  columns: readonly string[];
+  using?: string;
 }
 
 /** Tool for generating and analyzing PostgreSQL explain plans. */
@@ -115,36 +108,12 @@ export class ExplainPlanTool {
   /** Generate an explain plan for a query as if certain indexes existed. */
   async explainWithHypotheticalIndexes(
     sqlQuery: string,
-    hypotheticalIndexes: unknown
+    hypotheticalIndexes: readonly HypotheticalIndex[]
   ): Promise<ExplainPlanArtifact | ErrorResult> {
     try {
-      // Validate index definitions format
-      if (!Array.isArray(hypotheticalIndexes)) {
-        return new ErrorResult(`Expected list of index definitions, got ${pyTypeName(hypotheticalIndexes)}`);
-      }
-
       const indexes = new Map<string, IndexDefinition>();
-      for (const idx of hypotheticalIndexes as unknown[]) {
-        if (!isJsonObject(idx)) {
-          return new ErrorResult(`Expected dictionary for index definition, got ${pyTypeName(idx)}`);
-        }
-        if (!('table' in idx)) {
-          return new ErrorResult("Missing 'table' in index definition");
-        }
-        if (!('columns' in idx)) {
-          return new ErrorResult("Missing 'columns' in index definition");
-        }
-        const columns = toColumnList(idx.columns).map((column) => {
-          if (typeof column !== 'string') {
-            throw new TypeError(`Expected string for index column, got ${pyTypeName(column)}`);
-          }
-          return column;
-        });
-        const definition = new IndexDefinition(
-          String(idx.table),
-          columns,
-          'using' in idx ? String(idx.using) : 'btree'
-        );
+      for (const { table, columns, using } of hypotheticalIndexes) {
+        const definition = new IndexDefinition(table, columns, using);
         indexes.set(definition.key, definition);
       }
 

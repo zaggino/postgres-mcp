@@ -85,6 +85,44 @@ test('explain_query with hypothetical indexes creates them before explaining', a
   expect(executeResultSet.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
 });
 
+test('explain_query treats null hypothetical indexes as none and runs a plain EXPLAIN', async () => {
+  const executeResultSet = useExplainDriver(plan());
+
+  const text = await explainQuery({ sql: 'SELECT * FROM users', hypothetical_indexes: null });
+
+  expect(text).toContain('Seq Scan');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
+});
+
+test('explain_query creates each hypothetical index with its method, btree when none is given', async () => {
+  const executeResultSet = useExplainDriver(plan({}, { 'Node Type': 'Index Scan' }));
+
+  await explainQuery({
+    sql: "SELECT * FROM users WHERE email = 'a'",
+    hypothetical_indexes: [
+      { table: 'users', columns: ['email'], using: 'hash' },
+      { table: 'users', columns: ['name'] },
+    ],
+  });
+
+  const sent = executeResultSet.mock.calls.map(([query]) => query).join('\n');
+  expect(sent).toContain('ON users USING hash (email)');
+  expect(sent).toContain('ON users USING btree (name)');
+});
+
+test.each([
+  ['columns is a string', { table: 'users', columns: 'email' }],
+  ['columns is empty', { table: 'users', columns: [] }],
+  ['it has an unknown key', { table: 'users', columns: ['email'], unique: true }],
+])('explain_query rejects a hypothetical index when %s, without querying', async (_case, index) => {
+  const executeResultSet = useExplainDriver(plan());
+
+  const text = await explainQuery({ sql: 'SELECT * FROM users', hypothetical_indexes: [index] });
+
+  expect(text).toContain('hypothetical_indexes');
+  expect(executeResultSet).not.toHaveBeenCalled();
+});
+
 test('explain_query rejects analyze combined with hypothetical indexes', async () => {
   useExplainDriver(plan());
 

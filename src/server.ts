@@ -28,16 +28,16 @@ const SERVER_NAME = 'postgres-mcp';
 const SERVER_VERSION = packageJson.version;
 const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
-const HYPOTHETICAL_INDEXES_DESCRIPTION = `A list of hypothetical indexes to simulate. Each index must be a dictionary with these keys:
-    - 'table': The table name to add the index to (e.g., 'users')
-    - 'columns': List of column names to include in the index (e.g., ['email'] or ['last_name', 'first_name'])
-    - 'using': Optional index method (default: 'btree', other options include 'hash', 'gist', etc.)
+const HYPOTHETICAL_INDEXES_DESCRIPTION = `Hypothetical indexes to simulate, e.g. [{"table": "users", "columns": ["email"]}, {"table": "orders", "columns": ["user_id", "created_at"], "using": "btree"}]. Omit, or pass an empty list or null, for none.`;
 
-Examples: [
-    {"table": "users", "columns": ["email"], "using": "btree"},
-    {"table": "orders", "columns": ["user_id", "created_at"]}
-]
-If there is no hypothetical index, you can pass an empty list.`;
+const hypotheticalIndexSchema = z.strictObject({
+  table: z.string().min(1).describe("Table to add the index to, e.g. 'users'"),
+  columns: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe("Columns or expressions to index, in order, e.g. ['last_name', 'first_name'] or ['LOWER(email)']"),
+  using: z.string().min(1).optional().describe("Index method, 'btree' by default (also 'hash', 'gist', ...)"),
+});
 
 const HEALTH_DESCRIPTION =
   'Analyzes database health. Here are the available health checks:\n' +
@@ -161,14 +161,16 @@ export function createServer(registry: DatabaseRegistry): McpServer {
               'Takes longer but provides more accurate information.'
           ),
         hypothetical_indexes: z
-          .array(z.record(z.string(), z.unknown()))
+          .array(hypotheticalIndexSchema)
+          .nullable()
           .default([])
           .describe(HYPOTHETICAL_INDEXES_DESCRIPTION),
       },
       annotations: { title: 'Explain Query', readOnlyHint: true },
       errorLog: 'Error explaining query',
     },
-    (sqlDriver, { sql, analyze, hypothetical_indexes }) => explainQuery(sqlDriver, sql, analyze, hypothetical_indexes)
+    (sqlDriver, { sql, analyze, hypothetical_indexes }) =>
+      explainQuery(sqlDriver, sql, analyze, hypothetical_indexes ?? [])
   );
 
   registerDatabaseTool(
@@ -259,7 +261,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     {
       ...executeSqlConfig,
       inputSchema: {
-        sql: z.string().default('all').describe('SQL to run'),
+        sql: z.string().describe('SQL to run'),
       },
       errorLog: 'Error executing query',
     },

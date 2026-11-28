@@ -115,12 +115,14 @@ Postgres cancels any statement that runs longer than `--statement-timeout` secon
 One server process serves every database you name. Every tool except `list_databases` (and `cancel_query` in unrestricted mode) takes a required `database` argument, and the server's instructions tell the client so. The instructions also state the access mode and its timeout, how to tell server failures from Postgres errors, how to diagnose a failure, and where to report problems with the server. `list_databases` returns:
 
 ```
-{ databases: [{ database, source, state, idle_seconds_left, error?, last_error? }], servers: [{ server, prefix, error? }] }
+{ cli?: [Database], config?: [Database], servers?: [{ server, prefix?, error?, databases: [Database] }] }
+Database = name | { database, state, idle_seconds_left?, error?, last_error? }
 ```
 
-- `source` is `cli`, `config` or `server` (discovered); `state` is `open`, `closed` or `error`; `idle_seconds_left` is the time until an open pool closes, or `null`.
+- Databases are grouped by where they come from: `--database` flags (`cli`), the config file's `databases` (`config`), or discovery on a config `server`. A group with no entries is left out, and each group is sorted by name.
+- A database whose pool is closed and that has no error is listed by its name alone. Otherwise it is an object: `state` is `open`, `closed` or `error`, and `idle_seconds_left` is the time until an open pool closes.
 - `error` is a configuration problem that keeps the database from being used; `last_error` is why the last call could not reach the database (password masked), and disappears once a call reaches it.
-- `servers[].server` is the server's `host:port` only (no user name, password or query parameters); `error` reports a failed discovery.
+- `servers[].server` is the server's `host:port` only (no user name, password or query parameters); `prefix` is present when the server sets one; `error` reports a failed discovery. A discovered name that a `cli` or `config` database also uses is listed there only.
 
 ### Config file
 

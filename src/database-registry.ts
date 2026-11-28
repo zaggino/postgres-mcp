@@ -35,25 +35,32 @@ export interface RegistryOptions {
   getSqlDriver?: typeof defaultGetSqlDriver;
 }
 
-export interface DatabaseListing {
-  database: string;
-  source: 'cli' | 'config' | 'server';
-  state: 'open' | 'closed' | 'error';
-  idle_seconds_left: number | null;
-  error?: string;
-  /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
-  last_error?: string;
-}
+/** A database in the listing: its bare name when its pool is closed and nothing went wrong. */
+export type DatabaseListing =
+  | string
+  | {
+      database: string;
+      state: 'open' | 'closed' | 'error';
+      /** Seconds until an open pool closes. */
+      idle_seconds_left?: number;
+      error?: string;
+      /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
+      last_error?: string;
+    };
 
 export interface ServerListing {
   server: string;
-  prefix: string;
+  /** Absent when the server adds no prefix. */
+  prefix?: string;
   error?: string;
+  databases: DatabaseListing[];
 }
 
+/** The databases grouped by where they come from; a group with nothing in it is left out. */
 export interface RegistryListing {
-  databases: DatabaseListing[];
-  servers: ServerListing[];
+  cli?: DatabaseListing[];
+  config?: DatabaseListing[];
+  servers?: ServerListing[];
 }
 
 /** A database that cannot be used: unknown, misconfigured, ambiguous, or its driver cannot be created. */
@@ -364,33 +371,48 @@ export class DatabaseRegistry {
   async list(): Promise<RegistryListing> {
     await this.#discover();
 
-    const databases = [...this.#catalog]
-      .map(([name, { source, uri }]): DatabaseListing => {
-        const pool = this.#pools.get(name);
-        return {
-          database: name,
-          source,
-          state: 'error' in uri ? 'error' : poolState(pool),
-          idle_seconds_left: pool?.secondsLeft ?? null,
-          ...('error' in uri && { error: uri.error }),
-          ...(pool?.lastError && { last_error: pool.lastError }),
-        };
-      })
-      .sort((a, b) => (a.database < b.database ? -1 : Number(a.database > b.database)));
-
-    const servers = this.#sources.map(({ source, error }): ServerListing => {
-      const listing: ServerListing = {
-        server: 'uri' in source.uri ? serverLabel(source.uri.uri) : '',
-        prefix: source.prefix,
-      };
-      const message = 'error' in source.uri ? source.uri.error : error;
-      if (message) {
-        listing.error = message;
+    const listing: RegistryListing = {};
+    for (const group of ['cli', 'config'] as const) {
+      const names = [...this.#catalog].flatMap(([name, { source }]) => (source === group ? [name] : []));
+      if (names.length > 0) {
+        listing[group] = this.#listDatabases(names);
       }
-      return listing;
-    });
+    }
+    if (this.#sources.length > 0) {
+      listing.servers = this.#sources.map(({ source, found, error }): ServerListing => {
+        const message = 'error' in source.uri ? source.uri.error : error;
+        // A discovered name that an explicit database of the same name replaces is listed with that database only.
+        const names = [...found.keys()].filter((name) => this.#catalog.get(name)?.source === 'server');
+        return {
+          server: 'uri' in source.uri ? serverLabel(source.uri.uri) : '',
+          ...(source.prefix && { prefix: source.prefix }),
+          ...(message && { error: message }),
+          databases: this.#listDatabases(names),
+        };
+      });
+    }
+    return listing;
+  }
 
-    return { databases, servers };
+  /** The listing entries of the named catalog databases, sorted by name. */
+  #listDatabases(names: string[]): DatabaseListing[] {
+    return names.toSorted().map((name) => {
+      const uri = this.#catalog.get(name)?.uri;
+      const pool = this.#pools.get(name);
+      const state = uri && 'error' in uri ? 'error' : poolState(pool);
+      const lastError = pool?.lastError;
+      const secondsLeft = pool?.secondsLeft ?? null;
+      if (state === 'closed' && !lastError) {
+        return name;
+      }
+      return {
+        database: name,
+        state,
+        ...(secondsLeft !== null && { idle_seconds_left: secondsLeft }),
+        ...(uri && 'error' in uri && { error: uri.error }),
+        ...(lastError && { last_error: lastError }),
+      };
+    });
   }
 
   async closeAll(): Promise<void> {

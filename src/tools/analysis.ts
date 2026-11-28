@@ -7,10 +7,11 @@ import { ExplainPlanTool } from '../explain/explain-plan.ts';
 import { DatabaseTuningAdvisor } from '../index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from '../index/index-opt-base.ts';
 import { TextPresentation } from '../index/presentation.ts';
+import { toJson } from '../json.ts';
 import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { TopQueriesCalc } from '../top-queries/top-queries-calc.ts';
-import { formatError, formatTextResponse, toJson } from './result.ts';
+import { formatError, formatTextResponse } from './result.ts';
 
 export async function explainQuery(
   sqlDriver: SqlExecutor,

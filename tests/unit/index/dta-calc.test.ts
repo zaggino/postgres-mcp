@@ -200,7 +200,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       return rows({ rel_size: 100_000 });
     }
     if (query.includes('pg_stat_user_tables')) {
-      return rows({ last_analyze: new Date('2023-01-01') });
+      return rows({ last_analyze: '2023-01-01 00:00:00+00' });
     }
     return [];
   });
@@ -403,6 +403,16 @@ test('filterLongTextColumns quotes table and column names in the catalog lookup'
   expect(query).toContain("c.column_name IN ('it''s')");
 });
 
+test('workload analysis asks for ANALYZE when no table has been analyzed', async () => {
+  const dta = new DatabaseTuningAdvisor(
+    createDriver(sequential([rows({ extversion: '1.4.0' }), rows({ last_analyze: null })]))
+  );
+
+  const session = await dta.analyzeWorkload({ minCalls: 50, minAvgTimeMs: 5 });
+
+  expect(session.error).toContain('Statistics are not up-to-date');
+});
+
 test('basic workload analysis recommends indexes for the queried columns', async () => {
   const dta = new DatabaseTuningAdvisor(
     createDriver(
@@ -410,7 +420,7 @@ test('basic workload analysis recommends indexes for the queried columns', async
         // check if hypopg is enabled
         rows({ extversion: '1.4.0' }),
         // check last analyze
-        rows({ last_analyze: new Date('2024-01-01 00:00:00') }),
+        rows({ last_analyze: '2024-01-01 00:00:00+00' }),
         // pg_stat_statements
         rows(
           {

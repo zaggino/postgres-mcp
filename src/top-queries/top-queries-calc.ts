@@ -1,4 +1,5 @@
 import { errorMessage } from '../errors.ts';
+import { toJson } from '../json.ts';
 import { logLine } from '../log.ts';
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
@@ -61,10 +62,6 @@ function getPgStatStatementsColumns(pgVersion: number): PgStatStatementsColumns 
   };
 }
 
-function rowsToJson(rows: readonly Record<string, unknown>[]): string {
-  return JSON.stringify(rows, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
-}
-
 /** Tool for retrieving the slowest SQL queries. */
 export class TopQueriesCalc {
   private readonly sqlDriver: SqlExecutor;
@@ -110,7 +107,7 @@ export class TopQueriesCalc {
       // Create result description based on sort criteria
       const criteria = sortBy === 'total' ? 'total execution time' : 'mean execution time per call';
 
-      return `Top ${slowQueryRows.length} slowest queries by ${criteria}:\n${rowsToJson(slowQueryRows)}`;
+      return `Top ${slowQueryRows.length} slowest queries by ${criteria}:\n${toJson(slowQueryRows)}`;
     } catch (error) {
       const message = errorMessage(error);
       logLine(`Error getting slow queries: ${message}`);
@@ -190,7 +187,7 @@ export class TopQueriesCalc {
 
       const slowQueryRows = await queryRows(this.sqlDriver, query);
 
-      return rowsToJson(slowQueryRows);
+      return toJson(slowQueryRows);
     } catch (error) {
       const message = errorMessage(error);
       logLine(`Error getting resource-intensive queries: ${message}`);

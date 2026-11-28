@@ -1,14 +1,13 @@
 import net from 'node:net';
 
-import type { CustomTypesConfig } from 'pg';
 import pg from 'pg';
 
 import { errorMessage } from '../errors.ts';
 import { logLine } from '../log.ts';
 import type { QueuedPool } from './connection-queue.ts';
 import { PoolClosedError, queuedPool } from './connection-queue.ts';
+import { customTypes } from './type-parsers.ts';
 
-const INT8_OID = 20;
 const URL_PREFIX = /^(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?<netloc>[^/?#]*)/u;
 const EMBEDDED_URL = /(?<head>postgres(?:ql)?:\/\/[^:]+:)(?<password>[^@]+)(?<tail>@[^/\s]+)/gu;
 const PASSWORD_PARAM = /(?<key>password=)(?<value>[^\s&;"']+)/giu;
@@ -194,21 +193,6 @@ export function maskError(error: unknown, uri: string | undefined): string {
   const masked = maskSecrets(uri);
   return maskSecrets(message.replaceAll(uri, () => masked));
 }
-
-function parseInt8(value: string): number | bigint {
-  const asNumber = Number(value);
-  return Number.isSafeInteger(asNumber) ? asNumber : BigInt(value);
-}
-
-const customTypes: CustomTypesConfig = {
-  getTypeParser: ((oid: number, format?: 'text' | 'binary') => {
-    if (oid === INT8_OID && (format ?? 'text') === 'text') {
-      return parseInt8;
-    }
-    // oxlint-disable-next-line typescript/no-unsafe-return, typescript/no-unsafe-enum-assignment -- pg types the OID as an enum and the parser as any
-    return pg.types.getTypeParser(oid, format);
-  }) as CustomTypesConfig['getTypeParser'],
-};
 
 const CANCEL_REQUEST_CODE = 80_877_102;
 const APPLICATION_NAME = 'postgres-mcp';

@@ -347,7 +347,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       this.sqlDriver,
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (!result.some((row) => cell.nullableDate(row, 'last_analyze') !== null)) {
+    if (!result.some((row) => cell.value(row, 'last_analyze') !== null)) {
       const message =
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +

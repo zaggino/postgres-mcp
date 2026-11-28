@@ -4,10 +4,6 @@ import { ErrorResult } from '../artifacts.ts';
 import { errorMessage } from '../errors.ts';
 import { isStatementError } from '../sql/sql-driver.ts';
 
-export function toJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) => (typeof item === 'bigint' ? item.toString() : item));
-}
-
 export function formatTextResponse(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }

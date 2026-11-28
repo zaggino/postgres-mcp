@@ -120,6 +120,28 @@ describe(TopQueriesCalc, () => {
     expect(executedQuery(executeResultSet)).toContain('ORDER BY mean_exec_time DESC');
   });
 
+  it('writes a call count above 2^53 exactly and a NaN time as a string', async () => {
+    extensionUtils.getPostgresVersion.mockResolvedValue(13);
+    const driver = fakeExecutor((query) =>
+      query.includes('pg_stat_statements')
+        ? [
+            row({
+              query: 'SELECT 1',
+              calls: 9_007_199_254_740_993n,
+              total_exec_time: 1,
+              mean_exec_time: Number.NaN,
+              rows: 1,
+            }),
+          ]
+        : undefined
+    );
+
+    const result = await new TopQueriesCalc(driver).getTopQueriesByTime(1);
+
+    expect(result).toContain('"calls":9007199254740993');
+    expect(result).toContain('"mean_exec_time":"NaN"');
+  });
+
   it('returns installation instructions when the extension is not installed', async () => {
     const { driver, executeResultSet } = createDriver(13);
     extensionUtils.checkExtension.mockResolvedValue(extensionStatus(false));

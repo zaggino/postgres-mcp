@@ -106,15 +106,7 @@ test('a foreign Host header is rejected with 403 on /mcp', async () => {
 
   const status = await statusOf(
     port,
-    {
-      method: 'POST',
-      body: INITIALIZE,
-      headers: {
-        Host: 'evil.example',
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-      },
-    },
+    { method: 'POST', body: INITIALIZE, headers: { ...MCP_HEADERS, Host: 'evil.example' } },
     '/mcp'
   );
 
@@ -128,6 +120,7 @@ test('a Host header outside --allowed-hosts is rejected and a listed one is acce
 
   await expect(post('evil.test')).resolves.toBe(403);
   await expect(post(`Example.Test:${port}`)).resolves.toBe(200);
+  await expect(post('example.test')).resolves.toBe(200);
 });
 
 test('a foreign Origin header is rejected and the server own origin is accepted', async () => {
@@ -137,15 +130,6 @@ test('a foreign Origin header is rejected and the server own origin is accepted'
 
   await expect(post('http://evil.example')).resolves.toBe(403);
   await expect(post(`http://${HOST}:${port}`)).resolves.toBe(200);
-});
-
-test('streamable HTTP rejects a foreign Origin with 403 and accepts a listed Host without a port', async () => {
-  const { port } = await startStreamable({ allowedHosts: ['example.test'] });
-  const post = (headers: Record<string, string>) =>
-    statusOf(port, { method: 'POST', body: INITIALIZE, headers: { ...MCP_HEADERS, ...headers } }, '/mcp');
-
-  await expect(post({ Origin: 'http://evil.example' })).resolves.toBe(403);
-  await expect(post({ Host: 'example.test' })).resolves.not.toBe(403);
 });
 
 test('--allowed-origins and --allowed-hosts set to any accept any Origin and Host', async () => {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
 
-import { exitOnCliError, HELP, httpOptions, parseCli } from './cli.ts';
+import { exitOnCliError, HELP, parseCli } from './cli.ts';
 import { resolveConfig } from './config.ts';
 import { DatabaseRegistry } from './database-registry.ts';
 import { errorMessage } from './errors.ts';
@@ -93,7 +93,6 @@ export async function main(argv: string[], transports: Transports = defaultTrans
     return;
   }
 
-  const http = httpOptions(options);
-  warnIfExposed(http, accessMode);
-  await transports['streamable-http'](factory, http);
+  warnIfExposed(options.http, accessMode);
+  await transports[transport](factory, options.http);
 }

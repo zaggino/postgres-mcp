@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createServer as createHttpServer } from 'node:http';
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -7,12 +8,14 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { errorMessage } from '../errors.ts';
 import { log } from '../log.ts';
 import type { HttpServerHandle } from './http.ts';
-import { listenGuarded, parseRequestUrl } from './http.ts';
+import { closeHttpServer, listen, parseRequestUrl } from './http.ts';
 import type { HttpServerOptions } from './request-guard.ts';
+import { guardRequests } from './request-guard.ts';
 import { SessionStore } from './sessions.ts';
 import type { ServerFactory } from './types.ts';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MCP_PATH = '/mcp';
 
 type McpSessions = SessionStore<StreamableHTTPServerTransport>;
 
@@ -88,8 +91,7 @@ async function startMcpSession(
   transport.onclose = () => {
     store.remove(id);
   };
-  store.add(id, transport);
-  store.hold(id, res);
+  store.add(id, transport, res);
   let initialized = false;
   try {
     await createMcpServer().connect(transport);
@@ -109,10 +111,7 @@ async function handleMcpRequest(
   res: ServerResponse
 ): Promise<void> {
   const sessionId = headerValue(req, 'mcp-session-id');
-  const existing = sessionId ? store.get(sessionId) : undefined;
-  if (sessionId && existing) {
-    store.hold(sessionId, res);
-  }
+  const existing = sessionId ? store.acquire(sessionId, res) : undefined;
 
   if (req.method === 'POST') {
     const body = await readBody(req);
@@ -150,36 +149,61 @@ function sendMissingSession(res: ServerResponse, sessionId: string | undefined):
   }
 }
 
-/** Serve MCP over streamable HTTP and resolve once listening. */
+function routeRequest(
+  createMcpServer: ServerFactory,
+  store: McpSessions,
+  req: IncomingMessage,
+  res: ServerResponse
+): void {
+  const path = parseRequestUrl(req)?.pathname;
+  if (path === undefined) {
+    res.writeHead(400).end('Bad Request');
+    return;
+  }
+  if (path !== MCP_PATH) {
+    res.writeHead(404).end('Not Found');
+    return;
+  }
+  handleMcpRequest(createMcpServer, store, req, res).catch((error: unknown) => {
+    log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
+    if (error instanceof RangeError) {
+      sendBodyTooLarge(req, res);
+      return;
+    }
+    const badJson = error instanceof SyntaxError;
+    sendJsonRpcError(
+      res,
+      badJson ? 400 : 500,
+      badJson ? -32_700 : -32_603,
+      badJson ? 'Parse error' : 'Internal server error'
+    );
+  });
+}
+
+/**
+ * Serve MCP over streamable HTTP and resolve once listening. Every request must pass the Host and Origin check,
+ * which attaches after listening because the default allow-list names the bound port. Closing the handle closes
+ * the sessions, then the HTTP server.
+ */
 export async function startStreamableHttpServer(
   createMcpServer: ServerFactory,
   options: HttpServerOptions
 ): Promise<HttpServerHandle> {
   const store: McpSessions = new SessionStore(options);
-
-  return await listenGuarded('Streamable HTTP server', '/mcp', options, store, (req, res) => {
-    const path = parseRequestUrl(req)?.pathname;
-    if (path === undefined) {
-      res.writeHead(400).end('Bad Request');
-      return;
-    }
-    if (path !== '/mcp') {
-      res.writeHead(404).end('Not Found');
-      return;
-    }
-    handleMcpRequest(createMcpServer, store, req, res).catch((error: unknown) => {
-      log('ERROR', `Streamable HTTP request failed: ${errorMessage(error)}`);
-      if (error instanceof RangeError) {
-        sendBodyTooLarge(req, res);
-        return;
-      }
-      const badJson = error instanceof SyntaxError;
-      sendJsonRpcError(
-        res,
-        badJson ? 400 : 500,
-        badJson ? -32_700 : -32_603,
-        badJson ? 'Parse error' : 'Internal server error'
-      );
-    });
-  });
+  const httpServer = createHttpServer();
+  const port = await listen(httpServer, options.host, options.port);
+  httpServer.on(
+    'request',
+    guardRequests(options, port, (req, res) => {
+      routeRequest(createMcpServer, store, req, res);
+    })
+  );
+  log('INFO', `Streamable HTTP server listening on http://${options.host}:${port}${MCP_PATH}`);
+  return {
+    port,
+    close: async () => {
+      await store.closeAll();
+      await closeHttpServer(httpServer);
+    },
+  };
 }

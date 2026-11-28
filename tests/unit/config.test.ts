@@ -89,7 +89,7 @@ describe(parseCli, () => {
     const args = ['--database', 'a', '--transport=streamable-http', '--streamable-http-host=0.0.0.0'];
 
     expect(() => parseCli(args)).toThrow(/--allowed-hosts/u);
-    expect(parseCli([...args, '--allowed-hosts=*'])?.allowedHosts).toBe('any');
+    expect(parseCli([...args, '--allowed-hosts=*'])?.http.allowedHosts).toBe('any');
   });
 
   it.each([

@@ -20,25 +20,9 @@ export interface CliOptions {
   configPath: string | undefined;
   idleMinutes: number | undefined;
   statementTimeoutSeconds: number | undefined;
-  streamableHttpHost: string;
-  streamableHttpPort: number;
-  allowedHosts: AllowList | undefined;
-  allowedOrigins: AllowList | undefined;
-  maxSessions: number | undefined;
-  sessionIdleMinutes: number | undefined;
+  /** The streamable HTTP transport's options; session limits and allow-lists default where they are used. */
+  http: HttpServerOptions;
   transport: Transport;
-}
-
-/** The options of the streamable HTTP transport. Session limits and allow-lists default where they are used. */
-export function httpOptions(options: CliOptions): HttpServerOptions {
-  return {
-    host: options.streamableHttpHost,
-    port: options.streamableHttpPort,
-    allowedHosts: options.allowedHosts,
-    allowedOrigins: options.allowedOrigins,
-    maxSessions: options.maxSessions,
-    sessionIdleMinutes: options.sessionIdleMinutes,
-  };
 }
 
 const PROG = 'postgres-mcp';
@@ -193,7 +177,7 @@ function requireAllowedHosts(options: CliOptions): void {
   if (options.transport === 'stdio') {
     return;
   }
-  const http = httpOptions(options);
+  const { http } = options;
   if (!LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
     throw new CliError(
       `binding ${http.host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
@@ -247,15 +231,17 @@ export function parseCli(argv: string[]): CliOptions | null {
       max: MAX_STATEMENT_TIMEOUT_SECONDS,
     }),
     transport: choice('--transport', values.transport, TRANSPORTS) ?? 'stdio',
-    streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
-    streamableHttpPort: parseIntFlag('--streamable-http-port', values['streamable-http-port']) ?? DEFAULT_PORT,
-    allowedHosts: parseAllowList('--allowed-hosts', values['allowed-hosts'], hostEntryProblem),
-    allowedOrigins: parseAllowList('--allowed-origins', values['allowed-origins'], originEntryProblem),
-    maxSessions: parseIntFlag('--max-sessions', values['max-sessions'], { min: 1 }),
-    sessionIdleMinutes: parseIntFlag('--session-idle-minutes', values['session-idle-minutes'], {
-      min: 0,
-      max: MAX_IDLE_MINUTES,
-    }),
+    http: {
+      host: values['streamable-http-host'] ?? 'localhost',
+      port: parseIntFlag('--streamable-http-port', values['streamable-http-port']) ?? DEFAULT_PORT,
+      allowedHosts: parseAllowList('--allowed-hosts', values['allowed-hosts'], hostEntryProblem),
+      allowedOrigins: parseAllowList('--allowed-origins', values['allowed-origins'], originEntryProblem),
+      maxSessions: parseIntFlag('--max-sessions', values['max-sessions'], { min: 1 }),
+      sessionIdleMinutes: parseIntFlag('--session-idle-minutes', values['session-idle-minutes'], {
+        min: 0,
+        max: MAX_IDLE_MINUTES,
+      }),
+    },
   };
   requireAllowedHosts(options);
   return options;

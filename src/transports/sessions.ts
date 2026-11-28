@@ -40,30 +40,30 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     return this.#entries.size >= this.#maxSessions;
   }
 
-  /** Starts tracking a session; it is closed if it stays idle. */
-  add(id: string, transport: T): void {
+  /** Starts tracking a session, held until `res` closes; after that it is closed if it stays idle. */
+  add(id: string, transport: T, res: ServerResponse): void {
     const entry: SessionEntry<T> = { transport, inFlight: 0, timer: undefined };
     this.#entries.set(id, entry);
-    this.#startTimer(id, entry);
+    this.#hold(id, entry, res);
   }
 
-  /** The session's transport; looking it up counts as activity and restarts its idle timer. */
-  get(id: string): T | undefined {
+  /** The session's transport, held until `res` closes; undefined for an unknown id. */
+  acquire(id: string, res: ServerResponse): T | undefined {
     const entry = this.#entries.get(id);
-    if (entry && entry.inFlight === 0) {
-      this.#startTimer(id, entry);
+    if (entry) {
+      this.#hold(id, entry, res);
     }
     return entry?.transport;
   }
 
-  /** A request for the session is being served. */
-  #begin(id: string): void {
-    const entry = this.#entries.get(id);
-    if (entry) {
-      entry.inFlight += 1;
-      clearTimeout(entry.timer);
-      entry.timer = undefined;
-    }
+  /** Keeps the session's idle timer stopped until the response closes. */
+  #hold(id: string, entry: SessionEntry<T>, res: ServerResponse): void {
+    entry.inFlight += 1;
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+    res.once('close', () => {
+      this.#end(id);
+    });
   }
 
   /** A request for the session finished; with none left, the idle timer starts afresh. */
@@ -75,14 +75,6 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
         this.#startTimer(id, entry);
       }
     }
-  }
-
-  /** Keeps the session's idle timer stopped until the response closes. */
-  hold(id: string, res: ServerResponse): void {
-    this.#begin(id);
-    res.once('close', () => {
-      this.#end(id);
-    });
   }
 
   remove(id: string): void {

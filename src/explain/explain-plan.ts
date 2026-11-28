@@ -55,8 +55,8 @@ function isTruthy(value: unknown): boolean {
 /** A hypothetical index to simulate, as validated by the `explain_query` input schema. */
 export interface HypotheticalIndex {
   table: string;
-  columns: string[];
-  using?: string | undefined;
+  columns: readonly string[];
+  using?: string;
 }
 
 /** Tool for generating and analyzing PostgreSQL explain plans. */

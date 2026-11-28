@@ -267,7 +267,7 @@ About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind paramete
 
 ## 2026-11-27 · Minor · Refactor · Replace the Python-imitating helpers
 
-Several helpers exist only to reproduce Python's output or semantics: `pyTypeName` in `src/py-format.ts` (`<class 'dict'>` in `explain_query` errors in `src/explain/explain-plan.ts`), `pyFloatStr` (Python float text in the advisor traces in `src/index/dta-calc.ts`), `pyLog` and `pyDivide` in `src/index/dta-calc.ts`, and `pyStr` in `src/sql/bind-params.ts`. Replace `pyTypeName` with plain messages such as "expected an array of index definitions", use `String` in the traces, and replace the arithmetic helpers with plain JavaScript where the Python error cases cannot occur. `formatFixed` and `formatPercent` stay. The statistics literals in `bind-params.ts` are a separate entry.
+Several helpers exist only to reproduce Python's output or semantics: `pyTypeName` in `src/py-format.ts` (`<class 'dict'>` in the EXPLAIN result checks and traces in `src/explain/explain-plan.ts`), `pyFloatStr` (Python float text in the advisor traces in `src/index/dta-calc.ts`), `pyLog` and `pyDivide` in `src/index/dta-calc.ts`, and `pyStr` in `src/sql/bind-params.ts`. Replace `pyTypeName` with plain messages such as "expected a JSON array from EXPLAIN", use `String` in the traces, and replace the arithmetic helpers with plain JavaScript where the Python error cases cannot occur. `formatFixed` and `formatPercent` stay. The statistics literals in `bind-params.ts` are a separate entry.
 
 ## 2026-11-27 · Minor · Docs · Code comments cite upstream as the reason for behaviour
 

@@ -142,11 +142,14 @@ describe(ExplainPlanTool, () => {
   it('explain analyze with bind variables uses parameter replacement', async () => {
     bindParams.replacement = 'SELECT * FROM users WHERE id = 42';
     const { driver, executeResultSet } = createDriver();
-    executeResultSet.mockImplementation((query) =>
-      Promise.resolve(
+    executeResultSet.mockImplementation((query) => {
+      if (query === 'SHOW server_version') {
+        return Promise.resolve(cell({ server_version: '15.4' }));
+      }
+      return Promise.resolve(
         query.includes('EXPLAIN') && query.includes('id = 42') ? cell({ 'QUERY PLAN': [analyzedPlan] }) : noResultSet
-      )
-    );
+      );
+    });
 
     const result = await new ExplainPlanTool(driver).explainAnalyze('SELECT * FROM users WHERE id = $1');
 

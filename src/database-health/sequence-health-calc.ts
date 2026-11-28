@@ -135,7 +135,6 @@ export class SequenceHealthCalc {
       this.sqlDriver,
       `
             SELECT
-                n.nspname AS table_schema,
                 c.relname AS table,
                 attname AS column,
                 format_type(a.atttypid, a.atttypmod) AS column_type,
@@ -156,10 +155,8 @@ export class SequenceHealthCalc {
         `
     );
 
-    const sequences = sequenceRows.map(toSequenceColumn);
-
     const sequenceMetrics: SequenceMetrics[] = [];
-    for (const seq of sequences) {
+    for (const seq of sequenceRows.map(toSequenceColumn)) {
       // Parse the sequence name from default value
       const [schema, sequence] = SequenceHealthCalc.parseSequenceName(seq.defaultValue);
       if (!sequence) {
@@ -181,12 +178,7 @@ export class SequenceHealthCalc {
         [identifier(schema, sequence), identifier(schema, sequence)]
       );
 
-      const [attrRow] = attrs;
-      if (!attrRow) {
-        continue;
-      }
-
-      const { lastValue, readable } = toSequenceAttributes(attrRow);
+      const { lastValue, readable } = toSequenceAttributes(cell.single(attrs));
       sequenceMetrics.push({
         schema,
         table: seq.table,

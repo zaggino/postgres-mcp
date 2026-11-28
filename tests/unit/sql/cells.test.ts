@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { bigint, int8, integer, nullableNumberArray, nullableText, numeric, text } from '../../../src/sql/cells.ts';
+import {
+  CellError,
+  bigint,
+  int8,
+  integer,
+  nullableNumberArray,
+  nullableText,
+  numeric,
+  single,
+  text,
+} from '../../../src/sql/cells.ts';
 
 describe('cell readers', () => {
   it('reject a column the row does not have, naming it', () => {
@@ -29,5 +39,17 @@ describe('cell readers', () => {
   it('accept only arrays of numbers as a number array', () => {
     expect(nullableNumberArray({ freqs: [0.5, 0.25] }, 'freqs')).toEqual([0.5, 0.25]);
     expect(() => nullableNumberArray({ freqs: '{0.5}' }, 'freqs')).toThrow('expected array of numbers, got string');
+  });
+
+  it('return the row of a one-row result and throw a CellError carrying the count otherwise', () => {
+    const row = { n: 1 };
+    expect(single([row])).toBe(row);
+    expect(() => single([])).toThrow(CellError);
+    expect(() => single([])).toThrow('Expected exactly one row, got 0');
+    expect(() => single([row, row])).toThrow('Expected exactly one row, got 2');
+  });
+
+  it('keep a nullable reader from turning a misspelt column into NULL', () => {
+    expect(() => nullableText({}, 'x')).toThrow('Column "x" is missing from the result');
   });
 });

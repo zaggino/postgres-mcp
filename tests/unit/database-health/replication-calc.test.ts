@@ -23,9 +23,6 @@ function replicaExecutor(options: { lag?: Row[]; lagError?: Error; slots?: Row[]
     if (query.includes('pg_replication_slots')) {
       return options.slots ?? [];
     }
-    if (query.includes('pg_stat_replication')) {
-      return [];
-    }
     return [];
   });
 }

@@ -306,7 +306,6 @@ export abstract class IndexTuningBase implements DtaTracer {
       }
 
       const parsedWorkload = await this.validateAndParseWorkload(session.workload);
-      session.workload = parsedWorkload;
 
       const queryWeights = this.convertWorkloadToQueryWeights(parsedWorkload);
 
@@ -446,7 +445,7 @@ export abstract class IndexTuningBase implements DtaTracer {
 
   async getQueryStatsDirect(minCalls = 50, minAvgTimeMs = 5, limit = 100): Promise<WorkloadQuery[]> {
     const query = `
-        SELECT queryid, query, calls, total_exec_time/calls as avg_exec_time
+        SELECT query, calls, total_exec_time/calls as avg_exec_time
         FROM pg_stat_statements
         WHERE calls >= {}
         AND total_exec_time/calls >= {}

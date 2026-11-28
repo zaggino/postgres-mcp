@@ -1,8 +1,8 @@
 import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { queryRows } from '../sql/safe-sql.ts';
+import { QueryValidationError, queryRows } from '../sql/safe-sql.ts';
 import type { Row } from '../sql/sql-driver.ts';
-import { isCheckLocalFailure } from './check-failure.ts';
+import { isStatementError } from '../sql/sql-driver.ts';
 
 interface ReplicationSlot {
   active: boolean;
@@ -152,20 +152,26 @@ export class ReplicationCalc {
   private async getServerVersion(): Promise<number> {
     if (this.serverVersion === null) {
       const result = await queryRows(this.sqlDriver, 'SHOW server_version_num');
-      this.serverVersion = Number.parseInt(cell.text(cell.single(result), 'server_version_num'), 10);
+      const text = cell.text(cell.single(result), 'server_version_num');
+      const version = Number.parseInt(text, 10);
+      if (!Number.isSafeInteger(version)) {
+        throw cell.CellError.unexpected('server_version_num', 'integer text', text);
+      }
+      this.serverVersion = version;
     }
     return this.serverVersion;
   }
 
   /**
-   * Run an optional probe. Returns null when the server rejects it (a missing view or privilege, an older
-   * server), so the feature counts as unsupported; any other failure, such as a cancellation, propagates.
+   * Run an optional probe. Returns null when the server rejects the query (a missing view or privilege, an older
+   * server) or restricted mode refuses it, so the feature counts as unsupported; any other failure, such as a
+   * timeout or a cancellation, propagates.
    */
   async #tryQuery(sql: string): Promise<Row[] | null> {
     try {
       return await queryRows(this.sqlDriver, sql);
     } catch (error) {
-      if (isCheckLocalFailure(error)) {
+      if (isStatementError(error) || error instanceof QueryValidationError) {
         return null;
       }
       throw error;

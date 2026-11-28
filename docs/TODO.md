@@ -38,7 +38,7 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 
 ## 2026-11-26 · Minor · Bug · Duplicate column names collapse in a row object
 
-Rows (`Row` in `src/sql/safe-sql.ts`) are `Record<string, unknown>`, so `SELECT 1 AS a, 2 AS a` returns one `a` value: later columns overwrite earlier ones. `executeResultSet` returns the column names, including duplicates, so `execute_sql` could fetch rows in array mode and keep every column; how duplicates should appear in its JSON output is undecided.
+Rows (`Row` in `src/sql/sql-driver.ts`) are `Record<string, unknown>`, so `SELECT 1 AS a, 2 AS a` returns one `a` value: later columns overwrite earlier ones. `executeResultSet` returns the column names, including duplicates, so `execute_sql` could fetch rows in array mode and keep every column; how duplicates should appear in its JSON output is undecided.
 
 ## 2026-11-26 · Minor · Bug · Restricted mode rejects `VACUUM <table>` and `ANALYZE <table>`
 
@@ -392,3 +392,15 @@ Arrays of enums and of other user-defined types have not been checked at all; `p
 ## 2026-11-28 · Minor · Bug · The index advisor never uses a column's most common value as a range bound
 
 `boundValues` in `src/sql/bind-params.ts` picks a range bound from the most common values and their frequencies, then from the histogram, and had a last fallback to the first most common value. That fallback read `most_common_vals`, which `STATS_QUERY` selects as `common_vals`, so it never fired and was dropped when the statistics got a typed interface. When the frequencies are missing or do not match the values, the advisor falls back to a type default although a real value is available. Restore the fallback on the typed `commonVals` field, with a test, and check that the advisor results for the integration workload still make sense.
+
+## 2026-11-28 · Minor · Refactor · `SqlExecutor` carries parameters only `SafeSqlDriver` uses
+
+`executeResultSet(query, params?, forceReadonly?)` is the public seam, but only `SafeSqlDriver` passes `params` and `forceReadonly` to its inner driver, and `SafeSqlDriver` ignores the `forceReadonly` it receives. Type `SafeSqlDriver`'s inner driver as the concrete driver contract and shrink the public seam to `executeResultSet(query)`. Also move the static `SafeSqlDriver.executeParamQuery`, which works on any executor, to a free function next to `queryRows`.
+
+## 2026-11-28 · Minor · Bug · One unreadable sequence fails the whole sequence check
+
+The per-sequence `SELECT … FROM <sequence>` in `src/database-health/sequence-health-calc.ts` errors with "permission denied" before `has_sequence_privilege` is consulted, so a role that cannot read one sequence gets no sequence report. Skip, or report, an unreadable sequence instead.
+
+## 2026-11-28 · Minor · Refactor · Replication health keeps branches for servers before PostgreSQL 10
+
+`ReplicationCalc` (`src/database-health/replication-calc.ts`) reads `server_version_num` itself and keeps `pg_last_xlog_*` and pre-9.4 slot branches. Decide the oldest supported server, delete the dead branches, and use `getPostgresVersion` (`src/sql/extension-utils.ts`) if a version check remains.

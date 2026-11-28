@@ -1,4 +1,3 @@
-import { logLine } from '../log.ts';
 import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver, queryRows } from './safe-sql.ts';
@@ -40,14 +39,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
   }
 
   try {
-    const rows = await queryRows(sqlDriver, 'SHOW server_version');
-    const [first] = rows;
-    if (!first) {
-      logLine('Could not determine PostgreSQL version');
-      return 0;
-    }
-
-    const versionString = cell.text(first, 'server_version');
+    const versionString = cell.text(cell.single(await queryRows(sqlDriver, 'SHOW server_version')), 'server_version');
     // Extract the major version (before the first dot)
     const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {

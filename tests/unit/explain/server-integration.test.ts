@@ -97,7 +97,7 @@ test('explain_query with hypothetical indexes explains with them when hypopg is 
 });
 
 test('explain_query with hypothetical indexes reports a missing hypopg extension', async () => {
-  useDriver(fakeExecutor(() => []));
+  useDriver(fakeExecutor((query) => (query === 'SHOW server_version' ? [{ server_version: '16.0' }] : [])));
 
   const text = await explainQuery({
     sql: "SELECT * FROM users WHERE email = 'test@example.com'",

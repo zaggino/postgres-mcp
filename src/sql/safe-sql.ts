@@ -38,12 +38,8 @@ export interface SqlExecutor {
 }
 
 /** The rows of the last statement's result; empty when it returned no rows or no result set. */
-export async function queryRows(
-  executor: SqlExecutor,
-  query: string,
-  params?: readonly unknown[] | null
-): Promise<Row[]> {
-  return (await executor.executeResultSet(query, params)).rows;
+export async function queryRows(executor: SqlExecutor, query: string): Promise<Row[]> {
+  return (await executor.executeResultSet(query)).rows;
 }
 
 function functionName(funcname: unknown): string {
@@ -185,7 +181,7 @@ async function validateQuery(query: string): Promise<void> {
     ({ stmts } = await parseSql(query));
   } catch (error) {
     if (error instanceof SqlParseError) {
-      throw new Error('Failed to parse SQL statement', { cause: error });
+      throw new QueryValidationError('Failed to parse SQL statement', { cause: error });
     }
     throw error;
   }

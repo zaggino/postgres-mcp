@@ -166,8 +166,16 @@ const objectKinds: Record<string, ObjectKind> = {
   extension: extensionKind,
 };
 
-function objectKind(objectType: string): ObjectKind | undefined {
-  return Object.hasOwn(objectKinds, objectType) ? objectKinds[objectType] : undefined;
+/** Runs `run` for a supported object type; an unknown type is a tool error. */
+async function withObjectKind(
+  objectType: string,
+  run: (kind: ObjectKind) => Promise<unknown>
+): Promise<CallToolResult> {
+  const kind = Object.hasOwn(objectKinds, objectType) ? objectKinds[objectType] : undefined;
+  if (!kind) {
+    return formatError(`Unsupported object type: ${objectType}`);
+  }
+  return formatTextResponse(toJson(await run(kind)));
 }
 
 export async function listObjects(
@@ -175,11 +183,7 @@ export async function listObjects(
   schemaName: string,
   objectType: string
 ): Promise<CallToolResult> {
-  const kind = objectKind(objectType);
-  if (!kind) {
-    return formatError(`Unsupported object type: ${objectType}`);
-  }
-  return formatTextResponse(toJson(await kind.list(sqlDriver, schemaName)));
+  return await withObjectKind(objectType, (kind) => kind.list(sqlDriver, schemaName));
 }
 
 async function tableDetails(
@@ -260,9 +264,5 @@ export async function getObjectDetails(
   objectName: string,
   objectType: string
 ): Promise<CallToolResult> {
-  const kind = objectKind(objectType);
-  if (!kind) {
-    return formatError(`Unsupported object type: ${objectType}`);
-  }
-  return formatTextResponse(toJson(await kind.details(sqlDriver, schemaName, objectName)));
+  return await withObjectKind(objectType, (kind) => kind.details(sqlDriver, schemaName, objectName));
 }

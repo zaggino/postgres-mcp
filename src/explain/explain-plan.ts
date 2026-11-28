@@ -196,11 +196,10 @@ export class ExplainPlanTool {
 
       const explainQ = `EXPLAIN (${explainOptions.join(', ')}) ${query}`;
       const rows = await queryRows(this.sqlDriver, explainQ);
-      if (rows.length === 0) {
+      const queryPlanData = queryPlan(rows);
+      if (queryPlanData === undefined) {
         return new ErrorResult('No results returned from EXPLAIN');
       }
-      const queryPlanData = queryPlan(rows);
-
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
       }

@@ -58,7 +58,7 @@ test('explain_query runs a plain EXPLAIN and returns the plan', async () => {
   const text = await explainQuery({ sql: 'SELECT * FROM users' });
 
   expect(text).toContain('Seq Scan');
-  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users', undefined);
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
 });
 
 test('explain_query with analyze=true runs EXPLAIN ANALYZE and reports execution time', async () => {
@@ -69,7 +69,7 @@ test('explain_query with analyze=true runs EXPLAIN ANALYZE and reports execution
     analyze: true,
   });
 
-  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users', undefined);
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
   expect(text).toContain('Execution Time: 1.300 ms');
 });
 

@@ -37,7 +37,7 @@ interface HealthCheck {
  * One line of the report. A check-local failure is reported on the check's own line so the other checks still
  * run; any other failure (connection, cancellation) stops the whole report.
  */
-async function section(label: string, run: () => Promise<string>): Promise<string> {
+async function section({ label, run }: HealthCheck): Promise<string> {
   try {
     return `${label}: ${await run()}\n`;
   } catch (error) {
@@ -50,9 +50,10 @@ async function section(label: string, run: () => Promise<string>): Promise<strin
   }
 }
 
-/** The checks in report order. The index checks share one calc because it caches the index listing. */
+/** The checks in report order. The calcs that serve several checks are shared within one report. */
 function healthChecks(sqlDriver: SqlExecutor): HealthCheck[] {
   const indexHealth = new IndexHealthCalc(sqlDriver);
+  const bufferHealth = new BufferHealthCalc(sqlDriver);
   return [
     { type: 'index', label: 'Invalid index check', run: () => indexHealth.invalidIndexCheck() },
     { type: 'index', label: 'Duplicate index check', run: () => indexHealth.duplicateIndexCheck() },
@@ -70,8 +71,8 @@ function healthChecks(sqlDriver: SqlExecutor): HealthCheck[] {
       label: 'Replication health',
       run: () => new ReplicationCalc(sqlDriver).replicationHealthCheck(),
     },
-    { type: 'buffer', label: 'Buffer health for indexes', run: () => new BufferHealthCalc(sqlDriver).indexHitRate() },
-    { type: 'buffer', label: 'Buffer health for tables', run: () => new BufferHealthCalc(sqlDriver).tableHitRate() },
+    { type: 'buffer', label: 'Buffer health for indexes', run: () => bufferHealth.indexHitRate() },
+    { type: 'buffer', label: 'Buffer health for tables', run: () => bufferHealth.tableHitRate() },
     {
       type: 'constraint',
       label: 'Constraint health',
@@ -94,25 +95,25 @@ export class DatabaseHealthTool {
    * sequence, replication, buffer, constraint, all.
    */
   async health(healthType: string): Promise<string> {
-    try {
-      const requested = healthType.split(',').map((x) => x.trim());
-      const healthTypes = new Set<HealthType>();
-      for (const type of requested) {
-        if (!isHealthType(type)) {
-          return (
-            `Invalid health types provided: '${healthType}'. ` +
-            `Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}. ` +
-            'Please try again with a comma-separated list of valid health types.'
-          );
-        }
-        healthTypes.add(type);
+    const requested = healthType.split(',').map((x) => x.trim());
+    const healthTypes = new Set<HealthType>();
+    for (const type of requested) {
+      if (!isHealthType(type)) {
+        return (
+          `Invalid health types provided: '${healthType}'. ` +
+          `Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}. ` +
+          'Please try again with a comma-separated list of valid health types.'
+        );
       }
+      healthTypes.add(type);
+    }
 
+    try {
       const all = healthTypes.has('all');
       let result = '';
       for (const check of healthChecks(this.sqlDriver)) {
         if (all || healthTypes.has(check.type)) {
-          result += await section(check.label, check.run);
+          result += await section(check);
         }
       }
 

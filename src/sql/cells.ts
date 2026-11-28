@@ -4,7 +4,7 @@ import type { Row } from './sql-driver.ts';
  * Strict readers for one column of a result row. A reader narrows the value pg's type parsers produced (see
  * `customTypes` in `sql-driver.ts`) and throws a CellError naming the column on a missing column or a value of an
  * unexpected kind, so a misspelt column or an unexpected NULL fails loudly instead of becoming "undefined", NaN or
- * false. The only conversions are `numeric`, which parses decimal text because pg leaves numeric as text, and
+ * false. `single` throws a CellError for a wrong row count, so every reader failure is a CellError. The only conversions are `numeric`, which parses decimal text because pg leaves numeric as text, and
  * `bigint`, which widens a number.
  */
 
@@ -20,6 +20,10 @@ export class CellError extends Error {
 
   static unexpected(column: string, expected: string, actual: unknown): CellError {
     return new CellError(`Column "${column}": expected ${expected}, got ${kindOf(actual)}`);
+  }
+
+  static rowCount(count: number): CellError {
+    return new CellError(`Expected exactly one row, got ${count}`);
   }
 }
 
@@ -47,7 +51,7 @@ export function value(row: Row, column: string): unknown {
 }
 
 /** The reader for a column that may be NULL. */
-export function nullable<T>(read: Reader<T>): Reader<T | null> {
+function nullable<T>(read: Reader<T>): Reader<T | null> {
   return (row, column) => (value(row, column) === null ? null : read(row, column));
 }
 
@@ -55,7 +59,7 @@ export function nullable<T>(read: Reader<T>): Reader<T | null> {
 export function single(rows: readonly Row[]): Row {
   const [row] = rows;
   if (rows.length !== 1 || row === undefined) {
-    throw new Error(`Expected exactly one row, got ${rows.length}`);
+    throw CellError.rowCount(rows.length);
   }
   return row;
 }
@@ -98,8 +102,6 @@ export function int8(row: Row, column: string): number | bigint {
   }
   throw CellError.unexpected(column, 'int8', cell);
 }
-
-export const nullableInt8 = nullable(int8);
 
 /** Any integer column as a bigint, for values that may exceed a safe integer. */
 export function bigint(row: Row, column: string): bigint {

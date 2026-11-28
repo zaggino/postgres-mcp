@@ -486,24 +486,20 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     this.dtaTrace(`  - Evaluating cost for configuration: ${candidateStr(unique)}`);
 
-    let totalCost = 0;
-    let validQueries = 0;
-
-    for (const [queryText, , weight] of weightedWorkload) {
-      const planData = await this.getExplainPlanWithIndexes(queryText, unique);
-      const cost = IndexTuningBase.extractCostFromJsonPlan(planData);
-      totalCost += cost * weight;
-      validQueries += 1;
-    }
-
-    if (validQueries === 0) {
-      this.dtaTrace('    + no valid queries found for cost evaluation');
+    if (weightedWorkload.length === 0) {
+      this.dtaTrace('    + no queries to evaluate the configuration against');
       return Number.POSITIVE_INFINITY;
     }
 
-    const avgCost = totalCost / validQueries;
+    let totalCost = 0;
+    for (const [queryText, , weight] of weightedWorkload) {
+      const planData = await this.getExplainPlanWithIndexes(queryText, unique);
+      totalCost += IndexTuningBase.extractCostFromJsonPlan(planData) * weight;
+    }
+
+    const avgCost = totalCost / weightedWorkload.length;
     this.costCache.set(cacheKey, avgCost);
-    this.dtaTrace(`    + config cost: ${formatFixed(avgCost, 2)} (from ${validQueries} queries)`);
+    this.dtaTrace(`    + config cost: ${formatFixed(avgCost, 2)} (from ${weightedWorkload.length} queries)`);
     return avgCost;
   }
 

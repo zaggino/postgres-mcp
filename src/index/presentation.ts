@@ -1,4 +1,5 @@
 import { calculateImprovementMultiple, ExplainPlanArtifact } from '../artifacts.ts';
+import { UsageError } from '../errors.ts';
 import { formatFixed, naturalSize } from '../py-format.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -45,6 +46,10 @@ export class TextPresentation {
 
   /** Analyze a list of SQL queries and recommend indexes. */
   analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<JsonRecord> {
+    // An empty list would fall through to the pg_stat_statements workload
+    if (queries.length === 0) {
+      return Promise.reject(new UsageError('No queries provided for analysis'));
+    }
     return this.executeAnalysis({
       queryList: queries,
       // Ignore min calls, min time and limit for an explicit query list
@@ -76,7 +81,6 @@ export class TextPresentation {
       maxIndexSizeMb: options.maxIndexSizeMb ?? 10_000,
     });
 
-    // Prepare the response to send back to the caller
     // Debugging output that costs an agent tokens on every call, so only on request
     const includeLangfuseTrace = process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE?.toLowerCase() === 'true';
     const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};

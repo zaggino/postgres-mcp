@@ -1,3 +1,4 @@
+import { integer } from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 
 export class ConnectionHealthCalc {
@@ -50,7 +51,8 @@ export class ConnectionHealthCalc {
             SELECT COUNT(*) as count
             FROM pg_stat_activity
         `);
-    return Number(result[0]?.count ?? 0);
+    const [row] = result;
+    return row ? integer(row, 'count') : 0;
   }
 
   /** Number of connections that are idle in transaction. */
@@ -60,6 +62,7 @@ export class ConnectionHealthCalc {
             FROM pg_stat_activity
             WHERE state = 'idle in transaction'
         `);
-    return Number(result[0]?.count ?? 0);
+    const [row] = result;
+    return row ? integer(row, 'count') : 0;
   }
 }

@@ -1,6 +1,7 @@
 import { errorMessage } from '../errors.ts';
-import { logLine } from '../log.ts';
+import { log, logLine } from '../log.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { QueryCancelledError } from '../sql/sql-driver.ts';
 import { BufferHealthCalc } from './buffer-health-calc.ts';
 import { ConnectionHealthCalc } from './connection-health-calc.ts';
 import { ConstraintHealthCalc } from './constraint-health-calc.ts';
@@ -24,6 +25,23 @@ export type HealthType = (typeof HEALTH_TYPES)[number];
 
 function isHealthType(value: string): value is HealthType {
   return (HEALTH_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * One line of the report. A failing check reports its error on its own line so the other checks still run; a
+ * cancelled call stops the whole report.
+ */
+async function section(label: string, run: () => Promise<string>): Promise<string> {
+  try {
+    return `${label}: ${await run()}\n`;
+  } catch (error) {
+    if (error instanceof QueryCancelledError) {
+      throw error;
+    }
+    const message = errorMessage(error);
+    log('ERROR', `Health check "${label}" failed: ${message}`);
+    return `${label}: Error: ${message}\n`;
+  }
 }
 
 export class DatabaseHealthTool {
@@ -66,41 +84,41 @@ export class DatabaseHealthTool {
 
       if (healthTypes.has('index')) {
         const indexHealth = new IndexHealthCalc(this.sqlDriver);
-        result += `Invalid index check: ${await indexHealth.invalidIndexCheck()}\n`;
-        result += `Duplicate index check: ${await indexHealth.duplicateIndexCheck()}\n`;
-        result += `Index bloat: ${await indexHealth.indexBloat()}\n`;
-        result += `Unused index check: ${await indexHealth.unusedIndexes()}\n`;
+        result += await section('Invalid index check', () => indexHealth.invalidIndexCheck());
+        result += await section('Duplicate index check', () => indexHealth.duplicateIndexCheck());
+        result += await section('Index bloat', () => indexHealth.indexBloat());
+        result += await section('Unused index check', () => indexHealth.unusedIndexes());
       }
 
       if (healthTypes.has('connection')) {
         const connectionHealth = new ConnectionHealthCalc(this.sqlDriver);
-        result += `Connection health: ${await connectionHealth.connectionHealthCheck()}\n`;
+        result += await section('Connection health', () => connectionHealth.connectionHealthCheck());
       }
 
       if (healthTypes.has('vacuum')) {
         const vacuumHealth = new VacuumHealthCalc(this.sqlDriver);
-        result += `Vacuum health: ${await vacuumHealth.transactionIdDangerCheck()}\n`;
+        result += await section('Vacuum health', () => vacuumHealth.transactionIdDangerCheck());
       }
 
       if (healthTypes.has('sequence')) {
         const sequenceHealth = new SequenceHealthCalc(this.sqlDriver);
-        result += `Sequence health: ${await sequenceHealth.sequenceDangerCheck()}\n`;
+        result += await section('Sequence health', () => sequenceHealth.sequenceDangerCheck());
       }
 
       if (healthTypes.has('replication')) {
         const replicationHealth = new ReplicationCalc(this.sqlDriver);
-        result += `Replication health: ${await replicationHealth.replicationHealthCheck()}\n`;
+        result += await section('Replication health', () => replicationHealth.replicationHealthCheck());
       }
 
       if (healthTypes.has('buffer')) {
         const bufferHealth = new BufferHealthCalc(this.sqlDriver);
-        result += `Buffer health for indexes: ${await bufferHealth.indexHitRate()}\n`;
-        result += `Buffer health for tables: ${await bufferHealth.tableHitRate()}\n`;
+        result += await section('Buffer health for indexes', () => bufferHealth.indexHitRate());
+        result += await section('Buffer health for tables', () => bufferHealth.tableHitRate());
       }
 
       if (healthTypes.has('constraint')) {
         const constraintHealth = new ConstraintHealthCalc(this.sqlDriver);
-        result += `Constraint health: ${await constraintHealth.invalidConstraintsCheck()}\n`;
+        result += await section('Constraint health', () => constraintHealth.invalidConstraintsCheck());
       }
 
       return result || 'No health checks were performed.';

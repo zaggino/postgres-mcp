@@ -109,5 +109,5 @@ test('a tool failure that is not a Postgres rejection is logged with the tool la
 test('an analyze_db_health failure is reported in its output without isError', async () => {
   const { result } = await callFailingTool('analyze_db_health', { health_type: 'connection' });
 
-  expect(result).toEqual({ content: [{ type: 'text', text: 'Error calculating database health: socket hang up' }] });
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Connection health: Error: socket hang up\n' }] });
 });

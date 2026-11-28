@@ -650,3 +650,21 @@ describe(SafeSqlDriver, () => {
     await expect(runsReadOnly(query)).resolves.toBe(true);
   });
 });
+
+describe('SafeSqlDriver.executeTable', () => {
+  it('rejects a statement the allowlist refuses without sending it', async () => {
+    const inner = fakeExecutor(() => []);
+
+    await expect(new SafeSqlDriver(inner).executeTable('DROP TABLE t')).rejects.toThrow('Error validating query');
+
+    expect(inner.executeTable).not.toHaveBeenCalled();
+  });
+
+  it('runs an allowed SELECT with the comment prefix, forced read-only', async () => {
+    const inner = fakeExecutor(() => []);
+
+    await new SafeSqlDriver(inner).executeTable('SELECT 1');
+
+    expect(inner.executeTable.mock.calls).toEqual([[`${PREFIX}SELECT 1`, true]]);
+  });
+});

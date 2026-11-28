@@ -106,8 +106,11 @@ const cases: ValueCase[] = [
   { expr: "'<a>1</a>'::xml", expected: '[{"v":"<a>1</a>"}]' },
   { expr: "ROW(1,'x')::vt_composite", expected: '[{"v":"(1,x)"}]' },
   { expr: "'b'::vt_enum", expected: '[{"v":"b"}]' },
-  // pg has no parser for user-defined array types, so an enum array arrives as Postgres' array literal.
-  { expr: "ARRAY['a','b']::vt_enum[]", expected: '[{"v":"{a,b}"}]' },
+  // pg has no parser for these array types, so execute_sql decodes the array literal itself; the elements stay text.
+  { expr: "ARRAY['a','b']::vt_enum[]", expected: '[{"v":["a","b"]}]' },
+  { expr: "ARRAY['(3,4),(1,2)'::box, '(1,1),(0,0)'::box]", expected: '[{"v":["(3,4),(1,2)","(1,1),(0,0)"]}]' },
+  { expr: "ARRAY[ROW(1,'x')::vt_composite]", expected: '[{"v":["(1,x)"]}]' },
+  { expr: "ARRAY['[(0,0),(1,1)]'::lseg]", expected: '[{"v":["[(0,0),(1,1)]"]}]' },
   { expr: "ARRAY['x',NULL,'NULL']", expected: '[{"v":["x",null,"NULL"]}]' },
   { expr: 'ARRAY[true,false,NULL]', expected: '[{"v":[true,false,null]}]' },
   { expr: 'ARRAY[[1,2],[3,4]]', expected: '[{"v":[[1,2],[3,4]]}]' },
@@ -177,5 +180,19 @@ describeWithPostgres('execute_sql value types', ({ connectionString, version }) 
     );
 
     expect(result).toEqual({ text: expected, isError: false });
+  });
+
+  test('renames a later duplicate column name to the lowest free suffix', async () => {
+    if (!client) {
+      throw new Error('Client was not set up');
+    }
+    const result = toolResult(
+      await client.callTool({
+        name: 'execute_sql',
+        arguments: { database: 'app', sql: 'SELECT 1 AS a, 2 AS a, 3 AS a_2' },
+      })
+    );
+
+    expect(result).toEqual({ text: '[{"a":1,"a_3":2,"a_2":3}]', isError: false });
   });
 });

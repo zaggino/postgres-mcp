@@ -109,6 +109,7 @@ export function queuedPool(inner: PoolLike, max: number, waitTimeoutMs: number):
     let released = false;
     return {
       query: (text, values) => client.query(text, values),
+      queryArrays: (text) => client.queryArrays(text),
       release(destroy) {
         // A second release still reaches the client, which reports it, but frees no second slot.
         if (released) {

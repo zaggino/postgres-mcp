@@ -30,10 +30,6 @@ The `A_Expr` visitor in `src/sql/bind-params.ts` ends with a branch for `kind ==
 
 `executeResultSet` in `src/sql/sql-driver.ts` reports both a result with no columns and a statement without a result set as `columns: []`, so `execute_sql` answers "No results" for `SELECT FROM t`. Telling them apart needs the statement's command tag, which `QueryResultLike` does not carry yet.
 
-## 2026-11-26 · Minor · Bug · Duplicate column names collapse in a row object
-
-Rows (`Row` in `src/sql/sql-driver.ts`) are `Record<string, unknown>`, so `SELECT 1 AS a, 2 AS a` returns one `a` value: later columns overwrite earlier ones. `executeResultSet` returns the column names, including duplicates, so `execute_sql` could fetch rows in array mode and keep every column; how duplicates should appear in its JSON output is undecided.
-
 ## 2026-11-26 · Minor · Bug · Restricted mode rejects `VACUUM <table>` and `ANALYZE <table>`
 
 `VacuumRelation` is not in the node allowlist in `src/sql/allowlists.ts`, so `SafeSqlDriver` in `src/sql/safe-sql.ts` accepts only the bare forms.
@@ -271,7 +267,7 @@ Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ qu
 
 ## 2026-11-28 · Minor · Refactor · `SqlExecutor` carries parameters only `SafeSqlDriver` uses
 
-`executeResultSet(query, params?, forceReadonly?)` is the public seam, but only `SafeSqlDriver` passes `params` and `forceReadonly` to its inner driver, and `SafeSqlDriver` ignores the `forceReadonly` it receives. Type `SafeSqlDriver`'s inner driver as the concrete driver contract and shrink the public seam to `executeResultSet(query)`. Also move the static `SafeSqlDriver.executeParamQuery`, which works on any executor, to a free function next to `queryRows`.
+`executeResultSet(query, params?, forceReadonly?)` and `executeTable(query, forceReadonly?)` are the public seam, but only `SafeSqlDriver` passes `params` and `forceReadonly` to its inner driver, and `SafeSqlDriver` ignores the `forceReadonly` it receives. Type `SafeSqlDriver`'s inner driver as the concrete driver contract and shrink the public seam to `executeResultSet(query)` and `executeTable(query)`. Also move the static `SafeSqlDriver.executeParamQuery`, which works on any executor, to a free function next to `queryRows`.
 
 ## 2026-11-28 · Minor · Bug · One unreadable sequence fails the whole sequence check
 
@@ -280,12 +276,6 @@ The per-sequence `SELECT … FROM <sequence>` in `src/database-health/sequence-h
 ## 2026-11-28 · Minor · Refactor · Replication health keeps branches for servers before PostgreSQL 10
 
 `ReplicationCalc` (`src/database-health/replication-calc.ts`) reads `server_version_num` itself and keeps `pg_last_xlog_*` and pre-9.4 slot branches. Decide the oldest supported server, delete the dead branches, and use `getPostgresVersion` (`src/sql/extension-utils.ts`) if a version check remains.
-
-## 2026-11-28 · Minor · Bug · Arrays of user-defined types and some geometric types come back as one string
-
-_BREAKING CHANGE REQUIRED_
-
-`pg` has parsers only for some built-in array types, and `customTypes` in `src/sql/type-parsers.ts` adds a few more, so an array of an enum, domain or composite type, and a `box[]`, `lseg[]`, `line[]`, `path[]` or `polygon[]`, reaches `execute_sql` output as the Postgres array literal in one string: `ARRAY['a','b']::my_enum[]` returns `"{a,b}"`, while a `text[]` returns `["a","b"]`. User-defined OIDs differ per database, so a parser has to be chosen at query time, for example from the field's `typcategory` or by `typelem` lookup per pool; `box[]` uses `;` as its delimiter, which the `text[]` parser does not. `tests/integration/value-types.test.ts` pins the enum-array form.
 
 ## 2026-11-28 · Minor · Security · Hypothetical index definitions are built from unquoted input
 

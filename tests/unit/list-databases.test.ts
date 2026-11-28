@@ -2,7 +2,7 @@ import { expect, it as test } from 'vitest';
 
 import { createServer } from '../../src/server.ts';
 import { queryRows } from '../../src/sql/safe-sql.ts';
-import { noRowsResult, rowsResult } from '../support/fake-pool.ts';
+import { arrayRowsResult, noRowsResult, rowsResult } from '../support/fake-pool.ts';
 import { callToolText, connectClient } from '../support/mcp-client.ts';
 import { createTestRegistry } from '../support/registry.ts';
 
@@ -120,4 +120,15 @@ test('execute_sql tells a statement with no result set from a SELECT that return
 
   expect(noResultSet).toBe('No results');
   expect(JSON.parse(noRows)).toEqual([]);
+});
+
+test('execute_sql keeps every column of a result with duplicate column names, renaming the later ones', async () => {
+  const { registry } = createTestRegistry(['a'], {
+    handler: ({ text }) => [text.includes('AS a_2') ? arrayRowsResult(['a', 'a', 'a_2'], [[1, 2, 3]]) : noRowsResult],
+  });
+  const client = await connectClient(createServer(registry));
+
+  const text = await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 1 AS a, 2 AS a, 3 AS a_2' });
+
+  expect(text).toBe('[{"a":1,"a_3":2,"a_2":3}]');
 });

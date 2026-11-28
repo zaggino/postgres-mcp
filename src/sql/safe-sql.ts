@@ -12,7 +12,7 @@ import type { Identifier } from './literal.ts';
 import { paramSqlToQuery } from './literal.ts';
 import type { RawStmtJson } from './pg-ast.ts';
 import { asWrappedNode, parseSql, SqlParseError } from './pg-ast.ts';
-import type { DbConnPool, ResultSet, Row } from './sql-driver.ts';
+import type { DbConnPool, ResultSet, Row, Table } from './sql-driver.ts';
 import { QueryTimeoutError } from './sql-driver.ts';
 
 const PG_CATALOG_PATTERN = /^pg_catalog\.(?<name>.+)$/u;
@@ -35,6 +35,8 @@ export interface SqlExecutor {
   readonly pool?: DbConnPool;
   /** The last statement's columns and rows; no columns means it returned no result set. */
   executeResultSet: (query: string, params?: readonly unknown[] | null, forceReadonly?: boolean) => Promise<ResultSet>;
+  /** Like executeResultSet without parameters, with rows as arrays so duplicate column names keep every value. */
+  executeTable: (query: string, forceReadonly?: boolean) => Promise<Table>;
 }
 
 /** The rows of the last statement's result; empty when it returned no rows or no result set. */
@@ -215,9 +217,17 @@ export class SafeSqlDriver implements SqlExecutor {
     params: readonly unknown[] | null = null,
     _forceReadonly = true
   ): Promise<ResultSet> {
+    return await this.#restricted(query, (prefixed) => this.sqlDriver.executeResultSet(prefixed, params, true));
+  }
+
+  async executeTable(query: string): Promise<Table> {
+    return await this.#restricted(query, (prefixed) => this.sqlDriver.executeTable(prefixed, true));
+  }
+
+  async #restricted<T>(query: string, run: (prefixed: string) => Promise<T>): Promise<T> {
     await validateQuery(query);
     try {
-      return await this.sqlDriver.executeResultSet(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
+      return await run(`${SQL_COMMENT_PREFIX} ${query}`);
     } catch (error) {
       if (error instanceof QueryTimeoutError) {
         throw new RestrictedQueryTimeoutError(error.seconds, { cause: error.cause });

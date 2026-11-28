@@ -13,6 +13,8 @@ The fork no longer tracks upstream and fixes inherited defects as it finds them.
 - Installed from npm. There is no Docker image and no PyPI package.
 - Structured tool results are JSON instead of Python repr text.
 - Tool output (`execute_sql` and `get_top_queries`) returns each value as Postgres sends it. `date`, `timestamp`, `timestamptz`, `time`, `interval`, `bytea` (hex, `\x...`), geometric types, ranges and `numeric` (also in arrays) are their Postgres text. `int8` and numbers inside `json`/`jsonb` are JSON numbers with exactly the digits Postgres sent, also beyond 2^53. A float `NaN`, `Infinity` or `-Infinity` is the string `"NaN"`, `"Infinity"` or `"-Infinity"`.
+- `execute_sql` returns an array of any type as a JSON array: arrays of enums, composites, domains and `box`, `lseg`, `line`, `path` or `polygon` too, whose elements are their Postgres text. Upstream returned those as one array-literal string such as `"{a,b}"`.
+- `execute_sql` keeps every column when names repeat: the first keeps its name and each later one gets the lowest free suffix `_2`, `_3`, ..., so `SELECT 1 AS a, 2 AS a` returns `{"a":1,"a_2":2}`. Upstream kept only the last value.
 - `execute_sql` requires `sql`; upstream defaulted it to `"all"`.
 - `explain_query` checks each hypothetical index against a schema (`table`, a non-empty `columns` list of strings, optional `using`, no other keys) and accepts `null` for none; upstream accepted any object and split a string `columns` value into characters.
 - Index recommendation results leave out the advisor trace (`_langfuse_trace`) unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`; upstream includes it unless the variable is `false`.

@@ -1,10 +1,11 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
+import { toJson } from '../json.ts';
 import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 import type { Row } from '../sql/sql-driver.ts';
-import { formatError, formatTextResponse, toJson } from './result.ts';
+import { formatError, formatTextResponse } from './result.ts';
 
 export async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
   const rows = await queryRows(

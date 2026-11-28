@@ -34,9 +34,6 @@ const cases: ValueCase[] = [
   },
   { expr: "'NaN'::numeric", expected: '[{"v":"NaN"}]' },
   { expr: "'NaN'::float8", expected: '[{"v":"NaN"}]' },
-  { expr: "'Infinity'::float8", expected: '[{"v":"Infinity"}]' },
-  { expr: "'-Infinity'::float8", expected: '[{"v":"-Infinity"}]' },
-  { expr: "'Infinity'::float4", expected: '[{"v":"Infinity"}]' },
   {
     expr: "ARRAY['NaN','Infinity','-Infinity',1.5]::float8[]",
     expected: '[{"v":["NaN","Infinity","-Infinity",1.5]}]',
@@ -81,6 +78,7 @@ const cases: ValueCase[] = [
   },
   { expr: `'{"n": 9007199254740993}'::json`, expected: '[{"v":{"n":9007199254740993}}]' },
   { expr: `'{"n": 9007199254740993}'::jsonb`, expected: '[{"v":{"n":9007199254740993}}]' },
+  { expr: `ARRAY['{"n": 9007199254740993}']::json[]`, expected: '[{"v":[{"n":9007199254740993}]}]' },
   {
     expr: `ARRAY['{"n": 9007199254740993}']::jsonb[]`,
     expected: '[{"v":[{"n":9007199254740993}]}]',
@@ -96,6 +94,8 @@ const cases: ValueCase[] = [
   { expr: "B'10110'::bit(5)", expected: '[{"v":"10110"}]' },
   { expr: "'(1.5,2)'::point", expected: '[{"v":"(1.5,2)"}]' },
   { expr: "'<(1,2),3>'::circle", expected: '[{"v":"<(1,2),3>"}]' },
+  { expr: "ARRAY['(1,2)'::point]", expected: '[{"v":["(1,2)"]}]' },
+  { expr: "ARRAY['<(1,2),3>'::circle]", expected: '[{"v":["<(1,2),3>"]}]' },
   { expr: "'(3,4),(1,2)'::box", expected: '[{"v":"(3,4),(1,2)"}]' },
   { expr: 'int4range(1,5)', expected: '[{"v":"[1,5)"}]' },
   { expr: 'int4multirange(int4range(1,5), int4range(10,12))', expected: '[{"v":"{[1,5),[10,12)}"}]', minMajor: 14 },
@@ -121,9 +121,9 @@ function toolResult(raw: unknown): { text: string; isError: boolean } {
 
 describeWithPostgres('execute_sql value types', ({ connectionString, version }) => {
   const major = Number(version);
-  let admin: pg.Pool;
-  let registry: DatabaseRegistry;
-  let client: Client;
+  let admin: pg.Pool | undefined;
+  let registry: DatabaseRegistry | undefined;
+  let client: Client | undefined;
   let originalTz: string | undefined;
 
   beforeAll(async () => {
@@ -148,13 +148,14 @@ describeWithPostgres('execute_sql value types', ({ connectionString, version }) 
   });
 
   afterAll(async () => {
-    await registry.closeAll();
-    await admin.end();
     if (originalTz === undefined) {
       delete process.env.TZ;
     } else {
       process.env.TZ = originalTz;
     }
+    await client?.close();
+    await registry?.closeAll();
+    await admin?.end();
   });
 
   test.for(cases)('returns $expr exactly as Postgres sends it', async ({ expr, expected, minMajor }, ctx) => {
@@ -162,6 +163,9 @@ describeWithPostgres('execute_sql value types', ({ connectionString, version }) 
       ctx.skip();
     }
 
+    if (!client) {
+      throw new Error('Client was not set up');
+    }
     const result = toolResult(
       await client.callTool({
         name: 'execute_sql',

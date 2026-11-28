@@ -1,10 +1,10 @@
 import { errorMessage } from '../errors.ts';
+import { toJson } from '../json.ts';
 import { logLine } from '../log.ts';
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
-import { toJson } from '../tools/result.ts';
 
 export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 

@@ -4,19 +4,6 @@ import { ErrorResult } from '../artifacts.ts';
 import { errorMessage } from '../errors.ts';
 import { isStatementError } from '../sql/sql-driver.ts';
 
-/**
- * Tool output as JSON. A bigint is written as an exact JSON number; NaN and the infinities, which JSON has no number
- * for, as the strings "NaN", "Infinity" and "-Infinity". Raw JSON values (see parseJsonLossless) pass through.
- */
-export function toJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) => {
-    if (typeof item === 'bigint') {
-      return JSON.rawJSON(item.toString());
-    }
-    return typeof item === 'number' && !Number.isFinite(item) ? String(item) : item;
-  });
-}
-
 export function formatTextResponse(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }

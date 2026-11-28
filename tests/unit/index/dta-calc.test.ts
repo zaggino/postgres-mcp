@@ -410,7 +410,7 @@ test('basic workload analysis recommends indexes for the queried columns', async
         // check if hypopg is enabled
         rows({ extversion: '1.4.0' }),
         // check last analyze
-        rows({ last_analyze: '2024-01-01 00:00:00' }),
+        rows({ last_analyze: '2024-01-01 00:00:00+00' }),
         // pg_stat_statements
         rows(
           {

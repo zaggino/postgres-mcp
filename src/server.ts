@@ -7,6 +7,7 @@ import { HEALTH_TYPES } from './database-health/database-health.ts';
 import type { DatabaseRegistry } from './database-registry.ts';
 import { DatabaseAccessError } from './database-registry.ts';
 import { errorMessage } from './errors.ts';
+import { toJson } from './json.ts';
 import { log } from './log.ts';
 import { RunningCalls } from './running-calls.ts';
 import { offersCancelQuery, serverInstructions } from './server-instructions.ts';
@@ -21,7 +22,7 @@ import {
   getTopQueries,
 } from './tools/analysis.ts';
 import { getObjectDetails, listObjects, listSchemas } from './tools/objects.ts';
-import { formatError, formatTextResponse, toJson } from './tools/result.ts';
+import { formatError, formatTextResponse } from './tools/result.ts';
 
 const SERVER_NAME = 'postgres-mcp';
 const SERVER_VERSION = packageJson.version;

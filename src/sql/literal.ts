@@ -49,7 +49,7 @@ function arrayElement(value: unknown): string {
   if (typeof value === 'boolean') {
     return value ? 't' : 'f';
   }
-  const text = value instanceof Date ? value.toISOString() : cellText(value);
+  const text = cellText(value);
   return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
@@ -72,9 +72,6 @@ export function literal(value: unknown): string {
   }
   if (Array.isArray(value)) {
     return pg.escapeLiteral(arrayElement(value));
-  }
-  if (value instanceof Date) {
-    return pg.escapeLiteral(value.toISOString());
   }
   throw new TypeError(`Cannot convert ${typeof value} to a SQL literal`);
 }

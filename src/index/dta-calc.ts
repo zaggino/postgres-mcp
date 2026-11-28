@@ -652,13 +652,13 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
             return true;
           }
         } catch (error) {
-          throw new Error('Error parsing existing index', { cause: error });
+          throw new Error(`Error parsing existing index: ${errorMessage(error)}`, { cause: error });
         }
       }
 
       return false;
     } catch (error) {
-      throw new Error('Error in robust index comparison', { cause: error });
+      throw new Error(`Error in robust index comparison: ${errorMessage(error)}`, { cause: error });
     }
   }
 
@@ -708,7 +708,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       };
     } catch (error) {
       this.dtaTrace(`Error extracting index info: ${errorMessage(error)}`);
-      throw new Error('Error extracting index info', { cause: error });
+      throw new Error(`Error extracting index info: ${errorMessage(error)}`, { cause: error });
     }
   }
 

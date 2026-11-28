@@ -153,15 +153,6 @@ describe(TopQueriesCalc, () => {
     expect(executeResultSet).not.toHaveBeenCalled();
   });
 
-  it('reports a database error instead of throwing', async () => {
-    const { driver, executeResultSet } = createDriver(13);
-    executeResultSet.mockRejectedValue(new Error('Database error'));
-
-    const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
-
-    expect(result).toContain('Error getting slow queries: Database error');
-  });
-
   it('aliases the PostgreSQL 12 columns and zeroes wal_bytes in resource queries', async () => {
     const { driver, executeResultSet } = createDriver(12);
 

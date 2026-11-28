@@ -80,13 +80,17 @@ test('a Postgres error while checking out a connection is reported with isError'
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: too many clients' }], isError: true });
 });
 
-async function callFailingTool(name: string, args: Record<string, unknown>) {
+async function callFailingTool(
+  name: string,
+  args: Record<string, unknown>,
+  failure: () => Error = () => new Error('socket hang up')
+) {
   const { registry } = createTestRegistry(['app'], {
     handler: ({ text }) => {
       if (text.startsWith('BEGIN') || text.startsWith('ROLLBACK') || text === 'SELECT 1') {
         return [noRowsResult];
       }
-      throw new Error('socket hang up');
+      throw failure();
     },
   });
   const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
@@ -106,8 +110,26 @@ test('a tool failure that is not a Postgres rejection is logged with the tool la
   expect(logged).toContain('ERROR: Error listing schemas: socket hang up\n');
 });
 
-test('an analyze_db_health connection failure is reported in its output without isError', async () => {
-  const { result } = await callFailingTool('analyze_db_health', { health_type: 'connection' });
+test.each([
+  ['analyze_db_health', { health_type: 'connection' }],
+  ['get_top_queries', {}],
+  ['analyze_workload_indexes', {}],
+  ['analyze_query_indexes', { queries: ['SELECT 1'] }],
+])('a %s connection failure is reported with isError', async (name, args) => {
+  const { result } = await callFailingTool(name, args);
 
-  expect(result).toEqual({ content: [{ type: 'text', text: 'Error calculating database health: socket hang up' }] });
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error: socket hang up' }], isError: true });
+});
+
+test('a get_top_queries statement Postgres rejects is reported without isError', async () => {
+  const { result } = await callFailingTool('get_top_queries', {}, () => databaseError('permission denied', '42501'));
+
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error: permission denied' }] });
+});
+
+test('an invalid analyze_db_health type is reported with isError', async () => {
+  const { result } = await callFailingTool('analyze_db_health', { health_type: 'disk' });
+
+  expect(result.isError).toBe(true);
+  expect(JSON.stringify(result.content)).toContain("Invalid health types provided: 'disk'");
 });

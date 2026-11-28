@@ -86,10 +86,6 @@ Statistics values in `src/sql/bind-params.ts` pass through `number`, so very lar
 
 The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so `ExplainPlanArtifact` in `src/artifacts.ts` cannot be created from it.
 
-## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
-
-`src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant.
-
 ## 2026-11-26 · Minor · Bug · Index-health column split breaks on expression indexes
 
 `src/database-health/index-health-calc.ts` splits column lists on `", "`, so an expression index containing a comma is split into bogus columns.
@@ -209,12 +205,6 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 
 `shutdown()` in `src/main.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
 
-## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
-
-_BREAKING CHANGE REQUIRED_
-
-`formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
-
 ## 2026-11-27 · Minor · Security · Query cancel requests are sent without TLS
 
 `sendCancelRequest` in `src/sql/sql-driver.ts` sends the CancelRequest (backend pid and secret key) over plain TCP even when the connection uses TLS, as libpq and pg do; an observer on the network path can then cancel that connection's statements. Postgres 18 / protocol 3.2 allows cancel over TLS; send it over TLS when the connection uses it.
@@ -283,7 +273,7 @@ _BREAKING CHANGE REQUIRED_
 
 No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate a result. Give the two tools a zod output schema with one type per field: numbers as numbers, `null` where a cost or multiple is not finite, the unit in the key name (`size_bytes`), and an empty array for no recommendations. Then declare it as `outputSchema` and return `structuredContent` next to the text.
 
-Do this after "Health, top-queries and index tools report failures without `isError`". The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`, and today the advisor returns its failures as ordinary `{ "error": ... }` output. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
+The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`. The advisor's failures go through `formatError`, which leaves `isError` off when Postgres rejected the statement, so such a result would be refused; those failures need `isError` for these two tools. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
 
 Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
 

@@ -33,9 +33,7 @@ test('a connection failure aborts the report after one attempt instead of repeat
     throw new Error('socket hang up');
   });
 
-  const report = await new DatabaseHealthTool(executor).health('all');
-
-  expect(report).toBe('Error calculating database health: socket hang up');
+  await expect(new DatabaseHealthTool(executor).health('all')).rejects.toThrow('socket hang up');
   expect(executor.executeResultSet).toHaveBeenCalledOnce();
 });
 
@@ -45,7 +43,7 @@ test('a cancelled call stops the whole report', async () => {
     throw new QueryCancelledError();
   });
 
-  const report = await new DatabaseHealthTool(executor).health('connection,buffer');
-
-  expect(report).toBe('Error calculating database health: Query cancelled');
+  await expect(new DatabaseHealthTool(executor).health('connection,buffer')).rejects.toBeInstanceOf(
+    QueryCancelledError
+  );
 });

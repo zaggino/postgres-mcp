@@ -1,3 +1,4 @@
+import { errorMessage } from '../errors.ts';
 import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver, queryRows } from './safe-sql.ts';
@@ -49,7 +50,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
     versions.set(cacheKey(sqlDriver), version);
     return version;
   } catch (error) {
-    throw new Error('Error determining PostgreSQL version', { cause: error });
+    throw new Error(`Error determining PostgreSQL version: ${errorMessage(error)}`, { cause: error });
   }
 }
 

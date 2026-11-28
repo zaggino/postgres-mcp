@@ -157,6 +157,9 @@ test('generate candidates creates single-column candidates with estimated sizes'
 
 test('analyze workload recommends indexes for the workload tables', async () => {
   const driver = createDriver((query) => {
+    if (query.includes('pg_extension')) {
+      return rows({ extversion: '1.4.0' });
+    }
     if (query.includes('pg_stat_statements')) {
       return rows({
         query: 'SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)',
@@ -214,16 +217,12 @@ test('analyze workload recommends indexes for the workload tables', async () => 
   expect(session.recommendations.some((r) => ['users', 'orders'].includes(r.table))).toBe(true);
 });
 
-test('analyze workload reports a failing database and tolerates invalid SQL', async () => {
+test('analyze workload rejects on a failing database and tolerates invalid SQL', async () => {
   const driver = createDriver();
   driver.executeResultSet.mockRejectedValue(new Error('HypoPG not available'));
   const dta = createAdvisor(driver);
 
-  const session = await dta.analyzeWorkload({
-    minCalls: 50,
-    minAvgTimeMs: 5,
-  });
-  expect(session.error).toContain('HypoPG not available');
+  await expect(dta.analyzeWorkload({ minCalls: 50, minAvgTimeMs: 5 })).rejects.toThrow('HypoPG not available');
 
   driver.executeResultSet.mockResolvedValue({ columns: [], rows: [] });
   const columns = await dta.sqlBindParams.extractColumns('INVALID SQL');
@@ -319,7 +318,7 @@ test('index size estimation fails on NULL column statistics instead of assuming 
 
   const error = await dta.estimateIndexSize('users', ['name']).catch((error_: unknown) => error_);
 
-  expect(error).toMatchObject({ message: 'Error estimating index size' });
+  expect(error).toHaveProperty('message', expect.stringMatching(/^Error estimating index size: /u));
   expect(error).toHaveProperty('cause.message', expect.stringContaining('total_width'));
 });
 
@@ -408,9 +407,7 @@ test('workload analysis asks for ANALYZE when no table has been analyzed', async
     createDriver(sequential([rows({ extversion: '1.4.0' }), rows({ last_analyze: null })]))
   );
 
-  const session = await dta.analyzeWorkload({ minCalls: 50, minAvgTimeMs: 5 });
-
-  expect(session.error).toContain('Statistics are not up-to-date');
+  await expect(dta.analyzeWorkload({ minCalls: 50, minAvgTimeMs: 5 })).rejects.toThrow('Statistics are not up-to-date');
 });
 
 test('basic workload analysis recommends indexes for the queried columns', async () => {
@@ -421,6 +418,8 @@ test('basic workload analysis recommends indexes for the queried columns', async
         rows({ extversion: '1.4.0' }),
         // check last analyze
         rows({ last_analyze: '2024-01-01 00:00:00+00' }),
+        // check if pg_stat_statements is installed
+        rows({ extversion: '1.10' }),
         // pg_stat_statements
         rows(
           {

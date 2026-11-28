@@ -9,7 +9,7 @@ import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
 import * as cell from '../sql/cells.ts';
-import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
+import { checkExtension, checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -195,7 +195,6 @@ export class IndexTuningResult {
   workloadSource = 'n/a';
   workload: WorkloadQuery[] | null = null;
   recommendations: IndexRecommendationAnalysis[] = [];
-  error: string | null = null;
   dtaTraces: string[] = [];
 
   constructor(sessionId: string, budgetMb: number) {
@@ -280,66 +279,58 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     const session = new IndexTuningResult(sessionId, maxIndexSizeMb);
 
-    try {
-      const precheckResult = await this.runPrechecks(session);
-      if (precheckResult) {
-        return precheckResult;
-      }
+    await this.runPrechecks();
 
-      if (workload && workload.length > 0) {
-        session.workloadSource = 'args';
-        session.workload = workload;
-      } else if (queryList && queryList.length > 0) {
-        session.workloadSource = 'query_list';
-        session.workload = queryList.map((query) => ({ query }));
-      } else if (sqlFile) {
-        session.workloadSource = 'sql_file';
-        session.workload = this.getWorkloadFromFile(sqlFile);
-      } else {
-        session.workloadSource = 'query_store';
-        session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
-      }
+    if (workload && workload.length > 0) {
+      session.workloadSource = 'args';
+      session.workload = workload;
+    } else if (queryList && queryList.length > 0) {
+      session.workloadSource = 'query_list';
+      session.workload = queryList.map((query) => ({ query }));
+    } else if (sqlFile) {
+      session.workloadSource = 'sql_file';
+      session.workload = this.getWorkloadFromFile(sqlFile);
+    } else {
+      session.workloadSource = 'query_store';
+      await this.requirePgStatStatements();
+      session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
+    }
 
-      if (session.workload.length === 0) {
-        logLine('No workload to analyze');
-        return session;
-      }
+    if (session.workload.length === 0) {
+      logLine('No workload to analyze');
+      return session;
+    }
 
-      const parsedWorkload = await this.validateAndParseWorkload(session.workload);
+    const parsedWorkload = await this.validateAndParseWorkload(session.workload);
 
-      const queryWeights = this.convertWorkloadToQueryWeights(parsedWorkload);
+    const queryWeights = this.convertWorkloadToQueryWeights(parsedWorkload);
 
-      if (queryWeights.length === 0) {
-        this.dtaTrace('No query provided');
-        session.recommendations = [];
-      } else {
-        const workloadQueries = queryWeights.map(([query]) => query);
+    if (queryWeights.length === 0) {
+      this.dtaTrace('No query provided');
+      session.recommendations = [];
+    } else {
+      const workloadQueries = queryWeights.map(([query]) => query);
 
-        this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
+      this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
 
-        const recommendations = await this.generateRecommendations(queryWeights);
-        session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
+      const recommendations = await this.generateRecommendations(queryWeights);
+      session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
 
-        // Reset HypoPG only once at the end
-        await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
-      }
-    } catch (error) {
-      logLine(`Error in workload analysis: ${errorMessage(error)}`);
-      session.error = `Error in workload analysis: ${errorMessage(error)}`;
+      // Reset HypoPG only once at the end
+      await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
     }
 
     session.dtaTraces = this.dtaTraces;
     return session;
   }
 
-  /** Returns the session with an error when a pre-check fails, otherwise undefined. */
-  async runPrechecks(session: IndexTuningResult): Promise<IndexTuningResult | undefined> {
+  /** Throws, with what to do about it, when the database cannot be tuned: hypopg missing or no table analyzed. */
+  async runPrechecks(): Promise<void> {
     // Pre-check 1: HypoPG
     const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(this.sqlDriver);
 
     if (!isHypopgInstalled) {
-      session.error = hypopgMessage;
-      return session;
+      throw new Error(hypopgMessage);
     }
 
     // Pre-check 2: ANALYZE has been run at least once
@@ -352,12 +343,20 @@ export abstract class IndexTuningBase implements DtaTracer {
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
         'Without up-to-date statistics, the index recommendations may be inaccurate.';
-      session.error = message;
-      logLine(message);
-      return session;
+      throw new Error(message);
     }
+  }
 
-    return undefined;
+  /** Throws when the workload cannot be read because pg_stat_statements is not installed. */
+  async requirePgStatStatements(): Promise<void> {
+    const { isInstalled } = await checkExtension(this.sqlDriver, 'pg_stat_statements', false);
+    if (!isInstalled) {
+      throw new Error(
+        'The pg_stat_statements extension is required to read the workload, but it is not installed in this ' +
+          "database. Run 'CREATE EXTENSION pg_stat_statements;' (it must also be in shared_preload_libraries), " +
+          'or pass the queries to analyze_query_indexes instead.'
+      );
+    }
   }
 
   /** Validate the workload to ensure it is analyzable. */
@@ -517,7 +516,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       return avgCost;
     } catch (error) {
       this.dtaTrace(`    + error evaluating configuration: ${errorMessage(error)}`);
-      throw new Error('Error evaluating configuration', { cause: error });
+      throw new Error(`Error evaluating configuration: ${errorMessage(error)}`, { cause: error });
     }
   }
 
@@ -546,7 +545,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       this.sizeEstimateCache.set(cacheKey, sizeEstimate);
       return sizeEstimate;
     } catch (error) {
-      throw new Error('Error estimating index size', { cause: error });
+      throw new Error(`Error estimating index size: ${errorMessage(error)}`, { cause: error });
     }
   }
 

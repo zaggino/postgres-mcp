@@ -1,3 +1,4 @@
+import { errorMessage } from '../errors.ts';
 import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyFloatStr } from '../py-format.ts';
@@ -605,7 +606,7 @@ export class SqlBindParams {
     try {
       return await this.replaceParametersUnchecked(query);
     } catch (error) {
-      throw new Error('Error replacing parameters', { cause: error });
+      throw new Error(`Error replacing parameters: ${errorMessage(error)}`, { cause: error });
     }
   }
 

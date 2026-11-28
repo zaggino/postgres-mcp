@@ -6,6 +6,9 @@ import { log } from '../log.ts';
 export const DEFAULT_MAX_SESSIONS = 100;
 export const DEFAULT_SESSION_IDLE_MINUTES = 30;
 
+/** The part of a response the store needs: whether it has closed, and its close event. */
+export type HeldResponse = Pick<ServerResponse, 'closed' | 'once'>;
+
 interface SessionEntry<T> {
   /** Requests being served for the session; its idle timer does not run meanwhile. */
   inFlight: number;
@@ -41,14 +44,14 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   /** Starts tracking a session, held until `res` closes; after that it is closed if it stays idle. */
-  add(id: string, transport: T, res: ServerResponse): void {
+  add(id: string, transport: T, res: HeldResponse): void {
     const entry: SessionEntry<T> = { transport, inFlight: 0, timer: undefined };
     this.#entries.set(id, entry);
     this.#hold(id, entry, res);
   }
 
   /** The session's transport, held until `res` closes; undefined for an unknown id. */
-  acquire(id: string, res: ServerResponse): T | undefined {
+  acquire(id: string, res: HeldResponse): T | undefined {
     const entry = this.#entries.get(id);
     if (entry) {
       this.#hold(id, entry, res);
@@ -56,11 +59,18 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     return entry?.transport;
   }
 
-  /** Keeps the session's idle timer stopped until the response closes. */
-  #hold(id: string, entry: SessionEntry<T>, res: ServerResponse): void {
+  /**
+   * Keeps the session's idle timer stopped until the response closes. A response that closed already (the client
+   * left while its body was read) ends the hold at once, or its session would never become idle.
+   */
+  #hold(id: string, entry: SessionEntry<T>, res: HeldResponse): void {
     entry.inFlight += 1;
     clearTimeout(entry.timer);
     entry.timer = undefined;
+    if (res.closed) {
+      this.#end(id);
+      return;
+    }
     res.once('close', () => {
       this.#end(id);
     });

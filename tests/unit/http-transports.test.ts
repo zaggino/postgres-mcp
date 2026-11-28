@@ -77,7 +77,7 @@ const INITIALIZE = JSON.stringify({
   },
 });
 
-test('streamable HTTP serves the ten tools to the SDK client', async () => {
+test(`streamable HTTP serves the ${TOOL_COUNT} tools to the SDK client`, async () => {
   const { port } = await startStreamable();
 
   const tools = await listToolsThrough(

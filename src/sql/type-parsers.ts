@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { parse as parseArray } from 'postgres-array';
 
 import { parseJsonLossless } from '../json.ts';
 
@@ -9,23 +10,9 @@ function parseInt8(value: string): number | bigint {
   return Number.isSafeInteger(asNumber) ? asNumber : BigInt(value);
 }
 
-const TEXT_ARRAY_OID = 1009;
-
-/**
- * Parses a text[] literal into strings (null for NULL), nested for multi-dimensional arrays. pg types the OID as an
- * enum and the parser as any, hence the cast.
- */
-const parseTextArray = (pg.types.getTypeParser as (oid: number, format: 'text') => TextParser)(TEXT_ARRAY_OID, 'text');
-
-function mapElements(parsed: unknown, convert: (element: string) => unknown): unknown {
-  if (Array.isArray(parsed)) {
-    return parsed.map((item: unknown) => mapElements(item, convert));
-  }
-  return typeof parsed === 'string' ? convert(parsed) : parsed;
-}
-
-function arrayOf(convert: (element: string) => unknown): TextParser {
-  return (value) => mapElements(parseTextArray(value), convert);
+/** An array literal parsed with `convert` applied to each element (NULL stays null, dimensions nest). */
+function arrayOf(convert: TextParser): TextParser {
+  return (value) => parseArray(value, convert);
 }
 
 const identity: TextParser = (value) => value;

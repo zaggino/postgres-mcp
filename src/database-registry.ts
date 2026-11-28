@@ -41,7 +41,7 @@ export type DatabaseListing =
   | {
       database: string;
       state: 'open' | 'closed' | 'error';
-      /** Seconds until an open pool closes. */
+      /** Seconds until an open pool closes; absent while a call is running. */
       idle_seconds_left?: number;
       error?: string;
       /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
@@ -373,46 +373,46 @@ export class DatabaseRegistry {
 
     const listing: RegistryListing = {};
     for (const group of ['cli', 'config'] as const) {
-      const names = [...this.#catalog].flatMap(([name, { source }]) => (source === group ? [name] : []));
-      if (names.length > 0) {
-        listing[group] = this.#listDatabases(names);
+      const databases = this.#listDatabases((_name, { source }) => source === group);
+      if (databases.length > 0) {
+        listing[group] = databases;
       }
     }
     if (this.#sources.length > 0) {
       listing.servers = this.#sources.map(({ source, found, error }): ServerListing => {
         const message = 'error' in source.uri ? source.uri.error : error;
-        // A discovered name that an explicit database of the same name replaces is listed with that database only.
-        const names = [...found.keys()].filter((name) => this.#catalog.get(name)?.source === 'server');
         return {
           server: 'uri' in source.uri ? serverLabel(source.uri.uri) : '',
           ...(source.prefix && { prefix: source.prefix }),
           ...(message && { error: message }),
-          databases: this.#listDatabases(names),
+          databases: this.#listDatabases((name, entry) => entry.source === 'server' && found.has(name)),
         };
       });
     }
     return listing;
   }
 
-  /** The listing entries of the named catalog databases, sorted by name. */
-  #listDatabases(names: string[]): DatabaseListing[] {
-    return names.toSorted().map((name) => {
-      const uri = this.#catalog.get(name)?.uri;
-      const pool = this.#pools.get(name);
-      const state = uri && 'error' in uri ? 'error' : poolState(pool);
-      const lastError = pool?.lastError;
-      const secondsLeft = pool?.secondsLeft ?? null;
-      if (state === 'closed' && !lastError) {
-        return name;
-      }
-      return {
-        database: name,
-        state,
-        ...(secondsLeft !== null && { idle_seconds_left: secondsLeft }),
-        ...(uri && 'error' in uri && { error: uri.error }),
-        ...(lastError && { last_error: lastError }),
-      };
-    });
+  /** The listing entries of the catalog databases `keep` selects, sorted by name. */
+  #listDatabases(keep: (name: string, entry: CatalogEntry) => boolean): DatabaseListing[] {
+    return [...this.#catalog]
+      .filter(([name, entry]) => keep(name, entry))
+      .toSorted(([a], [b]) => (a < b ? -1 : Number(a > b)))
+      .map(([name, { uri }]) => {
+        const pool = this.#pools.get(name);
+        const state = 'error' in uri ? 'error' : poolState(pool);
+        const lastError = pool?.lastError;
+        if (state === 'closed' && !lastError) {
+          return name;
+        }
+        const secondsLeft = state === 'open' ? pool?.secondsLeft : null;
+        return {
+          database: name,
+          state,
+          ...(typeof secondsLeft === 'number' && { idle_seconds_left: secondsLeft }),
+          ...('error' in uri && { error: uri.error }),
+          ...(lastError && { last_error: lastError }),
+        };
+      });
   }
 
   async closeAll(): Promise<void> {

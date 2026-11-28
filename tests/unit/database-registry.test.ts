@@ -234,6 +234,13 @@ test('rejects a name discovered on two servers unless a prefix separates them', 
   await expect(distinct.use('b-shared', query)).resolves.toEqual([]);
 });
 
+test('a discovered name that an explicit database also uses is listed with the explicit database only', async () => {
+  const { poolFactory } = setup(datnames(['app']));
+  const reg = registry({ poolFactory, databases: [{ ...APP_DB, source: 'config' }], servers: [source()] });
+
+  await expect(reg.list()).resolves.toEqual({ config: ['app'], servers: [{ server: 'h:5432', databases: [] }] });
+});
+
 test('list shows a name found on two servers as an error entry', async () => {
   const { poolFactory } = setup(datnames(['shared']));
   const reg = registry({
@@ -372,6 +379,18 @@ test('a pool whose last query failed still lists as open while its idle timer ru
   expect(cli?.[0]).toMatchObject({ database: 'app', state: 'open', idle_seconds_left: 300 });
 });
 
+test('a pool that could not connect lists as closed with its error and no idle seconds', async () => {
+  const { poolFactory } = setup(() => {
+    throw new Error('connection refused');
+  });
+  const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
+  await expect(reg.use('app', query)).rejects.toThrow('connection refused');
+
+  const { cli } = await reg.list();
+
+  expect(cli).toEqual([{ database: 'app', state: 'closed', last_error: 'connection refused' }]);
+});
+
 test('closeAll also closes a pool retired while its call is still running', async () => {
   let names = ['one'];
   const { urls, fakes, poolFactory } = setup((recorded) => datnames(names)(recorded));
@@ -456,11 +475,4 @@ test('caches the version per executor when the executor has no pool', async () =
 
   expect(versions).toEqual([15, 15, 16]);
   expect(a.executeResultSet).toHaveBeenCalledOnce();
-});
-
-test('a discovered name that an explicit database also uses is listed with the explicit database only', async () => {
-  const { poolFactory } = setup(datnames(['app']));
-  const reg = registry({ poolFactory, databases: [{ ...APP_DB, source: 'config' }], servers: [source()] });
-
-  await expect(reg.list()).resolves.toEqual({ config: ['app'], servers: [{ server: 'h:5432', databases: [] }] });
 });

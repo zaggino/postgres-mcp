@@ -119,8 +119,8 @@ One server process serves every database you name. Every tool except `list_datab
 Database = name | { database, state, idle_seconds_left?, error?, last_error? }
 ```
 
-- Databases are grouped by where they come from: `--database` flags (`cli`), the config file's `databases` (`config`), or discovery on a config `server`. A group with no entries is left out, and each group is sorted by name.
-- A database whose pool is closed and that has no error is listed by its name alone. Otherwise it is an object: `state` is `open`, `closed` or `error`, and `idle_seconds_left` is the time until an open pool closes.
+- Databases are grouped by where they come from: `--database` flags (`cli`), the config file's `databases` (`config`), or discovery on a config `server`. An empty `cli` or `config` group is left out, a server with nothing discovered keeps `databases: []`, and each group is sorted by name.
+- A database whose pool is closed and that has no error is listed by its name alone. Otherwise it is an object: `state` is `open`, `closed` or `error`, and `idle_seconds_left` is the time until an open pool closes (absent while a call is running).
 - `error` is a configuration problem that keeps the database from being used; `last_error` is why the last call could not reach the database (password masked), and disappears once a call reaches it.
 - `servers[].server` is the server's `host:port` only (no user name, password or query parameters); `prefix` is present when the server sets one; `error` reports a failed discovery. A discovered name that a `cli` or `config` database also uses is listed there only.
 

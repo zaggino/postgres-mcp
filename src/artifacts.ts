@@ -2,13 +2,8 @@
 
 import { structuredPatch } from 'diff';
 
-import { errorMessage } from './errors.ts';
 import type { JsonObject } from './json.ts';
 import { isJsonObject } from './json.ts';
-
-// If the recommendation cost is 0.0, we can't calculate the improvement multiple.
-// Return 1000000.0 to indicate infinite improvement.
-export const INFINITE_IMPROVEMENT_MULTIPLIER = 1_000_000;
 
 const MAX_FILTER_LENGTH = 100;
 
@@ -25,19 +20,6 @@ export class ErrorResult {
   toText(): string {
     return this.value;
   }
-}
-
-/** Calculate the improvement multiple from this recommendation. */
-export function calculateImprovementMultiple(baseCost: number, recCost: number): number {
-  if (baseCost <= 0) {
-    // base_cost or rec_cost might be zero, but as they are floats, they might be
-    // represented as -0.0. That's why we compare to <= 0.0.
-    return 1;
-  }
-  if (recCost <= 0) {
-    return INFINITE_IMPROVEMENT_MULTIPLIER;
-  }
-  return baseCost / recCost;
 }
 
 function requireField(node: JsonObject, key: string): unknown {
@@ -290,53 +272,34 @@ export class ExplainPlanArtifact {
     );
   }
 
-  /** Extract and format key information from raw plan data. */
-  static formatPlanSummary(planData: Record<string, unknown> | null | undefined): string {
-    if (!planData || Object.keys(planData).length === 0) {
-      return 'No plan data available';
-    }
-
+  /** The plan tree as indented text; null when the data is not a readable plan. */
+  static formatPlanSummary(planData: Record<string, unknown>): string | null {
     try {
-      if ('Plan' in planData) {
-        return formatPlanNode(PlanNode.fromJsonData(planData.Plan), 0);
-      }
-      return 'Invalid plan data (missing Plan field)';
-    } catch (error) {
-      return `Error summarizing plan: ${errorMessage(error)}`;
+      return 'Plan' in planData ? formatPlanNode(PlanNode.fromJsonData(planData.Plan), 0) : null;
+    } catch {
+      return null;
     }
   }
 
-  /** Generate a textual diff between two explain plans. */
-  static createPlanDiff(
-    beforePlan: Record<string, unknown> | null | undefined,
-    afterPlan: Record<string, unknown> | null | undefined
-  ): string {
-    if (!beforePlan || Object.keys(beforePlan).length === 0 || !afterPlan || Object.keys(afterPlan).length === 0) {
-      return 'Cannot generate diff: Missing plan data';
-    }
-
+  /** A textual diff between two explain plans; null when either is not a readable plan. */
+  static createPlanDiff(beforePlan: Record<string, unknown>, afterPlan: Record<string, unknown>): string | null {
     try {
-      const beforeTree = 'Plan' in beforePlan ? PlanNode.fromJsonData(beforePlan.Plan) : null;
-      const afterTree = 'Plan' in afterPlan ? PlanNode.fromJsonData(afterPlan.Plan) : null;
-
-      if (!(beforeTree && afterTree)) {
-        return 'Cannot generate diff: Invalid plan structure';
+      if (!('Plan' in beforePlan && 'Plan' in afterPlan)) {
+        return null;
       }
+      const beforeTree = PlanNode.fromJsonData(beforePlan.Plan);
+      const afterTree = PlanNode.fromJsonData(afterPlan.Plan);
 
       const beforeLines = formatPlanNode(beforeTree).split('\n');
       const afterLines = formatPlanNode(afterTree).split('\n');
 
-      const diffLines: string[] = ['PLAN CHANGES:', '------------'];
-
-      const beforeCost = beforeTree.totalCost;
-      const afterCost = afterTree.totalCost;
-      const improvement = calculateImprovementMultiple(beforeCost, afterCost);
-
-      diffLines.push(
-        `Cost: ${beforeCost.toFixed(2)} → ${afterCost.toFixed(2)} (${improvement.toFixed(1)}x improvement)`,
+      const diffLines: string[] = [
+        'PLAN CHANGES:',
+        '------------',
+        `Cost: ${beforeTree.totalCost.toFixed(2)} → ${afterTree.totalCost.toFixed(2)}`,
         '',
-        'Operation Changes:'
-      );
+        'Operation Changes:',
+      ];
 
       const structureDiff = unifiedDiff(extractNodeTypes(beforeTree), extractNodeTypes(afterTree));
       if (structureDiff.length > 0) {
@@ -368,8 +331,8 @@ export class ExplainPlanArtifact {
       }
 
       return diffLines.join('\n');
-    } catch (error) {
-      return `Error generating plan diff: ${errorMessage(error)}`;
+    } catch {
+      return null;
     }
   }
 }

@@ -15,6 +15,7 @@ interface ExpectedTool {
   annotations: Record<string, unknown>;
   defaults: Record<string, unknown>;
   name: string;
+  outputSchema?: true;
   params: string[];
   required: string[];
 }
@@ -50,6 +51,7 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
   },
   {
     name: 'analyze_workload_indexes',
+    outputSchema: true,
     params: ['database', 'max_index_size_mb', 'method'],
     required: ['database'],
     defaults: { max_index_size_mb: 10_000, method: 'dta' },
@@ -57,6 +59,7 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
   },
   {
     name: 'analyze_query_indexes',
+    outputSchema: true,
     params: ['database', 'queries', 'max_index_size_mb', 'method'],
     required: ['database', 'queries'],
     defaults: { max_index_size_mb: 10_000, method: 'dta' },
@@ -121,6 +124,7 @@ test('unrestricted mode lists the eleven tools in upstream order with their para
       required: tool.inputSchema.required ?? [],
       defaults: schemaDefaults(tool.inputSchema.properties),
       annotations: tool.annotations,
+      ...(tool.outputSchema && { outputSchema: true }),
     }))
   ).toEqual(EXPECTED_TOOLS);
 });
@@ -158,4 +162,90 @@ test('restricted mode does not offer cancel_query', async () => {
   const { tools } = await client.listTools();
 
   expect(tools.map((tool) => tool.name)).not.toContain('cancel_query');
+});
+
+/** Property names and required lists of a JSON schema object, recursively through objects and arrays. */
+function schemaOutline(schema: unknown): unknown {
+  if (typeof schema !== 'object' || schema === null) {
+    return null;
+  }
+  const node = schema as { items?: unknown; properties?: Record<string, unknown>; required?: string[] };
+  if (node.items) {
+    return [schemaOutline(node.items)];
+  }
+  if (!node.properties) {
+    return null;
+  }
+  return {
+    required: node.required ?? [],
+    properties: Object.fromEntries(
+      Object.entries(node.properties).map(([name, value]) => [name, schemaOutline(value)])
+    ),
+  };
+}
+
+const COST_BENEFIT_OUTLINE = {
+  required: ['base_cost', 'new_cost', 'improvement_multiple'],
+  properties: { base_cost: null, new_cost: null, improvement_multiple: null },
+};
+
+test('the index advisor tools publish the same output schema with these fields', async () => {
+  const client = await connectClient(createServer(createTestRegistry(['app']).registry));
+
+  const { tools } = await client.listTools();
+  const outlines = ['analyze_workload_indexes', 'analyze_query_indexes'].map((name) =>
+    schemaOutline(tools.find((tool) => tool.name === name)?.outputSchema)
+  );
+
+  expect(outlines).toEqual([outlines[0], outlines[0]]);
+  expect(outlines[0]).toEqual({
+    required: ['summary', 'recommendations', 'query_impact'],
+    properties: {
+      summary: {
+        required: ['total_recommendations', ...COST_BENEFIT_OUTLINE.required, 'total_size_bytes'],
+        properties: { total_recommendations: null, ...COST_BENEFIT_OUTLINE.properties, total_size_bytes: null },
+      },
+      recommendations: [
+        {
+          required: [
+            'index_apply_order',
+            'index_target_table',
+            'index_target_columns',
+            'benefit_of_this_index_only',
+            'benefit_after_previous_indexes',
+            'index_size_bytes',
+            'index_definition',
+          ],
+          properties: {
+            index_apply_order: null,
+            index_target_table: null,
+            index_target_columns: [null],
+            benefit_of_this_index_only: COST_BENEFIT_OUTLINE,
+            benefit_after_previous_indexes: COST_BENEFIT_OUTLINE,
+            index_size_bytes: null,
+            index_definition: null,
+            warning: null,
+          },
+        },
+      ],
+      query_impact: [
+        {
+          required: [
+            'query',
+            ...COST_BENEFIT_OUTLINE.required,
+            'before_explain_plan',
+            'after_explain_plan',
+            'explain_plan_diff',
+          ],
+          properties: {
+            query: null,
+            ...COST_BENEFIT_OUTLINE.properties,
+            before_explain_plan: null,
+            after_explain_plan: null,
+            explain_plan_diff: null,
+          },
+        },
+      ],
+    },
+  });
 });

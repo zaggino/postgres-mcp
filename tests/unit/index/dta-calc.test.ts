@@ -218,6 +218,43 @@ test('analyze workload recommends indexes for the workload tables', async () => 
   expect(session.recommendations.some((r) => ['users', 'orders'].includes(r.table))).toBe(true);
 });
 
+test('a recommended index on a long text column keeps its long text reason through the search', async () => {
+  const driver = createDriver((query) => {
+    if (query.includes('pg_extension')) {
+      return rows({ extversion: '1.4.0' });
+    }
+    if (query.includes('EXPLAIN')) {
+      return rows({ 'QUERY PLAN': [{ Plan: { 'Total Cost': query.includes('COSTS TRUE') ? 80 : 100 } }] });
+    }
+    if (query.includes('FROM information_schema.columns c')) {
+      return rows({
+        table_name: 'users',
+        column_name: 'name',
+        data_type: 'text',
+        character_maximum_length: null,
+        avg_width: 20,
+        potential_long_text: true,
+      });
+    }
+    if (query.includes('pg_stats')) {
+      return rows({ total_width: 10, total_distinct: 100 });
+    }
+    if (query.includes('pg_total_relation_size')) {
+      return rows({ rel_size: 100_000 });
+    }
+    if (query.includes('pg_stat_user_tables')) {
+      return rows({ last_analyze: '2023-01-01 00:00:00+00' });
+    }
+    return [];
+  });
+
+  const session = await createAdvisor(driver).analyzeWorkload({ queryList: ["SELECT * FROM users WHERE name = 'x'"] });
+
+  expect(session.recommendations.map((r) => [r.table, r.potentialProblematicReason])).toEqual([
+    ['users', 'long_text_column'],
+  ]);
+});
+
 test('analyze workload rejects on a failing database and tolerates invalid SQL', async () => {
   const driver = createDriver();
   driver.executeResultSet.mockRejectedValue(new Error('HypoPG not available'));
@@ -994,7 +1031,6 @@ test('explain plan diff reports the change from a sequential to an index scan', 
 
   expect(diffOutput).toContain('PLAN CHANGES:');
   expect(diffOutput).toContain('Cost:');
-  expect(diffOutput).toContain('improvement');
   expect(diffOutput).toContain('Seq Scan');
   expect(diffOutput).toContain('Index Scan');
   expect(diffOutput).toContain('→');
@@ -1002,6 +1038,6 @@ test('explain plan diff reports the change from a sequential to an index scan', 
   expect(diffOutput).toContain('17212');
   expect(diffOutput).toMatch(PLAN_CHANGE_PATTERN);
 
-  expect(ExplainPlanArtifact.createPlanDiff({}, {})).toContain('Cannot generate diff');
-  expect(ExplainPlanArtifact.createPlanDiff({ NotAPlan: {} }, { NotAPlan: {} })).toContain('Cannot generate diff');
+  expect(ExplainPlanArtifact.createPlanDiff({}, {})).toBeNull();
+  expect(ExplainPlanArtifact.createPlanDiff({ NotAPlan: {} }, { NotAPlan: {} })).toBeNull();
 });

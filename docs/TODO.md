@@ -94,10 +94,6 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 `src/database-health/vacuum-health-calc.ts` defaults `maxValue` to 2146483648, probably meant to be 2147483647 (2^31 - 1).
 
-## 2026-11-26 · Minor · Bug · Index recommendations drop the long-text warning
-
-`src/index/presentation.ts` rebuilds recommendations as fresh objects without `potentialProblematicReason` or the size, so the long-text warning set in `src/index/dta-calc.ts` never reaches the output.
-
 ## 2026-11-26 · Minor · Refactor · Seed-column handling in the advisor is partly dead
 
 `seedColumnsCount` and `minColumnUsage` in `src/index/dta-calc.ts` are only partly used: `generateRecommendations` starts the greedy search from the empty seed alone, so no seed pass uses them. Either implement the seed pass or remove the options.
@@ -239,7 +235,7 @@ About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind paramete
 
 ## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
 
-`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN`, while the advisor output prints `inf` or `nan`. Route them through one formatter so all output agrees.
+`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN`, while `formatFixed` (still used in the advisor trace) prints `inf` or `nan`. Route them through one formatter so all output agrees.
 
 ## 2026-11-27 · Minor · Bug · Two bind-parameter log lines print `Error: ` before the message
 
@@ -259,23 +255,7 @@ About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and 
 
 ## 2026-11-28 · Minor · Feature · `naturalSize` uses decimal units
 
-`naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor results (`src/index/presentation.ts`) and traces. `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024; it changes tool output, so mention it in the release notes.
-
-## 2026-11-28 · Minor · Feature · Index advisor output is untyped and formats numbers as text
-
-_BREAKING CHANGE REQUIRED_
-
-`analyze_query_indexes` and `analyze_workload_indexes` build their result in `src/index/presentation.ts` as `Record<string, unknown>`, in the shape the Python server printed:
-
-- `recommendations` is an array, or the sentence `No index recommendations found.` when there are none.
-- Costs and improvement multiples are strings made by `formatFixed`. A cost that is infinite prints `"inf"`, and `query_impact` puts `"∞"` in `improvement_multiple` unless both costs are above zero.
-- `total_size_bytes` and `index_estimated_size` hold `naturalSize` text such as `1.0 kB`, not a byte count.
-
-No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate a result. Give the two tools a zod output schema with one type per field: numbers as numbers, `null` where a cost or multiple is not finite, the unit in the key name (`size_bytes`), and an empty array for no recommendations. Then declare it as `outputSchema` and return `structuredContent` next to the text.
-
-The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`. The advisor's failures go through `formatError`, which leaves `isError` off when Postgres rejected the statement, so such a result would be refused; those failures need `isError` for these two tools. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
-
-Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
+`naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor trace (`_langfuse_trace`, written in `src/index/dta-calc.ts`). `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024, or drop the helper once the trace stops using it.
 
 ## 2026-11-28 · Minor · Refactor · Tuples and forwarding classes in the advisor and explain code
 
@@ -283,9 +263,9 @@ Shapes carried over from Python that TypeScript would write as named objects and
 
 - `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
 - Two functions return a tuple: `checkPostgresVersionRequirement` (`src/sql/extension-utils.ts`) returns `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
-- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
+- `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds forwarding getters and `toIndex()`.
 
-Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces. No output changes.
 
 ## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
 
@@ -323,8 +303,20 @@ _BREAKING CHANGE REQUIRED_
 
 ## 2026-11-28 · Minor · Bug · A `pg_stat_statements` that is installed but not preloaded passes the extension check
 
-`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
+`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back without the install guidance (and, from `get_top_queries`, as a statement rejection without `isError`). Treat 55000 on that read as the missing prerequisite.
 
 ## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
 
-With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result.
+With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result. Move the trace handling to the tool layer first (`advisorResponse` in `src/tools/analysis.ts` can read `indexTuning.dtaTraces`), which also removes `AdvisorOutput` from `src/index/presentation.ts`.
+
+## 2026-11-28 · Minor · Bug · A zero workload cost is reported as a base cost of 1
+
+`generateRecommendations` in `src/index/index-opt-base.ts` computes the base cost as `evaluateConfigurationCost(...) || 1`, so a workload the planner costs at 0 reports `base_cost: 1` in the advisor's `benefit_*` objects and summary, and its improvement multiple is computed against that 1. `costBenefit` (`src/index/advisor-result.ts`) already reports a zero cost as a null multiple; drop the fallback so the real cost reaches the output.
+
+## 2026-11-28 · Minor · Performance · The advisor computes hypopg index sizes it never reads
+
+`storeHypotheticalSizes` in `src/index/dta-calc.ts` runs a batched `hypopg_create_index`, a `hypopg_relation_size` read and a `hypopg_reset` per analysis and writes the size onto each candidate, but the greedy search and the result both size indexes with `estimateIndexSize` (the `pg_stats` formula). Either report the hypopg size as `index_size_bytes` or delete `storeHypotheticalSizes`.
+
+## 2026-11-28 · Minor · Refactor · The outputSchema rule is held by convention, not types
+
+`registerDatabaseTool` in `src/server.ts` sets `isError` on every failure of a tool with an `outputSchema`, which holds only because such a tool's body throws instead of returning an error result (`src/tools/analysis.ts`). A body that returns `formatError(...)` or text without `structuredContent` type-checks and then fails SDK output validation with an opaque error. Let the wrapper build `{ content, structuredContent }` from a typed body return for these tools; it fits with "Each tool is split between `src/server.ts` and `src/tools/`".

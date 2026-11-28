@@ -268,10 +268,10 @@ type Bound = StatValue | ReadySql;
 interface ColumnStats {
   /** information_schema data type, lowercased. */
   dataType: string;
-  commonVals?: StatValue[] | undefined;
+  commonVals: StatValue[] | null;
   /** Frequencies of `commonVals`, in the same order. */
-  commonFreqs?: number[] | undefined;
-  histogramBounds?: StatValue[] | undefined;
+  commonFreqs: number[] | null;
+  histogramBounds: StatValue[] | null;
 }
 type TableColumns = ReadonlyMap<string, Iterable<string>>;
 
@@ -314,9 +314,9 @@ function statSql(value: Bound): string {
 }
 
 /** A pg_stats anyarray column is raw `{a,b}` text; NULL means no statistics. */
-function parsePgArray(raw: string | null): StatValue[] | undefined {
+function parsePgArray(raw: string | null): StatValue[] | null {
   if (raw === null) {
-    return undefined;
+    return null;
   }
   const arrayStr = raw.replaceAll(ARRAY_BRACES_PATTERN, '');
   return arrayStr ? arrayStr.split(',').map(parsePgArrayValue) : [];
@@ -326,7 +326,7 @@ function toColumnStats(row: Row): ColumnStats {
   return {
     dataType: cell.text(row, 'data_type').toLowerCase(),
     commonVals: parsePgArray(cell.nullableText(row, 'common_vals')),
-    commonFreqs: cell.nullableNumberArray(row, 'common_freqs') ?? undefined,
+    commonFreqs: cell.nullableNumberArray(row, 'common_freqs'),
     histogramBounds: parsePgArray(cell.nullableText(row, 'histogram_bounds')),
   };
 }
@@ -538,7 +538,7 @@ function precedingContext(query: string, paramPosition: number): string {
   return query.slice(clauseStart, paramPosition + 2);
 }
 
-function stringReplacement(commonVals: StatValue[] | undefined, isLike: boolean): string {
+function stringReplacement(commonVals: StatValue[] | null, isLike: boolean): string {
   if (isLike) {
     return "'%test%'";
   }

@@ -284,13 +284,11 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       this.sqlDriver,
       'SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;'
     );
-    if (result.length > 0) {
-      const indexMap = new Map(result.map((r) => [cell.text(r, 'index_name'), cell.integer(r, 'index_size')]));
-      for (const idx of candidates) {
-        const size = indexMap.get(idx.name);
-        if (size !== undefined) {
-          idx.estimatedSizeBytes = size;
-        }
+    const indexMap = new Map(result.map((r) => [cell.text(r, 'index_name'), cell.integer(r, 'index_size')]));
+    for (const idx of candidates) {
+      const size = indexMap.get(idx.name);
+      if (size !== undefined) {
+        idx.estimatedSizeBytes = size;
       }
     }
 

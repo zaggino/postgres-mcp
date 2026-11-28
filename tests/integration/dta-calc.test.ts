@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { DatabaseTuningAdvisor } from '../../src/index/dta-calc.ts';
-import type { WorkloadEntry } from '../../src/index/index-opt-base.ts';
+import type { WorkloadQuery as AdvisorWorkloadQuery } from '../../src/index/index-opt-base.ts';
 import { IndexTuningResult } from '../../src/index/index-opt-base.ts';
 import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
@@ -697,16 +697,10 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     }
 
     // Manually populate query stats in session class to ensure proper weighting
-    const workload: WorkloadEntry[] = multiColumnQueries.map((queryInfo, i) => ({
+    const workload: AdvisorWorkloadQuery[] = multiColumnQueries.map((queryInfo) => ({
       query: queryInfo.query,
-      queryid: 1000 + i, // Made-up queryid
-      calls: queryInfo.calls,
-      avg_exec_time: 50, // Significant execution time
-      min_exec_time: 10,
-      max_exec_time: 100,
-      mean_exec_time: 50,
-      stddev_exec_time: 10,
-      rows: 100,
+      // Significant execution time
+      stats: { calls: queryInfo.calls, avgExecTimeMs: 50 },
     }));
 
     // Analyze with both workload sources to maximize chances of finding patterns

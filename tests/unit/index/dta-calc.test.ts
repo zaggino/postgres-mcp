@@ -159,7 +159,6 @@ test('analyze workload recommends indexes for the workload tables', async () => 
   const driver = createDriver((query) => {
     if (query.includes('pg_stat_statements')) {
       return rows({
-        queryid: 1,
         query: 'SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)',
         calls: 100,
         avg_exec_time: 10,
@@ -324,13 +323,15 @@ test('index size estimation fails on NULL column statistics instead of assuming 
   expect(error).toHaveProperty('cause.message', expect.stringContaining('total_width'));
 });
 
-test('query statistics keep a queryid beyond 2^53 as a bigint and a safe call count as a number', async () => {
+test('query statistics skip a statement whose text is hidden and keep the statistics of the rest as numbers', async () => {
   const dta = createAdvisor(
-    createDriver(() => rows({ queryid: 9_007_199_254_740_993n, query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 }))
+    createDriver(() =>
+      rows({ query: null, calls: 40, avg_exec_time: 3 }, { query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 })
+    )
   );
 
   await expect(dta.getQueryStatsDirect()).resolves.toEqual([
-    { queryid: 9_007_199_254_740_993n, query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 },
+    { query: 'SELECT 1', stats: { calls: 120, avgExecTimeMs: 7.5 } },
   ]);
 });
 
@@ -413,13 +414,11 @@ test('basic workload analysis recommends indexes for the queried columns', async
         // pg_stat_statements
         rows(
           {
-            queryid: 1,
             query: "SELECT * FROM users WHERE name = 'Alice'",
             calls: 100,
             avg_exec_time: 10,
           },
           {
-            queryid: 2,
             query: 'SELECT * FROM orders WHERE user_id = 123',
             calls: 50,
             avg_exec_time: 5,
@@ -501,7 +500,8 @@ test('replace parameters binds a string column to its most common value', async 
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
     dataType: 'character varying',
     commonVals: ['John', 'Alice'],
-    histogramBounds: undefined,
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name = $1'.toLowerCase());
@@ -517,6 +517,7 @@ test('replace parameters binds a numeric column by range or equality', async () 
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
     dataType: 'numeric',
     commonVals: [99.99, 49.99],
+    commonFreqs: null,
     histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100), new PgFloat(500)],
   });
 
@@ -533,8 +534,9 @@ test('replace parameters binds a date column to a date literal', async () => {
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['orders', 'order_date']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
     dataType: 'timestamp without time zone',
-    commonVals: undefined,
-    histogramBounds: undefined,
+    commonVals: null,
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM orders WHERE order_date > $1'.toLowerCase());
@@ -549,7 +551,8 @@ test('replace parameters binds a LIKE parameter to a LIKE pattern', async () => 
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
     dataType: 'character varying',
     commonVals: ['John', 'Alice'],
-    histogramBounds: undefined,
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name LIKE $1'.toLowerCase());
@@ -578,17 +581,25 @@ test('replace parameters binds several parameters of a complex query by column',
       return Promise.resolve({
         dataType: 'character varying',
         commonVals: ['active', 'inactive'],
+        commonFreqs: null,
+        histogramBounds: null,
       });
     }
     if (table === 'orders' && column === 'amount') {
       return Promise.resolve({
         dataType: 'numeric',
         commonVals: [99.99],
+        commonFreqs: null,
         histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100)],
       });
     }
     if (table === 'orders' && column === 'order_date') {
-      return Promise.resolve({ dataType: 'timestamp without time zone' });
+      return Promise.resolve({
+        dataType: 'timestamp without time zone',
+        commonVals: null,
+        commonFreqs: null,
+        histogramBounds: null,
+      });
     }
     return Promise.resolve(null);
   });
@@ -663,7 +674,8 @@ test('get replacement value depends on the column type and operator', () => {
       {
         dataType: 'character varying',
         commonVals: ['active', 'pending', 'completed'],
-        histogramBounds: undefined,
+        commonFreqs: null,
+        histogramBounds: null,
       },
       'status = $1'
     )
@@ -673,20 +685,25 @@ test('get replacement value depends on the column type and operator', () => {
       {
         dataType: 'numeric',
         commonVals: [new PgFloat(10), new PgFloat(20)],
+        commonFreqs: null,
         histogramBounds: [new PgFloat(5), new PgFloat(15), new PgFloat(25), new PgFloat(50), new PgFloat(100)],
       },
       'amount > $1'
     )
   ).toBe('25.0');
   expect(
-    bind.getReplacementValue({ dataType: 'date', commonVals: undefined, histogramBounds: undefined }, 'created_at < $1')
+    bind.getReplacementValue(
+      { dataType: 'date', commonVals: null, commonFreqs: null, histogramBounds: null },
+      'created_at < $1'
+    )
   ).toBe("'2023-01-15'");
   expect(
     bind.getReplacementValue(
       {
         dataType: 'boolean',
         commonVals: ['true', 'false'],
-        histogramBounds: undefined,
+        commonFreqs: null,
+        histogramBounds: null,
       },
       'is_active = $1'
     )

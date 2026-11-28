@@ -15,6 +15,7 @@ interface ExpectedTool {
   annotations: Record<string, unknown>;
   defaults: Record<string, unknown>;
   name: string;
+  outputSchema?: true;
   params: string[];
   required: string[];
 }
@@ -50,6 +51,7 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
   },
   {
     name: 'analyze_workload_indexes',
+    outputSchema: true,
     params: ['database', 'max_index_size_mb', 'method'],
     required: ['database'],
     defaults: { max_index_size_mb: 10_000, method: 'dta' },
@@ -57,6 +59,7 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
   },
   {
     name: 'analyze_query_indexes',
+    outputSchema: true,
     params: ['database', 'queries', 'max_index_size_mb', 'method'],
     required: ['database', 'queries'],
     defaults: { max_index_size_mb: 10_000, method: 'dta' },
@@ -121,6 +124,7 @@ test('unrestricted mode lists the eleven tools in upstream order with their para
       required: tool.inputSchema.required ?? [],
       defaults: schemaDefaults(tool.inputSchema.properties),
       annotations: tool.annotations,
+      ...(tool.outputSchema && { outputSchema: true }),
     }))
   ).toEqual(EXPECTED_TOOLS);
 });

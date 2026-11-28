@@ -94,10 +94,6 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 `src/database-health/vacuum-health-calc.ts` defaults `maxValue` to 2146483648, probably meant to be 2147483647 (2^31 - 1).
 
-## 2026-11-26 · Minor · Bug · Index recommendations drop the long-text warning
-
-`src/index/presentation.ts` rebuilds recommendations as fresh objects without `potentialProblematicReason` or the size, so the long-text warning set in `src/index/dta-calc.ts` never reaches the output.
-
 ## 2026-11-26 · Minor · Refactor · Seed-column handling in the advisor is partly dead
 
 `seedColumnsCount` and `minColumnUsage` in `src/index/dta-calc.ts` are only partly used: `generateRecommendations` starts the greedy search from the empty seed alone, so no seed pass uses them. Either implement the seed pass or remove the options.
@@ -259,23 +255,7 @@ About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and 
 
 ## 2026-11-28 · Minor · Feature · `naturalSize` uses decimal units
 
-`naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor results (`src/index/presentation.ts`) and traces. `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024; it changes tool output, so mention it in the release notes.
-
-## 2026-11-28 · Minor · Feature · Index advisor output is untyped and formats numbers as text
-
-_BREAKING CHANGE REQUIRED_
-
-`analyze_query_indexes` and `analyze_workload_indexes` build their result in `src/index/presentation.ts` as `Record<string, unknown>`, in the shape the Python server printed:
-
-- `recommendations` is an array, or the sentence `No index recommendations found.` when there are none.
-- Costs and improvement multiples are strings made by `formatFixed`. A cost that is infinite prints `"inf"`, and `query_impact` puts `"∞"` in `improvement_multiple` unless both costs are above zero.
-- `total_size_bytes` and `index_estimated_size` hold `naturalSize` text such as `1.0 kB`, not a byte count.
-
-No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate a result. Give the two tools a zod output schema with one type per field: numbers as numbers, `null` where a cost or multiple is not finite, the unit in the key name (`size_bytes`), and an empty array for no recommendations. Then declare it as `outputSchema` and return `structuredContent` next to the text.
-
-The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`. The advisor's failures go through `formatError`, which leaves `isError` off when Postgres rejected the statement, so such a result would be refused; those failures need `isError` for these two tools. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
-
-Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
+`naturalSize` in `src/py-format.ts` reproduces `humanize.naturalsize` (base 1000, `kB`), and its output reaches users through the index advisor trace (`_langfuse_trace`, written in `src/index/dta-calc.ts`). `pg_size_pretty` and `psql` use base 1024, so the same size reads differently. Decide whether to switch to base 1024, or drop the helper once the trace stops using it.
 
 ## 2026-11-28 · Minor · Refactor · Tuples and forwarding classes in the advisor and explain code
 

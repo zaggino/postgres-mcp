@@ -6,6 +6,7 @@ import packageJson from '../package.json' with { type: 'json' };
 import { HEALTH_TYPES } from './database-health/database-health.ts';
 import type { DatabaseRegistry } from './database-registry.ts';
 import { errorMessage, UsageError } from './errors.ts';
+import { advisorResultSchema } from './index/advisor-result.ts';
 import { toJson } from './json.ts';
 import { log } from './log.ts';
 import { RunningCalls } from './running-calls.ts';
@@ -80,13 +81,20 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     {
       errorLog,
       inputSchema,
+      outputSchema,
       ...config
-    }: { description: string; annotations: ToolAnnotations; errorLog: string; inputSchema: Shape },
+    }: {
+      description: string;
+      annotations: ToolAnnotations;
+      errorLog: string;
+      inputSchema: Shape;
+      outputSchema?: z.ZodRawShape;
+    },
     body: (sqlDriver: SqlExecutor, args: z.output<z.ZodObject<Shape>>) => Promise<CallToolResult>
   ): void => {
     server.registerTool<z.ZodRawShape, z.ZodRawShape>(
       name,
-      { ...config, inputSchema: { database: databaseSchema, ...inputSchema } },
+      { ...config, inputSchema: { database: databaseSchema, ...inputSchema }, ...(outputSchema && { outputSchema }) },
       async (validated, { signal }) => {
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the SDK has parsed the arguments against this inputSchema, but its callback type cannot follow a generic shape
         const args = validated as { database: string } & z.output<z.ZodObject<Shape>>;
@@ -98,7 +106,9 @@ export function createServer(registry: DatabaseRegistry): McpServer {
           if (!(error instanceof UsageError)) {
             log('ERROR', `${errorLog}: ${errorMessage(error)}`);
           }
-          return formatError(error);
+          // The SDK refuses a result with neither isError nor valid structuredContent, so every failure of a tool with an outputSchema is flagged.
+          const result = formatError(error);
+          return outputSchema ? { ...result, isError: true } : result;
         }
       }
     );
@@ -181,6 +191,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
         method: methodSchema,
       },
       annotations: { title: 'Analyze Workload Indexes', readOnlyHint: true },
+      outputSchema: advisorResultSchema.shape,
       errorLog: 'Error analyzing workload',
     },
     (sqlDriver, { max_index_size_mb }) => analyzeWorkloadIndexes(sqlDriver, max_index_size_mb)
@@ -196,6 +207,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
         method: methodSchema,
       },
       annotations: { title: 'Analyze Query Indexes', readOnlyHint: true },
+      outputSchema: advisorResultSchema.shape,
       errorLog: 'Error analyzing queries',
     },
     (sqlDriver, { queries, max_index_size_mb }) => analyzeQueryIndexes(sqlDriver, queries, max_index_size_mb)

@@ -5,6 +5,7 @@ import { ExplainPlanArtifact } from '../artifacts.ts';
 import { DatabaseHealthTool } from '../database-health/database-health.ts';
 import type { HypotheticalIndex } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
+import type { AdvisorResult } from '../index/advisor-result.ts';
 import { DatabaseTuningAdvisor } from '../index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from '../index/index-opt-base.ts';
 import { TextPresentation } from '../index/presentation.ts';
@@ -50,11 +51,15 @@ export async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<C
   return formatTextResponse(toJson(rows));
 }
 
+function advisorResponse(result: AdvisorResult): CallToolResult {
+  return { content: [{ type: 'text', text: toJson(result) }], structuredContent: result };
+}
+
 export async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: number): Promise<CallToolResult> {
   const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
   const dtaTool = new TextPresentation(sqlDriver, indexTuning);
   const result = await dtaTool.analyzeWorkload(maxIndexSizeMb);
-  return formatTextResponse(toJson(result));
+  return advisorResponse(result);
 }
 
 export async function analyzeQueryIndexes(
@@ -72,7 +77,7 @@ export async function analyzeQueryIndexes(
   const indexTuning = new DatabaseTuningAdvisor(sqlDriver);
   const dtaTool = new TextPresentation(sqlDriver, indexTuning);
   const result = await dtaTool.analyzeQueries(queries, maxIndexSizeMb);
-  return formatTextResponse(toJson(result));
+  return advisorResponse(result);
 }
 
 export async function analyzeDbHealth(sqlDriver: SqlExecutor, healthType: string): Promise<CallToolResult> {

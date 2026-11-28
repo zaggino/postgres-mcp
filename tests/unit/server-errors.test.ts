@@ -124,13 +124,18 @@ test.each([
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: socket hang up' }], isError: true });
 });
 
-test.each([
-  ['get_top_queries', {}],
-  ['analyze_query_indexes', { queries: ['SELECT 1'] }],
-])('a %s statement Postgres rejects is reported without isError', async (name, args) => {
-  const { result } = await callFailingTool(name, args, () => databaseError('permission denied', '42501'));
+test('a get_top_queries statement Postgres rejects is reported without isError', async () => {
+  const { result } = await callFailingTool('get_top_queries', {}, () => databaseError('permission denied', '42501'));
 
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: permission denied' }] });
+});
+
+test('an analyze_query_indexes statement Postgres rejects is reported with isError because the tool declares an outputSchema', async () => {
+  const { result } = await callFailingTool('analyze_query_indexes', { queries: ['SELECT 1'] }, () =>
+    databaseError('permission denied', '42501')
+  );
+
+  expect(result).toEqual({ content: [{ type: 'text', text: 'Error: permission denied' }], isError: true });
 });
 
 test('an invalid analyze_db_health type is reported with isError and not logged as a server error', async () => {
@@ -177,3 +182,20 @@ test.each([
     expect(logged.filter((line) => line.startsWith('ERROR'))).toEqual([]);
   }
 );
+
+test('analyze_query_indexes with nothing to recommend returns the empty structured result', async () => {
+  const { result } = await callTool('analyze_query_indexes', { queries: ['SELECT 1'] }, withExtensions('hypopg'));
+
+  expect(result.isError).toBeUndefined();
+  expect(result.structuredContent).toEqual({
+    summary: {
+      total_recommendations: 0,
+      base_cost: null,
+      new_cost: null,
+      improvement_multiple: null,
+      total_size_bytes: 0,
+    },
+    recommendations: [],
+    query_impact: [],
+  });
+});

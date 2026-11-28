@@ -1,12 +1,11 @@
 import { calculateImprovementMultiple, ExplainPlanArtifact } from '../artifacts.ts';
 import { UsageError } from '../errors.ts';
-import { formatFixed, naturalSize } from '../py-format.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import type { AdvisorResult } from './advisor-result.ts';
+import { finiteOrNull } from './advisor-result.ts';
 import type { IndexTuningResult } from './index-opt-base.ts';
 import { IndexTuningBase } from './index-opt-base.ts';
-
-type JsonRecord = Record<string, unknown>;
 
 const LONG_TEXT_WARNING =
   'This index is potentially problematic because it includes a long text column. ' +
@@ -35,7 +34,7 @@ export class TextPresentation {
    * Analyze the query history (frequently executed and costly queries) and
    * recommend indexes.
    */
-  analyzeWorkload(maxIndexSizeMb = 10_000): Promise<JsonRecord> {
+  analyzeWorkload(maxIndexSizeMb = 10_000): Promise<AdvisorResult> {
     return this.executeAnalysis({
       minCalls: 50,
       minAvgTimeMs: 5,
@@ -45,7 +44,7 @@ export class TextPresentation {
   }
 
   /** Analyze a list of SQL queries and recommend indexes. */
-  analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<JsonRecord> {
+  analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<AdvisorResult> {
     // An empty list would fall through to the pg_stat_statements workload
     if (queries.length === 0) {
       return Promise.reject(new UsageError('No queries provided for analysis'));
@@ -61,7 +60,7 @@ export class TextPresentation {
   }
 
   /** Analyze a single SQL query and recommend indexes. */
-  analyzeSingleQuery(query: string, maxIndexSizeMb = 10_000): Promise<JsonRecord> {
+  analyzeSingleQuery(query: string, maxIndexSizeMb = 10_000): Promise<AdvisorResult> {
     return this.executeAnalysis({
       queryList: [query],
       minCalls: 0,
@@ -72,7 +71,7 @@ export class TextPresentation {
   }
 
   /** Execute indexing analysis; resolves with the recommendations, rejects when the analysis fails. */
-  async executeAnalysis(options: ExecuteAnalysisOptions): Promise<JsonRecord> {
+  async executeAnalysis(options: ExecuteAnalysisOptions): Promise<AdvisorResult> {
     const session = await this.indexTuning.analyzeWorkload({
       queryList: options.queryList,
       minCalls: options.minCalls ?? 50,
@@ -83,14 +82,24 @@ export class TextPresentation {
 
     // Debugging output that costs an agent tokens on every call, so only on request
     const includeLangfuseTrace = process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE?.toLowerCase() === 'true';
-    const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};
+    const langfuseTrace: { _langfuse_trace?: string[] } = includeLangfuseTrace
+      ? { _langfuse_trace: session.dtaTraces }
+      : {};
 
     const { recommendations: analyses } = session;
     const [firstRecommendation] = analyses;
     const lastRecommendation = analyses.at(-1);
     if (!(firstRecommendation && lastRecommendation)) {
       return {
-        recommendations: 'No index recommendations found.',
+        summary: {
+          total_recommendations: 0,
+          base_cost: null,
+          new_cost: null,
+          improvement_multiple: null,
+          total_size_bytes: 0,
+        },
+        recommendations: [],
+        query_impact: [],
         ...langfuseTrace,
       };
     }
@@ -108,10 +117,10 @@ export class TextPresentation {
     return {
       summary: {
         total_recommendations: analyses.length,
-        base_cost: formatFixed(initialCost, 1),
-        new_cost: formatFixed(newCost, 1),
-        total_size_bytes: naturalSize(totalSizeBytes),
-        improvement_multiple: formatFixed(improvementMultiple, 1),
+        base_cost: finiteOrNull(initialCost),
+        new_cost: finiteOrNull(newCost),
+        improvement_multiple: finiteOrNull(improvementMultiple),
+        total_size_bytes: totalSizeBytes,
       },
       recommendations,
       query_impact: queryImpact,
@@ -119,23 +128,23 @@ export class TextPresentation {
     };
   }
 
-  buildRecommendationsList(session: IndexTuningResult): JsonRecord[] {
+  buildRecommendationsList(session: IndexTuningResult): AdvisorResult['recommendations'] {
     return session.recommendations.map((rec, i) => {
-      const recDict: JsonRecord = {
+      const recDict: AdvisorResult['recommendations'][number] = {
         index_apply_order: i + 1,
         index_target_table: rec.table,
         index_target_columns: [...rec.columns],
         benefit_of_this_index_only: {
-          improvement_multiple: formatFixed(rec.individualImprovementMultiple, 1),
-          base_cost: formatFixed(rec.individualBaseCost, 1),
-          new_cost: formatFixed(rec.individualRecommendationCost, 1),
+          improvement_multiple: finiteOrNull(rec.individualImprovementMultiple),
+          base_cost: finiteOrNull(rec.individualBaseCost),
+          new_cost: finiteOrNull(rec.individualRecommendationCost),
         },
         benefit_after_previous_indexes: {
-          improvement_multiple: formatFixed(rec.progressiveImprovementMultiple, 1),
-          base_cost: formatFixed(rec.progressiveBaseCost, 1),
-          new_cost: formatFixed(rec.progressiveRecommendationCost, 1),
+          improvement_multiple: finiteOrNull(rec.progressiveImprovementMultiple),
+          base_cost: finiteOrNull(rec.progressiveBaseCost),
+          new_cost: finiteOrNull(rec.progressiveRecommendationCost),
         },
-        index_estimated_size: naturalSize(rec.estimatedSizeBytes),
+        index_size_bytes: rec.estimatedSizeBytes,
         index_definition: rec.definition,
       };
       const reason = rec.potentialProblematicReason;
@@ -149,8 +158,8 @@ export class TextPresentation {
   }
 
   /** The query impact section: before and after explain plans of each workload query. */
-  async generateQueryImpact(session: IndexTuningResult): Promise<JsonRecord[]> {
-    const queryImpact: JsonRecord[] = [];
+  async generateQueryImpact(session: IndexTuningResult): Promise<AdvisorResult['query_impact']> {
+    const queryImpact: AdvisorResult['query_impact'] = [];
 
     // All recommendations have the same queries
     const [firstRecommendation] = session.recommendations;
@@ -173,11 +182,9 @@ export class TextPresentation {
       const baseCost = IndexTuningBase.extractCostFromJsonPlan(beforePlan);
       const newCost = IndexTuningBase.extractCostFromJsonPlan(afterPlan);
 
-      // Shown when the new cost is zero
-      let improvementMultiple = '∞';
-      if (newCost > 0 && baseCost > 0) {
-        improvementMultiple = formatFixed(calculateImprovementMultiple(baseCost, newCost), 1);
-      }
+      // Null when either cost is zero or not a plan cost
+      const improvementMultiple =
+        newCost > 0 && baseCost > 0 ? finiteOrNull(calculateImprovementMultiple(baseCost, newCost)) : null;
 
       const beforePlanText = ExplainPlanArtifact.formatPlanSummary(beforePlan);
       const afterPlanText = ExplainPlanArtifact.formatPlanSummary(afterPlan);
@@ -185,8 +192,8 @@ export class TextPresentation {
 
       queryImpact.push({
         query,
-        base_cost: formatFixed(baseCost, 1),
-        new_cost: formatFixed(newCost, 1),
+        base_cost: finiteOrNull(baseCost),
+        new_cost: finiteOrNull(newCost),
         improvement_multiple: improvementMultiple,
         before_explain_plan: `\`\`\`\n${beforePlanText}\n\`\`\``,
         after_explain_plan: `\`\`\`\n${afterPlanText}\n\`\`\``,

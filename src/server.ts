@@ -74,14 +74,15 @@ export function createServer(registry: DatabaseRegistry): McpServer {
 
   /**
    * Register a tool that runs against a named database: adds the required `database` argument, tracks the call for
-   * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except a UsageError).
+   * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except a UsageError). The body
+   * of a tool with an `outputSchema` reports failures by throwing: the SDK refuses a result with neither `isError` nor
+   * valid `structuredContent`, so every failure of such a tool is flagged here, statement rejections included.
    */
   const registerDatabaseTool = <Shape extends z.ZodRawShape>(
     name: string,
     {
       errorLog,
       inputSchema,
-      outputSchema,
       ...config
     }: {
       description: string;
@@ -94,7 +95,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
   ): void => {
     server.registerTool<z.ZodRawShape, z.ZodRawShape>(
       name,
-      { ...config, inputSchema: { database: databaseSchema, ...inputSchema }, ...(outputSchema && { outputSchema }) },
+      { ...config, inputSchema: { database: databaseSchema, ...inputSchema } },
       async (validated, { signal }) => {
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the SDK has parsed the arguments against this inputSchema, but its callback type cannot follow a generic shape
         const args = validated as { database: string } & z.output<z.ZodObject<Shape>>;
@@ -106,9 +107,8 @@ export function createServer(registry: DatabaseRegistry): McpServer {
           if (!(error instanceof UsageError)) {
             log('ERROR', `${errorLog}: ${errorMessage(error)}`);
           }
-          // The SDK refuses a result with neither isError nor valid structuredContent, so every failure of a tool with an outputSchema is flagged.
           const result = formatError(error);
-          return outputSchema ? { ...result, isError: true } : result;
+          return config.outputSchema ? { ...result, isError: true } : result;
         }
       }
     );

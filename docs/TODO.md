@@ -235,7 +235,7 @@ About 30 `logLine` calls in `src/` (the SQL driver, index advisor, bind paramete
 
 ## 2026-11-27 · Minor · Bug · Raw `toFixed` calls bypass `formatFixed`
 
-`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN`, while the advisor output prints `inf` or `nan`. Route them through one formatter so all output agrees.
+`src/artifacts.ts` (plan costs and times) and the health calculators (`buffer-health-calc.ts`, `index-health-calc.ts`, `replication-calc.ts`, `sequence-health-calc.ts` in `src/database-health/`) format numbers with `.toFixed(n)` instead of `formatFixed` from `src/py-format.ts`. A non-finite value then prints `Infinity` or `NaN`, while `formatFixed` (still used in the advisor trace) prints `inf` or `nan`. Route them through one formatter so all output agrees.
 
 ## 2026-11-27 · Minor · Bug · Two bind-parameter log lines print `Error: ` before the message
 
@@ -303,7 +303,7 @@ _BREAKING CHANGE REQUIRED_
 
 ## 2026-11-28 · Minor · Bug · A `pg_stat_statements` that is installed but not preloaded passes the extension check
 
-`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
+`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back without the install guidance (and, from `get_top_queries`, as a statement rejection without `isError`). Treat 55000 on that read as the missing prerequisite.
 
 ## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
 

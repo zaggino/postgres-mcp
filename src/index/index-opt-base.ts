@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 
-import { calculateImprovementMultiple } from '../artifacts.ts';
 import { errorMessage, UsageError } from '../errors.ts';
 import type { DtaTracer } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
@@ -162,22 +161,12 @@ export class IndexRecommendationAnalysis {
     return this.indexRecommendation.using;
   }
 
-  /** The progressive improvement from this recommendation. */
-  get progressiveImprovementMultiple(): number {
-    return calculateImprovementMultiple(this.progressiveBaseCost, this.progressiveRecommendationCost);
-  }
-
   get potentialProblematicReason(): string | null {
     return this.indexRecommendation.potentialProblematicReason;
   }
 
   get estimatedSizeBytes(): number {
     return this.indexRecommendation.estimatedSizeBytes;
-  }
-
-  /** The individual improvement from this recommendation. */
-  get individualImprovementMultiple(): number {
-    return calculateImprovementMultiple(this.individualBaseCost, this.individualRecommendationCost);
   }
 
   toIndex(): IndexRecommendation {

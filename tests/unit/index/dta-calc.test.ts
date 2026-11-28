@@ -403,6 +403,16 @@ test('filterLongTextColumns quotes table and column names in the catalog lookup'
   expect(query).toContain("c.column_name IN ('it''s')");
 });
 
+test('workload analysis asks for ANALYZE when no table has been analyzed', async () => {
+  const dta = new DatabaseTuningAdvisor(
+    createDriver(sequential([rows({ extversion: '1.4.0' }), rows({ last_analyze: null })]))
+  );
+
+  const session = await dta.analyzeWorkload({ minCalls: 50, minAvgTimeMs: 5 });
+
+  expect(session.error).toContain('Statistics are not up-to-date');
+});
+
 test('basic workload analysis recommends indexes for the queried columns', async () => {
   const dta = new DatabaseTuningAdvisor(
     createDriver(

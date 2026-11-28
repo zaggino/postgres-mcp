@@ -23,14 +23,15 @@ const cases: ValueCase[] = [
   { expr: 'NULL::int', expected: '[{"v":null}]' },
   { expr: '123::int8', expected: '[{"v":123}]' },
   { expr: '9007199254740993::int8', expected: '[{"v":9007199254740993}]' },
+  { expr: '-9007199254740993::int8', expected: '[{"v":-9007199254740993}]' },
   { expr: "'{9007199254740993,NULL}'::int8[]", expected: '[{"v":[9007199254740993,null]}]' },
   {
     expr: '1234567890.123456789012345678::numeric',
     expected: '[{"v":"1234567890.123456789012345678"}]',
   },
   {
-    expr: "'{12345678901234567890.123456789,1.5}'::numeric[]",
-    expected: '[{"v":["12345678901234567890.123456789","1.5"]}]',
+    expr: "'{12345678901234567890.123456789,1.5,NaN,NULL}'::numeric[]",
+    expected: '[{"v":["12345678901234567890.123456789","1.5","NaN",null]}]',
   },
   { expr: "'NaN'::numeric", expected: '[{"v":"NaN"}]' },
   { expr: "'NaN'::float8", expected: '[{"v":"NaN"}]' },
@@ -61,8 +62,8 @@ const cases: ValueCase[] = [
     expected: '[{"v":"1 year 2 mons 3 days 04:05:06.789"}]',
   },
   {
-    expr: "ARRAY['2024-02-29','infinity']::date[]",
-    expected: '[{"v":["2024-02-29","infinity"]}]',
+    expr: "ARRAY['2024-02-29','infinity','-infinity','0044-03-15 BC']::date[]",
+    expected: '[{"v":["2024-02-29","infinity","-infinity","0044-03-15 BC"]}]',
   },
   {
     expr: "ARRAY['2024-02-29 13:14:15.123456']::timestamp[]",

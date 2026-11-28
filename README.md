@@ -184,7 +184,7 @@ In Codex's `~/.codex/config.toml`:
 url = "http://localhost:8000/mcp"
 ```
 
-The HTTP transport checks every request to `/mcp` and answers 403 when it fails:
+The HTTP transport checks every request, on any path, and answers 403 when it fails:
 
 - `Host` must be on the allow-list. On a loopback bind (`localhost`, `127.0.0.1`, `::1`) that is those three names with the bound port plus whatever `--allowed-hosts` adds. On any other bind it is `--allowed-hosts` alone, and the server refuses to start without it; pass `--allowed-hosts='*'` to accept any Host (`*` cannot be mixed with other entries). An entry without a port matches that hostname on any port; matching ignores case. Entries are checked at startup: no scheme or path, and IPv6 addresses in brackets (`[::1]:8000`).
 - `Origin`, when the request has one, must be on the allow-list: `http://localhost:<port>`, `http://127.0.0.1:<port>` and `http://[::1]:<port>` on a loopback bind, plus whatever `--allowed-origins` adds; on any other bind `--allowed-origins` alone. `--allowed-origins='*'` accepts any Origin. Each entry must be exactly `scheme://host[:port]`, with no path or trailing slash. Requests without an `Origin` header (non-browser clients) are not checked.

@@ -94,7 +94,7 @@ describe(parseCli, () => {
 
   it.each([
     ['--transport=sse', /--transport: invalid choice: 'sse' \(choose from 'stdio', 'streamable-http'\)/u],
-    ['--sse-port=8000', /--sse-port/u],
+    ['--sse-port=8000', /Unknown option '--sse-port'/u],
     ['--allowed-hosts=::1', /--allowed-hosts: an IPv6 address must be written in brackets/u],
     ['--allowed-origins=app.example', /--allowed-origins: expected scheme:\/\/host/u],
     ['--allowed-hosts=*,a.example', /--allowed-hosts: '\*' cannot be combined/u],

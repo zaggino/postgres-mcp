@@ -24,6 +24,6 @@ In scope, for example:
 Out of scope:
 
 - Running arbitrary SQL in unrestricted mode, which gives full read/write access by design.
-- The absence of authentication and `Host` or `Origin` checks on the HTTP transport bound to a non-loopback address, which the README documents.
+- The absence of authentication on the HTTP transport, and the absence of `Host` or `Origin` checks that `--allowed-hosts='*'` or `--allowed-origins='*'` turns off, which the README documents. A bypass of the configured checks is in scope.
 
 Known weaknesses are tracked in [docs/TODO.md](docs/TODO.md); a report that adds a working exploit for one of them is still welcome through the private channel.

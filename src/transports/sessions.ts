@@ -70,7 +70,7 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   #end(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
-      entry.inFlight = Math.max(0, entry.inFlight - 1);
+      entry.inFlight -= 1;
       if (entry.inFlight === 0) {
         this.#startTimer(id, entry);
       }
@@ -100,8 +100,6 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   #startTimer(id: string, entry: SessionEntry<T>): void {
-    clearTimeout(entry.timer);
-    entry.timer = undefined;
     const idleMs = this.#idleMinutes * 60_000;
     if (idleMs <= 0) {
       return;

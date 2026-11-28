@@ -1,5 +1,6 @@
 import { errorMessage } from './errors.ts';
 import { logLine } from './log.ts';
+import { text } from './sql/cells.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
 import { getSqlDriver as defaultGetSqlDriver } from './sql/driver-factory.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
@@ -470,7 +471,7 @@ export class DatabaseRegistry {
 
       const found = new Map<string, UriSpec>();
       for (const row of rows) {
-        const datname = String(row.datname);
+        const datname = text(row, 'datname');
         if (!state.matches(datname)) {
           continue;
         }

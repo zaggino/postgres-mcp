@@ -1,4 +1,5 @@
 import { logLine } from '../log.ts';
+import { nullableText, text } from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
 import type { DbConnPool } from './sql-driver.ts';
@@ -46,7 +47,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
       return 0;
     }
 
-    const versionString = String(first.server_version);
+    const versionString = text(first, 'server_version');
     // Extract the major version (before the first dot)
     const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {
@@ -79,10 +80,10 @@ export async function checkPostgresVersionRequirement(
   ];
 }
 
-function installedMessage(name: string, version: unknown, messageType: MessageType): string {
+function installedMessage(name: string, version: string, messageType: MessageType): string {
   return messageType === 'markdown'
-    ? `The **${name}** extension (version ${String(version)}) is already installed.`
-    : `The ${name} extension (version ${String(version)}) is already installed.`;
+    ? `The **${name}** extension (version ${version}) is already installed.`
+    : `The ${name} extension (version ${version}) is already installed.`;
 }
 
 function availableMessage(name: string, messageType: MessageType): string {
@@ -128,7 +129,7 @@ export async function checkExtension(
 
   const [installed] = installedResult;
   if (installed) {
-    const version = 'extversion' in installed ? installed.extversion : 'unknown';
+    const version = text(installed, 'extversion');
     result.isInstalled = true;
     result.isAvailable = true;
 
@@ -147,9 +148,7 @@ export async function checkExtension(
   const [available] = availableResult;
   if (available) {
     result.isAvailable = true;
-    const defaultVersion = available.default_version;
-    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-    result.defaultVersion = defaultVersion === undefined || defaultVersion === null ? null : String(defaultVersion);
+    result.defaultVersion = nullableText(available, 'default_version');
 
     if (includeMessages) {
       result.message = availableMessage(extensionName, messageType);

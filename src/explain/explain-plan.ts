@@ -4,6 +4,7 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyTypeName } from '../py-format.ts';
 import { SqlBindParams } from '../sql/bind-params.ts';
+import { value as cellValue } from '../sql/cells.ts';
 import { checkPostgresVersionRequirement } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -192,10 +193,7 @@ export class ExplainPlanTool {
       if (!firstRow) {
         return new ErrorResult('No results returned from EXPLAIN');
       }
-      if (!('QUERY PLAN' in firstRow)) {
-        throw new Error("'QUERY PLAN'");
-      }
-      const queryPlanData = parsePlanColumn(firstRow['QUERY PLAN']);
+      const queryPlanData = parsePlanColumn(cellValue(firstRow, 'QUERY PLAN'));
 
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);

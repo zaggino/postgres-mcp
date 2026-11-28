@@ -80,7 +80,7 @@ test('explain_query with analyze=true returns the plan with execution time', asy
 });
 
 test('explain_query with hypothetical indexes explains with them when hypopg is installed', async () => {
-  useDriver(fakeExecutor(() => [{ exists: 1 }]));
+  useDriver(fakeExecutor(() => [{ extversion: '1.0' }]));
   explainTool.explainWithHypotheticalIndexes.mockResolvedValue(artifact());
   const indexes = [{ table: 'users', columns: ['email'] }];
 

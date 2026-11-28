@@ -1,12 +1,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
-import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
+import { boolean, nullableText, text } from '../sql/cells.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 import { formatError, formatTextResponse, toJson } from './result.ts';
-
-function cell(row: Row, name: string): unknown {
-  return row[name];
-}
 
 export async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
   const rows = await sqlDriver.executeQuery(
@@ -23,7 +20,11 @@ export async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResul
             ORDER BY schema_type, schema_name
             `
   );
-  const schemas = rows;
+  const schemas = rows.map((row) => ({
+    schema_name: text(row, 'schema_name'),
+    schema_owner: text(row, 'schema_owner'),
+    schema_type: text(row, 'schema_type'),
+  }));
   return formatTextResponse(toJson(schemas));
 }
 
@@ -32,7 +33,11 @@ export async function listObjects(
   schemaName: string,
   objectType: string
 ): Promise<CallToolResult> {
-  let objects: unknown[];
+  let objects: (
+    | { schema: string; name: string; type: string }
+    | { schema: string; name: string; data_type: string }
+    | { name: string; version: string; relocatable: boolean }
+  )[];
 
   if (objectType === 'table' || objectType === 'view') {
     const tableType = objectType === 'table' ? 'BASE TABLE' : 'VIEW';
@@ -47,9 +52,9 @@ export async function listObjects(
       [schemaName, tableType]
     );
     objects = rows.map((row) => ({
-      schema: cell(row, 'table_schema'),
-      name: cell(row, 'table_name'),
-      type: cell(row, 'table_type'),
+      schema: text(row, 'table_schema'),
+      name: text(row, 'table_name'),
+      type: text(row, 'table_type'),
     }));
   } else if (objectType === 'sequence') {
     const rows = await SafeSqlDriver.executeParamQuery(
@@ -63,9 +68,9 @@ export async function listObjects(
       [schemaName]
     );
     objects = rows.map((row) => ({
-      schema: cell(row, 'sequence_schema'),
-      name: cell(row, 'sequence_name'),
-      data_type: cell(row, 'data_type'),
+      schema: text(row, 'sequence_schema'),
+      name: text(row, 'sequence_name'),
+      data_type: text(row, 'data_type'),
     }));
   } else if (objectType === 'extension') {
     // Extensions are not schema-specific
@@ -77,9 +82,9 @@ export async function listObjects(
                 `
     );
     objects = rows.map((row) => ({
-      name: cell(row, 'extname'),
-      version: cell(row, 'extversion'),
-      relocatable: cell(row, 'extrelocatable'),
+      name: text(row, 'extname'),
+      version: text(row, 'extversion'),
+      relocatable: boolean(row, 'extrelocatable'),
     }));
   } else {
     return formatError(`Unsupported object type: ${objectType}`);
@@ -105,10 +110,10 @@ async function tableDetails(
     [schemaName, objectName]
   );
   const columns = colRows.map((r) => ({
-    column: cell(r, 'column_name'),
-    data_type: cell(r, 'data_type'),
-    is_nullable: cell(r, 'is_nullable'),
-    default: cell(r, 'column_default'),
+    column: text(r, 'column_name'),
+    data_type: text(r, 'data_type'),
+    is_nullable: text(r, 'is_nullable'),
+    default: nullableText(r, 'column_default'),
   }));
 
   const conRows = await SafeSqlDriver.executeParamQuery(
@@ -124,13 +129,13 @@ async function tableDetails(
     [schemaName, objectName]
   );
 
-  const constraints = new Map<unknown, { name: unknown; type: unknown; columns: unknown[] }>();
+  const constraints = new Map<string, { name: string; type: string; columns: string[] }>();
   for (const row of conRows) {
-    const name = cell(row, 'constraint_name');
-    const col = cell(row, 'column_name');
+    const name = text(row, 'constraint_name');
+    const col = nullableText(row, 'column_name');
     let constraint = constraints.get(name);
     if (!constraint) {
-      constraint = { name, type: cell(row, 'constraint_type'), columns: [] };
+      constraint = { name, type: text(row, 'constraint_type'), columns: [] };
       constraints.set(name, constraint);
     }
     if (col) {
@@ -148,8 +153,8 @@ async function tableDetails(
     [schemaName, objectName]
   );
   const indexes = idxRows.map((r) => ({
-    name: cell(r, 'indexname'),
-    definition: cell(r, 'indexdef'),
+    name: text(r, 'indexname'),
+    definition: text(r, 'indexdef'),
   }));
 
   return {
@@ -183,11 +188,11 @@ export async function getObjectDetails(
     const [row] = rows;
     result = row
       ? {
-          schema: cell(row, 'sequence_schema'),
-          name: cell(row, 'sequence_name'),
-          data_type: cell(row, 'data_type'),
-          start_value: cell(row, 'start_value'),
-          increment: cell(row, 'increment'),
+          schema: text(row, 'sequence_schema'),
+          name: text(row, 'sequence_name'),
+          data_type: text(row, 'data_type'),
+          start_value: text(row, 'start_value'),
+          increment: text(row, 'increment'),
         }
       : {};
   } else if (objectType === 'extension') {
@@ -203,9 +208,9 @@ export async function getObjectDetails(
     const [row] = rows;
     result = row
       ? {
-          name: cell(row, 'extname'),
-          version: cell(row, 'extversion'),
-          relocatable: cell(row, 'extrelocatable'),
+          name: text(row, 'extname'),
+          version: text(row, 'extversion'),
+          relocatable: boolean(row, 'extrelocatable'),
         }
       : {};
   } else {

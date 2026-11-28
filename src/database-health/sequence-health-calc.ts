@@ -1,6 +1,8 @@
+import * as cell from '../sql/cells.ts';
 import { identifier } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface SequenceMetrics {
   column: string;
@@ -14,18 +16,42 @@ interface SequenceMetrics {
   table: string;
 }
 
+interface SequenceColumn {
+  column: string;
+  columnType: string;
+  defaultValue: string;
+  table: string;
+}
+
+function toSequenceColumn(row: Row): SequenceColumn {
+  return {
+    table: cell.text(row, 'table'),
+    column: cell.text(row, 'column'),
+    columnType: cell.text(row, 'column_type'),
+    defaultValue: cell.text(row, 'default_value'),
+  };
+}
+
+interface SequenceAttributes {
+  lastValue: bigint;
+  readable: boolean;
+}
+
+function toSequenceAttributes(row: Row): SequenceAttributes {
+  return { readable: cell.boolean(row, 'readable'), lastValue: cell.bigint(row, 'last_value') };
+}
+
+const SMALLINT_MAX = 32_767n;
 const INTEGER_MAX = 2_147_483_647n;
 const BIGINT_MAX = 9_223_372_036_854_775_807n;
 const NEXTVAL_REFERENCE = /nextval\(\(?'(?<reference>[^']+)'/u;
 
-function toBigInt(value: unknown): bigint {
-  if (typeof value === 'bigint') {
-    return value;
+/** The largest value a sequence feeding a column of `columnType` can reach. */
+function maxValueFor(columnType: string): bigint {
+  if (columnType === 'smallint') {
+    return SMALLINT_MAX;
   }
-  if (typeof value === 'number' || typeof value === 'string') {
-    return BigInt(value);
-  }
-  throw new TypeError(`Unexpected sequence value: ${String(value)}`);
+  return columnType === 'integer' ? INTEGER_MAX : BIGINT_MAX;
 }
 
 /** What percentage of the sequence has been used. */
@@ -105,9 +131,10 @@ export class SequenceHealthCalc {
 
   private async getSequenceMetrics(): Promise<SequenceMetrics[]> {
     // First get all sequences used as default values
-    const sequences = await this.sqlDriver.executeQuery(`
+    const sequenceRows = await queryRows(
+      this.sqlDriver,
+      `
             SELECT
-                n.nspname AS table_schema,
                 c.relname AS table,
                 attname AS column,
                 format_type(a.atttypid, a.atttypmod) AS column_type,
@@ -125,23 +152,19 @@ export class SequenceHealthCalc {
                 AND a.attnum > 0
                 AND pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval%'
                 AND n.nspname NOT LIKE 'pg\\_temp\\_%'
-        `);
-
-    if (!sequences) {
-      return [];
-    }
+        `
+    );
 
     const sequenceMetrics: SequenceMetrics[] = [];
-    for (const { cells: seq } of sequences) {
+    for (const seq of sequenceRows.map(toSequenceColumn)) {
       // Parse the sequence name from default value
-      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(String(seq.default_value));
+      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(seq.defaultValue);
       if (!sequence) {
         continue;
       }
 
       // Determine max value based on column type
-      const columnType = String(seq.column_type);
-      const maxValue = columnType === 'integer' ? INTEGER_MAX : BIGINT_MAX;
+      const maxValue = maxValueFor(seq.columnType);
 
       // Get sequence attributes
       const attrs = await SafeSqlDriver.executeParamQuery(
@@ -155,21 +178,16 @@ export class SequenceHealthCalc {
         [identifier(schema, sequence), identifier(schema, sequence)]
       );
 
-      const attr = attrs?.[0]?.cells;
-      if (!attr) {
-        continue;
-      }
-
-      const lastValue = toBigInt(attr.last_value);
+      const { lastValue, readable } = toSequenceAttributes(cell.single(attrs));
       sequenceMetrics.push({
         schema,
-        table: String(seq.table),
-        column: String(seq.column),
+        table: seq.table,
+        column: seq.column,
         sequence,
-        columnType,
+        columnType: seq.columnType,
         lastValue,
         maxValue,
-        readable: Boolean(attr.readable),
+        readable,
         isHealthy: Number(lastValue) / Number(maxValue) <= this.threshold,
       });
     }

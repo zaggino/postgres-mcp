@@ -3,10 +3,10 @@ import { expect, test } from 'vitest';
 import { SqlBindParams, TableAliasVisitor } from '../../../src/sql/bind-params.ts';
 import { AstNode, parseSql } from '../../../src/sql/pg-ast.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
-const noDatabase: SqlExecutor = {
-  executeQuery: () => Promise.resolve(null),
-};
+const noDatabase: SqlExecutor = fakeExecutor(() => []);
 
 interface Analysis {
   aliases: Record<string, string>;
@@ -92,8 +92,8 @@ test('$n placeholders are ignored and the compared columns are collected', async
   });
 });
 
-function statsDriver(cells: Record<string, unknown>): SqlExecutor {
-  return { executeQuery: () => Promise.resolve([{ cells }]) };
+function statsDriver(row: Row): SqlExecutor {
+  return fakeExecutor(() => [row]);
 }
 
 test('columns inside bare SQL/JSON structs are collected', async () => {
@@ -109,7 +109,7 @@ test('a pg_stats integer beyond 2^53 is bound with every digit', async () => {
     statsDriver({
       data_type: 'bigint',
       common_vals: '{1234567890123456789}',
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );
@@ -123,7 +123,7 @@ test("a small pg_stats float is bound in Python's exponent notation", async () =
     statsDriver({
       data_type: 'double',
       common_vals: '{0.00002}',
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );
@@ -137,7 +137,7 @@ test('a quote in a pg_stats text value cannot end the bound string literal', asy
     statsDriver({
       data_type: 'text',
       common_vals: "{x'; DROP TABLE t; --}",
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );

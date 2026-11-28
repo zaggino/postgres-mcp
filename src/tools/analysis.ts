@@ -47,11 +47,11 @@ export async function explainQuery(
 }
 
 export async function executeSql(sqlDriver: SqlExecutor, sql: string): Promise<CallToolResult> {
-  const rows = await sqlDriver.executeQuery(sql);
-  if (rows === null) {
+  const { columns, rows } = await sqlDriver.executeResultSet(sql);
+  if (columns.length === 0) {
     return formatTextResponse('No results');
   }
-  return formatTextResponse(toJson(rows.map((r) => r.cells)));
+  return formatTextResponse(toJson(rows));
 }
 
 export async function analyzeWorkloadIndexes(sqlDriver: SqlExecutor, maxIndexSizeMb: number): Promise<CallToolResult> {

@@ -3,7 +3,7 @@ import { logLine } from '../log.ts';
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 
 export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
@@ -106,12 +106,11 @@ export class TopQueriesCalc {
                 LIMIT {};
             `;
       const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [limit]);
-      const slowQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
 
       // Create result description based on sort criteria
       const criteria = sortBy === 'total' ? 'total execution time' : 'mean execution time per call';
 
-      return `Top ${slowQueries.length} slowest queries by ${criteria}:\n${rowsToJson(slowQueries)}`;
+      return `Top ${slowQueryRows.length} slowest queries by ${criteria}:\n${rowsToJson(slowQueryRows)}`;
     } catch (error) {
       const message = errorMessage(error);
       logLine(`Error getting slow queries: ${message}`);
@@ -189,10 +188,9 @@ export class TopQueriesCalc {
                 ORDER BY total_exec_time DESC
             `;
 
-      const slowQueryRows = await this.sqlDriver.executeQuery(query);
-      const resourceQueries = slowQueryRows ? slowQueryRows.map((row) => row.cells) : [];
+      const slowQueryRows = await queryRows(this.sqlDriver, query);
 
-      return rowsToJson(resourceQueries);
+      return rowsToJson(slowQueryRows);
     } catch (error) {
       const message = errorMessage(error);
       logLine(`Error getting resource-intensive queries: ${message}`);

@@ -1,10 +1,12 @@
 import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyFloatStr } from '../py-format.ts';
+import * as cell from './cells.ts';
 import { literal } from './literal.ts';
 import { AstNode, parseSql, Visitor } from './pg-ast.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
+import type { Row } from './sql-driver.ts';
 
 // --- Visitor classes ---
 
@@ -261,7 +263,16 @@ interface ReadySql {
   readonly sql: string;
 }
 type Bound = StatValue | ReadySql;
-type ColumnStats = Record<string, unknown>;
+
+/** The pg_stats statistics of a column that parameter replacement uses; a list is absent when pg has none. */
+interface ColumnStats {
+  /** information_schema data type, lowercased. */
+  dataType: string;
+  commonVals: StatValue[] | null;
+  /** Frequencies of `commonVals`, in the same order. */
+  commonFreqs: number[] | null;
+  histogramBounds: StatValue[] | null;
+}
 type TableColumns = ReadonlyMap<string, Iterable<string>>;
 
 const INT_PATTERN = /^[+-]?\d+$/u;
@@ -302,37 +313,22 @@ function statSql(value: Bound): string {
   return pyStr(value);
 }
 
-function toStatValue(value: unknown): StatValue {
-  if (value === null || value === undefined) {
+/** A pg_stats anyarray column is raw `{a,b}` text; NULL means no statistics. */
+function parsePgArray(raw: string | null): StatValue[] | null {
+  if (raw === null) {
     return null;
   }
-  if (value instanceof PgFloat || typeof value === 'string') {
-    return value;
-  }
-  if (typeof value === 'number') {
-    return Number.isInteger(value) ? value : new PgFloat(value);
-  }
-  if (typeof value === 'bigint') {
-    return value;
-  }
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  return String(value);
+  const arrayStr = raw.replaceAll(ARRAY_BRACES_PATTERN, '');
+  return arrayStr ? arrayStr.split(',').map(parsePgArrayValue) : [];
 }
 
-function statList(value: unknown): StatValue[] | undefined {
-  return Array.isArray(value) ? value.map(toStatValue) : undefined;
-}
-
-function statNumber(value: StatValue): number {
-  if (value instanceof PgFloat) {
-    return value.value;
-  }
-  return value === null ? Number.NaN : Number(value);
-}
-
-function dataTypeOf(stats: ColumnStats): string {
-  const { data_type: dataType } = stats;
-  return typeof dataType === 'string' ? dataType.toLowerCase() : '';
+function toColumnStats(row: Row): ColumnStats {
+  return {
+    dataType: cell.text(row, 'data_type').toLowerCase(),
+    commonVals: parsePgArray(cell.nullableText(row, 'common_vals')),
+    commonFreqs: cell.nullableNumberArray(row, 'common_freqs'),
+    histogramBounds: parsePgArray(cell.nullableText(row, 'histogram_bounds')),
+  };
 }
 
 /** Python's `int(...)`/`float(...)` attempt on a hand-split array element. */
@@ -475,27 +471,21 @@ function defaultBound(dataType: string, isLower: boolean): Bound {
 /** Tight bound values for range queries based on column statistics. */
 function boundValues(stats: ColumnStats, isLower: boolean): Bound {
   // Most common values are statistically the most relevant
-  const commonVals = statList(stats.common_vals);
-  const commonFreqs = statList(stats.common_freqs);
+  const { commonVals, commonFreqs } = stats;
   if (commonVals && commonFreqs && commonVals.length > 0 && commonVals.length === commonFreqs.length) {
-    const freqs = commonFreqs.map(statNumber);
-    const mostCommon = commonVals[freqs.indexOf(Math.max(...freqs))] ?? null;
+    const mostCommon = commonVals[commonFreqs.indexOf(Math.max(...commonFreqs))] ?? null;
     return commonValueBound(mostCommon, isLower);
   }
 
   // Next, try histogram bounds focusing on central values
-  const histogramBounds = statList(stats.histogram_bounds);
+  const { histogramBounds } = stats;
   if (histogramBounds && histogramBounds.length >= 3) {
     return histogramBound(histogramBounds, isLower);
   }
 
-  // Fall back to standard statistics if available
-  const fallback = statList(stats.most_common_vals)?.[0] ?? null;
-  if (fallback !== null) {
-    return fallback;
-  }
-
-  return defaultBound(dataTypeOf(stats), isLower);
+  // The statistics query never selects most_common_vals (it is aliased to common_vals), so there is no further
+  // statistic to fall back on.
+  return defaultBound(stats.dataType, isLower);
 }
 
 /** Aliases (including the table name itself) of a table in the query. */
@@ -548,7 +538,7 @@ function precedingContext(query: string, paramPosition: number): string {
   return query.slice(clauseStart, paramPosition + 2);
 }
 
-function stringReplacement(commonVals: StatValue[] | undefined, isLike: boolean): string {
+function stringReplacement(commonVals: StatValue[] | null, isLike: boolean): string {
   if (isLike) {
     return "'%test%'";
   }
@@ -758,23 +748,13 @@ export class SqlBindParams {
 
     try {
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, STATS_QUERY, [tableName, columnName]);
-      const row = result?.[0];
+      const [row] = result;
       if (!row) {
         this.columnStatsCache.set(cacheKey, null);
         return null;
       }
 
-      const stats: ColumnStats = { ...row.cells };
-
-      // Convert PostgreSQL array literals like '{val1,val2}' to lists
-      for (const key of ['common_vals', 'common_freqs', 'histogram_bounds']) {
-        const value = stats[key];
-        if (typeof value === 'string') {
-          const arrayStr = value.replaceAll(ARRAY_BRACES_PATTERN, '');
-          stats[key] = arrayStr ? arrayStr.split(',').map(parsePgArrayValue) : [];
-        }
-      }
-
+      const stats = toColumnStats(row);
       this.columnStatsCache.set(cacheKey, stats);
       return stats;
     } catch (error) {
@@ -786,9 +766,7 @@ export class SqlBindParams {
 
   /** A replacement value based on column statistics. */
   getReplacementValue(stats: ColumnStats, context: string): string {
-    const dataType = dataTypeOf(stats);
-    const commonVals = statList(stats.common_vals);
-    const histogramBounds = statList(stats.histogram_bounds);
+    const { dataType, commonVals, histogramBounds } = stats;
 
     // Detect query operator context
     const isEquality = context.includes('=') && !context.includes('!=') && !context.includes('<>');

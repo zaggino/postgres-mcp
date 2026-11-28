@@ -3,6 +3,7 @@ import { createServer as createNetServer } from 'node:net';
 
 import { expect, test, vi } from 'vitest';
 
+import { queryRows } from '../../../src/sql/safe-sql.ts';
 import type { PoolLike } from '../../../src/sql/sql-driver.ts';
 import {
   createPoolFactory,
@@ -30,28 +31,28 @@ function issued(fake: ReturnType<typeof createFakePool>): string[] {
   return fake.queries.map((q) => q.text).slice(1);
 }
 
-test('executeQuery with forceReadonly wraps the query in a read-only transaction rolled back afterwards', async () => {
+test('executeResultSet with forceReadonly wraps the query in a read-only transaction rolled back afterwards', async () => {
   const { fake, driver } = driverFor(({ text }) =>
     text === 'SELECT * FROM test' ? [rowsResult(TWO_ROWS)] : [noRowsResult]
   );
 
-  const result = await driver.executeQuery('SELECT * FROM test', null, true);
+  const result = (await driver.executeResultSet('SELECT * FROM test', null, true)).rows;
 
   expect(issued(fake)).toEqual(['BEGIN TRANSACTION READ ONLY', 'SELECT * FROM test', 'ROLLBACK']);
   expect(result).toHaveLength(2);
-  expect(result?.[0]?.cells.id).toBe(1);
-  expect(result?.[1]?.cells.name).toBe('test2');
+  expect(result[0]?.id).toBe(1);
+  expect(result[1]?.name).toBe('test2');
 });
 
-test('executeQuery without forceReadonly commits the transaction', async () => {
+test('executeResultSet without forceReadonly commits the transaction', async () => {
   const { fake, driver } = driverFor(({ text }) =>
     text.startsWith('UPDATE') ? [rowsResult(TWO_ROWS)] : [noRowsResult]
   );
 
-  const result = await driver.executeQuery("UPDATE test SET name = 'updated'");
+  const result = await queryRows(driver, "UPDATE test SET name = 'updated'");
 
   expect(issued(fake)).toEqual(['BEGIN', "UPDATE test SET name = 'updated'", 'COMMIT']);
-  expect(result).not.toBeNull();
+  expect(result).toEqual(TWO_ROWS);
 });
 
 test('a statement Postgres rejects is rolled back and keeps the pool and its connection in use', async () => {
@@ -62,8 +63,8 @@ test('a statement Postgres rejects is rolled back and keeps the pool and its con
     return [noRowsResult];
   });
 
-  await expect(driver.executeQuery('SELEC 1', null, true)).rejects.toThrow('syntax error');
-  await driver.executeQuery('SELECT 2');
+  await expect(driver.executeResultSet('SELEC 1', null, true)).rejects.toThrow('syntax error');
+  await queryRows(driver, 'SELECT 2');
 
   expect(issued(fake)).toEqual(['BEGIN TRANSACTION READ ONLY', 'SELEC 1', 'ROLLBACK', 'BEGIN', 'SELECT 2', 'COMMIT']);
   expect(conn.isValid).toBe(true);
@@ -81,12 +82,12 @@ test('a lost connection destroys the client and makes the next call reconnect', 
     return [noRowsResult];
   });
 
-  await expect(driver.executeQuery('SELECT 2')).rejects.toThrow('Connection terminated unexpectedly');
+  await expect(queryRows(driver, 'SELECT 2')).rejects.toThrow('Connection terminated unexpectedly');
   expect(conn.isValid).toBe(false);
   expect(conn.lastError).toBe('Connection terminated unexpectedly');
   expect(fake.releases.at(-1)).toBe(true);
 
-  await driver.executeQuery('SELECT 2');
+  await queryRows(driver, 'SELECT 2');
 
   expect(fake.queries.filter((q) => q.text === 'SELECT 1')).toHaveLength(2);
   expect(conn.lastError).toBeNull();
@@ -103,7 +104,7 @@ test('a statement error whose rollback fails destroys the connection', async () 
     return [noRowsResult];
   });
 
-  await expect(driver.executeQuery('SELEC 1')).rejects.toThrow('syntax error');
+  await expect(queryRows(driver, 'SELEC 1')).rejects.toThrow('syntax error');
 
   expect(fake.releases.at(-1)).toBe(true);
 });
@@ -117,7 +118,7 @@ test('a FATAL report is connection-level by its SQLSTATE even when the severity 
     return [noRowsResult];
   });
 
-  await expect(driver.executeQuery('SELECT 2')).rejects.toThrow('administrator command');
+  await expect(queryRows(driver, 'SELECT 2')).rejects.toThrow('administrator command');
 
   expect(conn.isValid).toBe(false);
   expect(fake.releases.at(-1)).toBe(true);
@@ -134,7 +135,7 @@ test('a call cancelled before its statement is sent returns its connection to th
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
   const driver = new SqlDriver({ conn, signal: controller.signal });
 
-  await expect(driver.executeQuery('SELECT 2')).rejects.toBeInstanceOf(QueryCancelledError);
+  await expect(queryRows(driver, 'SELECT 2')).rejects.toBeInstanceOf(QueryCancelledError);
 
   expect(issued(fake)).toEqual(['BEGIN', 'ROLLBACK']);
   expect(fake.releases.at(-1)).toBe(false);
@@ -152,12 +153,12 @@ test('a checkout failure is recorded without invalidating the pool, and a later 
   };
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => pool);
 
-  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('too many clients');
+  await expect(queryRows(new SqlDriver({ conn }), 'SELECT 2')).rejects.toThrow('too many clients');
   expect(conn.isValid).toBe(true);
   expect(conn.lastError).toBe('sorry, too many clients already');
 
   const controller = new AbortController();
-  const cancelled = new SqlDriver({ conn, signal: controller.signal }).executeQuery('SELECT 2');
+  const cancelled = queryRows(new SqlDriver({ conn, signal: controller.signal }), 'SELECT 2');
   await expect.poll(() => fake.queries.some((q) => q.text === 'SELECT 2')).toBe(true);
   controller.abort();
   await expect(cancelled).rejects.toBeInstanceOf(QueryCancelledError);
@@ -172,7 +173,7 @@ test('a recorded error masks every password of a connection URL it echoes', asyn
     throw new Error(`${url}: connection refused`);
   });
 
-  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
+  await expect(queryRows(new SqlDriver({ conn }), 'SELECT 2')).rejects.toThrow('Connection attempt failed');
 
   expect(conn.lastError).not.toMatch(/first|second/u);
 });
@@ -183,7 +184,7 @@ test('a recorded error masks the password of a URL whose text holds a replacemen
     throw new Error(`could not connect to ${url}`);
   });
 
-  await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
+  await expect(queryRows(new SqlDriver({ conn }), 'SELECT 2')).rejects.toThrow('Connection attempt failed');
 
   expect(conn.lastError).not.toContain('hunter2');
 });
@@ -207,7 +208,7 @@ test('cancelling a call that waits for a free connection rejects it at once and 
   const controller = new AbortController();
   const driver = new SqlDriver({ conn, signal: controller.signal });
 
-  const pending = driver.executeQuery('SELECT 2');
+  const pending = queryRows(driver, 'SELECT 2');
   await expect.poll(() => checkouts).toBe(2);
   controller.abort();
   await expect(pending).rejects.toBeInstanceOf(QueryCancelledError);
@@ -232,7 +233,7 @@ test('connecting to a server that never answers fails after the connect timeout'
   const { port } = address;
   const conn = new DbConnPool(`postgresql://user:pass@127.0.0.1:${port}/db`, createPoolFactory(200));
   try {
-    await expect(new SqlDriver({ conn }).executeQuery('SELECT 2')).rejects.toThrow('timeout');
+    await expect(queryRows(new SqlDriver({ conn }), 'SELECT 2')).rejects.toThrow('timeout');
   } finally {
     for (const socket of sockets) {
       socket.destroy();
@@ -243,39 +244,39 @@ test('connecting to a server that never answers fails after the connect timeout'
   }
 });
 
-test('executeQuery returns null for statements that produce no result set', async () => {
+test('executeResultSet reports no columns for statements that produce no result set', async () => {
   const { fake, driver } = driverFor();
 
-  const result = await driver.executeQuery('DELETE FROM test');
+  const result = await driver.executeResultSet('DELETE FROM test');
 
-  expect(result).toBeNull();
+  expect(result).toEqual({ columns: [], rows: [] });
   expect(issued(fake)).toEqual(['BEGIN', 'DELETE FROM test', 'COMMIT']);
 });
 
-test('executeQuery returns the rows of the last statement of a multi-statement query', async () => {
+test('executeResultSet returns the rows of the last statement of a multi-statement query', async () => {
   const { driver } = driverFor(({ text }) =>
     text.includes(';') ? [rowsResult([{ first: 1 }]), rowsResult(TWO_ROWS)] : [noRowsResult]
   );
 
-  const result = await driver.executeQuery('SELECT 1 AS first; SELECT * FROM test');
+  const result = await queryRows(driver, 'SELECT 1 AS first; SELECT * FROM test');
 
-  expect(result?.map((row) => row.cells.id)).toEqual([1, 2]);
+  expect(result.map((row) => row.id)).toEqual([1, 2]);
 });
 
-test('executeQuery returns null when the last statement of a multi-statement query has no result set', async () => {
+test('executeResultSet reports no columns when the last statement of a multi-statement query has no result set', async () => {
   const { driver } = driverFor(({ text }) =>
     text.includes(';') ? [rowsResult(TWO_ROWS), noRowsResult] : [noRowsResult]
   );
 
-  const result = await driver.executeQuery('SELECT * FROM test; DELETE FROM test');
+  const result = await driver.executeResultSet('SELECT * FROM test; DELETE FROM test');
 
-  expect(result).toBeNull();
+  expect(result).toEqual({ columns: [], rows: [] });
 });
 
-test('executeQuery passes params to the query', async () => {
+test('executeResultSet passes params to the query', async () => {
   const { fake, driver } = driverFor(() => [rowsResult(TWO_ROWS)]);
 
-  await driver.executeQuery('SELECT * FROM test WHERE id = $1', [1], true);
+  await driver.executeResultSet('SELECT * FROM test WHERE id = $1', [1], true);
 
   expect(fake.queries).toContainEqual({
     text: 'SELECT * FROM test WHERE id = $1',
@@ -283,21 +284,21 @@ test('executeQuery passes params to the query', async () => {
   });
 });
 
-test('executeQuery returns rows from the pool connection', async () => {
+test('executeResultSet returns rows from the pool connection', async () => {
   const { driver } = driverFor(() => [rowsResult(TWO_ROWS)]);
 
-  const result = await driver.executeQuery('SELECT * FROM test');
+  const result = await queryRows(driver, 'SELECT * FROM test');
 
-  expect(result).toEqual([{ cells: TWO_ROWS[0] }, { cells: TWO_ROWS[1] }]);
+  expect(result).toEqual(TWO_ROWS);
 });
 
-test('a connection failure rejects executeQuery and marks the pool invalid', async () => {
+test('a connection failure rejects executeResultSet and marks the pool invalid', async () => {
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => {
     throw new Error('Connection failed');
   });
   const driver = new SqlDriver({ conn });
 
-  await expect(driver.executeQuery('SELECT * FROM test')).rejects.toThrow('Connection failed');
+  await expect(queryRows(driver, 'SELECT * FROM test')).rejects.toThrow('Connection failed');
 
   expect(conn.isValid).toBe(false);
   expect(conn.lastError).toContain('Connection failed');
@@ -320,14 +321,14 @@ test('a driver without conn or engineUrl cannot be created', () => {
   expect(() => new SqlDriver({})).toThrow('Either conn or engineUrl must be provided');
 });
 
-test('executeQuery on a failed pool probe does not run the query', async () => {
+test('executeResultSet on a failed pool probe does not run the query', async () => {
   const query = vi.fn();
   const { driver } = driverFor(({ text }) => {
     query(text);
     throw new Error('probe failed');
   });
 
-  await expect(driver.executeQuery('SELECT 2')).rejects.toThrow('Connection attempt failed');
+  await expect(queryRows(driver, 'SELECT 2')).rejects.toThrow('Connection attempt failed');
 
   expect(query).toHaveBeenCalledExactlyOnceWith('SELECT 1');
 });

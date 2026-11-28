@@ -15,13 +15,18 @@ const PASSWORD_PARAM = /(?<key>password=)(?<value>[^\s&;"']+)/giu;
 const DSN_SINGLE_QUOTE = /(?<key>password\s*=\s*')(?<value>[^']+)(?<end>')/giu;
 const DSN_DOUBLE_QUOTE = /(?<key>password\s*=\s*")(?<value>[^"]+)(?<end>")/giu;
 
-export interface RowResult {
-  cells: Record<string, unknown>;
+/** One result row, keyed by column name, with values as pg's type parsers produce them. */
+export type Row = Record<string, unknown>;
+
+/** The last statement's result: column names, then rows. No columns means the statement returned no result set. */
+export interface ResultSet {
+  columns: readonly string[];
+  rows: Row[];
 }
 
 export interface QueryResultLike {
-  fields: readonly unknown[];
-  rows: Record<string, unknown>[];
+  fields: readonly { name: string }[];
+  rows: Row[];
 }
 
 export interface ClientLike {
@@ -382,7 +387,7 @@ async function executeWithClient(
   query: string,
   params: readonly unknown[] | null | undefined,
   options: ExecutionOptions
-): Promise<RowResult[] | null> {
+): Promise<ResultSet> {
   const { forceReadonly, statementTimeoutSeconds, signal } = options;
   // node-postgres runs in autocommit, so a transaction is opened explicitly
   // for every query to keep the closing COMMIT/ROLLBACK meaningful.
@@ -405,12 +410,15 @@ async function executeWithClient(
     });
     const last = results.at(-1);
 
-    const rows = last && last.fields.length > 0 ? last.rows : null;
+    const result: ResultSet = {
+      columns: last ? last.fields.map((field) => field.name) : [],
+      rows: last ? last.rows : [],
+    };
 
     await client.query(forceReadonly ? 'ROLLBACK' : 'COMMIT');
     transactionStarted = false;
 
-    return rows ? rows.map((row) => ({ cells: { ...row } })) : null;
+    return result;
   } catch (error) {
     if (transactionStarted) {
       try {
@@ -602,23 +610,19 @@ export class SqlDriver {
     return this.conn;
   }
 
-  async executeQuery(
-    query: string,
-    params?: readonly unknown[] | null,
-    forceReadonly = false
-  ): Promise<RowResult[] | null> {
+  async executeResultSet(query: string, params?: readonly unknown[] | null, forceReadonly = false): Promise<ResultSet> {
     // Checking before connecting avoids opening a connection for a call that is already cancelled.
     throwIfCancelled(this.signal);
     const conn = this.conn ?? this.connect();
     const client = await this.#checkout(conn);
     try {
-      const rows = await executeWithClient(client, query, params, {
+      const result = await executeWithClient(client, query, params, {
         forceReadonly,
         statementTimeoutSeconds: this.statementTimeoutSeconds,
         signal: this.signal,
       });
       conn.markReachable();
-      return rows;
+      return result;
     } catch (error) {
       const kind = failureKind(error);
       if (kind === 'answered') {

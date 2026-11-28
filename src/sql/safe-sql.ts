@@ -12,7 +12,7 @@ import type { Identifier } from './literal.ts';
 import { paramSqlToQuery } from './literal.ts';
 import type { RawStmtJson } from './pg-ast.ts';
 import { asWrappedNode, parseSql, SqlParseError } from './pg-ast.ts';
-import type { DbConnPool, RowResult } from './sql-driver.ts';
+import type { DbConnPool, ResultSet, Row } from './sql-driver.ts';
 import { QueryTimeoutError } from './sql-driver.ts';
 
 const PG_CATALOG_PATTERN = /^pg_catalog\.(?<name>.+)$/u;
@@ -33,11 +33,13 @@ export class RestrictedQueryTimeoutError extends QueryTimeoutError {
 export interface SqlExecutor {
   /** The connection pool behind the executor, when it has one; keys per-connection caches. */
   readonly pool?: DbConnPool;
-  executeQuery: (
-    query: string,
-    params?: readonly unknown[] | null,
-    forceReadonly?: boolean
-  ) => Promise<RowResult[] | null>;
+  /** The last statement's columns and rows; no columns means it returned no result set. */
+  executeResultSet: (query: string, params?: readonly unknown[] | null, forceReadonly?: boolean) => Promise<ResultSet>;
+}
+
+/** The rows of the last statement's result; empty when it returned no rows or no result set. */
+export async function queryRows(executor: SqlExecutor, query: string): Promise<Row[]> {
+  return (await executor.executeResultSet(query)).rows;
 }
 
 function functionName(funcname: unknown): string {
@@ -165,13 +167,21 @@ function validateStatement(raw: RawStmtJson): void {
   validateNode('RawStmt', raw);
 }
 
+/** Raised when restricted mode refuses a statement. */
+export class QueryValidationError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'QueryValidationError';
+  }
+}
+
 async function validateQuery(query: string): Promise<void> {
   let stmts: readonly RawStmtJson[];
   try {
     ({ stmts } = await parseSql(query));
   } catch (error) {
     if (error instanceof SqlParseError) {
-      throw new Error('Failed to parse SQL statement', { cause: error });
+      throw new QueryValidationError('Failed to parse SQL statement', { cause: error });
     }
     throw error;
   }
@@ -180,7 +190,7 @@ async function validateQuery(query: string): Promise<void> {
       validateStatement(stmt);
     }
   } catch (error) {
-    throw new Error(`Error validating query: ${errorMessage(error)}`, {
+    throw new QueryValidationError(`Error validating query: ${errorMessage(error)}`, {
       cause: error,
     });
   }
@@ -200,14 +210,14 @@ export class SafeSqlDriver implements SqlExecutor {
 
   // The third argument is accepted for interface compatibility but ignored:
   // restricted mode always runs read-only.
-  async executeQuery(
+  async executeResultSet(
     query: string,
     params: readonly unknown[] | null = null,
     _forceReadonly = true
-  ): Promise<RowResult[] | null> {
+  ): Promise<ResultSet> {
     await validateQuery(query);
     try {
-      return await this.sqlDriver.executeQuery(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
+      return await this.sqlDriver.executeResultSet(`${SQL_COMMENT_PREFIX} ${query}`, params, true);
     } catch (error) {
       if (error instanceof QueryTimeoutError) {
         throw new RestrictedQueryTimeoutError(error.seconds, { cause: error.cause });
@@ -224,14 +234,10 @@ export class SafeSqlDriver implements SqlExecutor {
     return SafeSqlDriver.sqlToQuery(paramSqlToQuery(query, params));
   }
 
-  static executeParamQuery(
-    sqlDriver: SqlExecutor,
-    query: string,
-    params?: readonly unknown[] | null
-  ): Promise<RowResult[] | null> {
+  static executeParamQuery(sqlDriver: SqlExecutor, query: string, params?: readonly unknown[] | null): Promise<Row[]> {
     if (params && params.length > 0) {
-      return sqlDriver.executeQuery(SafeSqlDriver.paramSqlToQuery(query, params));
+      return queryRows(sqlDriver, SafeSqlDriver.paramSqlToQuery(query, params));
     }
-    return sqlDriver.executeQuery(query);
+    return queryRows(sqlDriver, query);
   }
 }

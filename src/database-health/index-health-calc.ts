@@ -1,5 +1,7 @@
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface IndexInfo {
   columns: string[];
@@ -44,11 +46,6 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
-function nullableText(value: unknown): string | null {
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  return value === null || value === undefined ? null : String(value);
-}
-
 /** Whether the columns of an index start with all of `columns`. */
 function indexCovers(indexedColumns: readonly string[], columns: readonly string[]): boolean {
   return sameList(indexedColumns.slice(0, columns.length), columns);
@@ -70,8 +67,63 @@ function coversAsDuplicate(covering: IndexInfo, index: IndexInfo): boolean {
   );
 }
 
-function toMb(bytes: unknown): number {
-  return Math.trunc(Number(bytes)) / BYTES_PER_MB;
+function bytesToMb(bytes: number): number {
+  return Math.trunc(bytes) / BYTES_PER_MB;
+}
+
+function toIndexInfo(row: Row): IndexInfo {
+  // Unquote column names
+  const columns = cell
+    .text(row, 'columns')
+    .replace(') WHERE (', ' WHERE ')
+    .split(', ')
+    .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
+  return {
+    schema: cell.text(row, 'schema'),
+    table: cell.text(row, 'table'),
+    name: cell.text(row, 'name'),
+    columns,
+    using: cell.text(row, 'using'),
+    unique: cell.boolean(row, 'unique'),
+    primary: cell.boolean(row, 'primary'),
+    valid: cell.boolean(row, 'valid'),
+    indexprs: cell.nullableText(row, 'indexprs'),
+    indpred: cell.nullableText(row, 'indpred'),
+  };
+}
+
+interface BloatedIndex {
+  bloatBytes: number;
+  index: string;
+  indexBytes: number;
+  table: string;
+}
+
+function toBloatedIndex(row: Row): BloatedIndex {
+  return {
+    index: cell.text(row, 'index'),
+    table: cell.text(row, 'table'),
+    bloatBytes: cell.numeric(row, 'bloat_bytes'),
+    indexBytes: cell.numeric(row, 'index_bytes'),
+  };
+}
+
+interface UnusedIndex {
+  index: string;
+  indexScans: number;
+  primary: boolean;
+  sizeBytes: number;
+  table: string;
+}
+
+function toUnusedIndex(row: Row): UnusedIndex {
+  return {
+    index: cell.text(row, 'index'),
+    table: cell.text(row, 'table'),
+    sizeBytes: cell.integer(row, 'size_bytes'),
+    indexScans: cell.integer(row, 'index_scans'),
+    primary: cell.boolean(row, 'primary'),
+  };
 }
 
 export class IndexHealthCalc {
@@ -144,7 +196,7 @@ export class IndexHealthCalc {
 
   /** Check for bloated indexes that are larger than `minSize` bytes (default 100MB). */
   async indexBloat(minSize = 104_857_600): Promise<string> {
-    const bloatedIndexes = await SafeSqlDriver.executeParamQuery(
+    const rows = await SafeSqlDriver.executeParamQuery(
       this.sqlDriver,
       `
             WITH btree_index_atts AS (
@@ -280,16 +332,17 @@ export class IndexHealthCalc {
       [minSize]
     );
 
-    if (!bloatedIndexes || bloatedIndexes.length === 0) {
+    const bloatedIndexes = rows.map(toBloatedIndex);
+    if (bloatedIndexes.length === 0) {
       return 'No bloated indexes found.';
     }
 
     const result = ['Bloated indexes found:'];
-    for (const { cells } of bloatedIndexes) {
-      const bloatMb = toMb(cells.bloat_bytes);
-      const totalMb = toMb(cells.index_bytes);
+    for (const bloated of bloatedIndexes) {
+      const bloatMb = bytesToMb(bloated.bloatBytes);
+      const totalMb = bytesToMb(bloated.indexBytes);
       result.push(
-        `Index '${String(cells.index)}' on table '${String(cells.table)}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
+        `Index '${bloated.index}' on table '${bloated.table}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
       );
     }
 
@@ -302,7 +355,9 @@ export class IndexHealthCalc {
     }
 
     // Get index information
-    const results = await this.sqlDriver.executeQuery(`
+    const results = await queryRows(
+      this.sqlDriver,
+      `
             SELECT
                 schemaname AS schema,
                 t.relname AS table,
@@ -327,31 +382,10 @@ export class IndexHealthCalc {
                 schemaname IS NOT NULL
             ORDER BY
                 1, 2
-        `);
+        `
+    );
 
-    if (results === null) {
-      return [];
-    }
-
-    const indexes = results.map(({ cells }): IndexInfo => {
-      // Unquote column names
-      const columns = String(cells.columns)
-        .replace(') WHERE (', ' WHERE ')
-        .split(', ')
-        .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
-      return {
-        schema: String(cells.schema),
-        table: String(cells.table),
-        name: String(cells.name),
-        columns,
-        using: String(cells.using),
-        unique: Boolean(cells.unique),
-        primary: Boolean(cells.primary),
-        valid: Boolean(cells.valid),
-        indexprs: nullableText(cells.indexprs),
-        indpred: nullableText(cells.indpred),
-      };
-    });
+    const indexes = results.map(toIndexInfo);
 
     this.cachedIndexes = indexes;
     return indexes;
@@ -359,7 +393,7 @@ export class IndexHealthCalc {
 
   /** Check for unused or rarely used indexes (at most `maxScans` scans, default 50). */
   async unusedIndexes(maxScans = 50): Promise<string> {
-    const unused = await SafeSqlDriver.executeParamQuery(
+    const rows = await SafeSqlDriver.executeParamQuery(
       this.sqlDriver,
       `
             SELECT
@@ -384,18 +418,19 @@ export class IndexHealthCalc {
       [maxScans]
     );
 
-    if (!unused || unused.length === 0) {
+    const unused = rows.map(toUnusedIndex);
+    if (unused.length === 0) {
       return 'No unused indexes found.';
     }
 
     const result = ['Rarely used indexes found:'];
-    for (const { cells } of unused) {
-      if (cells.primary) {
+    for (const row of unused) {
+      if (row.primary) {
         continue;
       }
-      const sizeMb = toMb(cells.size_bytes);
+      const sizeMb = bytesToMb(row.sizeBytes);
       result.push(
-        `Index '${String(cells.index)}' on table '${String(cells.table)}' has only been scanned ${String(cells.index_scans)} times and uses ${sizeMb.toFixed(1)}MB of space`
+        `Index '${row.index}' on table '${row.table}' has only been scanned ${row.indexScans} times and uses ${sizeMb.toFixed(1)}MB of space`
       );
     }
 

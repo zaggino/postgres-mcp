@@ -1,3 +1,4 @@
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
@@ -68,15 +69,11 @@ export class VacuumHealthCalc {
       [this.maxValue, this.maxValue, this.threshold]
     );
 
-    if (!results) {
-      return [];
-    }
-
-    return results.map(({ cells }) => {
-      const transactionsLeft = Number(cells.transactions_left);
+    return results.map((row) => {
+      const transactionsLeft = cell.integer(row, 'transactions_left');
       return {
-        schema: String(cells.schema),
-        table: String(cells.table),
+        schema: cell.text(row, 'schema'),
+        table: cell.text(row, 'table'),
         transactionsLeft,
         isHealthy: transactionsLeft >= this.threshold,
       };

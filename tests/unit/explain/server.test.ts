@@ -2,13 +2,11 @@ import { afterEach, expect, it as test, vi } from 'vitest';
 
 import type { RegistryOptions } from '../../../src/database-registry.ts';
 import { createServer } from '../../../src/server.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
 import { createTestRegistry } from '../../support/registry.ts';
 
 const EXECUTION_ERROR = /^Error: .*Error executing query/u;
-
-type ExecuteQuery = SqlExecutor['executeQuery'];
 
 /** The driver factory the next server's registry uses; the real one when unset. */
 let getSqlDriver: RegistryOptions['getSqlDriver'];
@@ -29,13 +27,11 @@ function plan(extra: Record<string, unknown> = {}, node = {}) {
 
 /** A driver that answers EXPLAIN with `planData` and reports hypopg installed. */
 function useExplainDriver(planData: unknown) {
-  const executeQuery = vi.fn<ExecuteQuery>((query) =>
-    Promise.resolve(
-      query.includes('pg_extension') ? [{ cells: { extversion: '1.4.1' } }] : [{ cells: { 'QUERY PLAN': [planData] } }]
-    )
+  const driver = fakeExecutor((query) =>
+    query.includes('pg_extension') ? [{ extversion: '1.4.1' }] : [{ 'QUERY PLAN': [planData] }]
   );
-  getSqlDriver = () => ({ executeQuery });
-  return executeQuery;
+  getSqlDriver = () => driver;
+  return driver.executeResultSet;
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
@@ -57,28 +53,28 @@ test('registers the explain_query tool', async () => {
 });
 
 test('explain_query runs a plain EXPLAIN and returns the plan', async () => {
-  const executeQuery = useExplainDriver(plan());
+  const executeResultSet = useExplainDriver(plan());
 
   const text = await explainQuery({ sql: 'SELECT * FROM users' });
 
   expect(text).toContain('Seq Scan');
-  expect(executeQuery).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
 });
 
 test('explain_query with analyze=true runs EXPLAIN ANALYZE and reports execution time', async () => {
-  const executeQuery = useExplainDriver(plan({ 'Execution Time': 1.3 }, { 'Actual Rows': 100 }));
+  const executeResultSet = useExplainDriver(plan({ 'Execution Time': 1.3 }, { 'Actual Rows': 100 }));
 
   const text = await explainQuery({
     sql: 'SELECT * FROM users',
     analyze: true,
   });
 
-  expect(executeQuery).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
   expect(text).toContain('Execution Time: 1.300 ms');
 });
 
 test('explain_query with hypothetical indexes creates them before explaining', async () => {
-  const executeQuery = useExplainDriver(plan({}, { 'Node Type': 'Index Scan' }));
+  const executeResultSet = useExplainDriver(plan({}, { 'Node Type': 'Index Scan' }));
 
   const text = await explainQuery({
     sql: "SELECT * FROM users WHERE email = 'test@example.com'",
@@ -86,7 +82,7 @@ test('explain_query with hypothetical indexes creates them before explaining', a
   });
 
   expect(text).toContain('Index Scan');
-  expect(executeQuery.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
+  expect(executeResultSet.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
 });
 
 test('explain_query rejects analyze combined with hypothetical indexes', async () => {
@@ -102,9 +98,10 @@ test('explain_query rejects analyze combined with hypothetical indexes', async (
 });
 
 test('explain_query formats a failing EXPLAIN as an error message', async () => {
-  getSqlDriver = () => ({
-    executeQuery: vi.fn<ExecuteQuery>().mockRejectedValue(new Error('Error executing query')),
-  });
+  getSqlDriver = () =>
+    fakeExecutor(() => {
+      throw new Error('Error executing query');
+    });
 
   const text = await explainQuery({ sql: 'INVALID SQL' });
 

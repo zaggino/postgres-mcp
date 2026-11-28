@@ -1,15 +1,14 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 import { formatError, formatTextResponse, toJson } from './result.ts';
 
-function cell(row: { cells: Record<string, unknown> }, name: string): unknown {
-  return row.cells[name];
-}
-
 export async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResult> {
-  const rows = await sqlDriver.executeQuery(
+  const rows = await queryRows(
+    sqlDriver,
     `
             SELECT
                 schema_name,
@@ -23,37 +22,88 @@ export async function listSchemas(sqlDriver: SqlExecutor): Promise<CallToolResul
             ORDER BY schema_type, schema_name
             `
   );
-  const schemas = rows ? rows.map((row) => row.cells) : [];
+  const schemas = rows.map((row) => ({
+    schema_name: cell.text(row, 'schema_name'),
+    schema_owner: cell.text(row, 'schema_owner'),
+    schema_type: cell.text(row, 'schema_type'),
+  }));
   return formatTextResponse(toJson(schemas));
 }
 
-export async function listObjects(
-  sqlDriver: SqlExecutor,
-  schemaName: string,
-  objectType: string
-): Promise<CallToolResult> {
-  let objects: unknown[];
+interface TableSummary {
+  schema: string;
+  name: string;
+  type: string;
+}
 
-  if (objectType === 'table' || objectType === 'view') {
-    const tableType = objectType === 'table' ? 'BASE TABLE' : 'VIEW';
-    const rows = await SafeSqlDriver.executeParamQuery(
-      sqlDriver,
-      `
+interface SequenceSummary {
+  schema: string;
+  name: string;
+  data_type: string;
+}
+
+interface SequenceDetails extends SequenceSummary {
+  start_value: string;
+  increment: string;
+}
+
+interface ExtensionInfo {
+  name: string;
+  version: string;
+  relocatable: boolean;
+}
+
+const toTableSummary = (row: Row): TableSummary => ({
+  schema: cell.text(row, 'table_schema'),
+  name: cell.text(row, 'table_name'),
+  type: cell.text(row, 'table_type'),
+});
+
+const toSequenceSummary = (row: Row): SequenceSummary => ({
+  schema: cell.text(row, 'sequence_schema'),
+  name: cell.text(row, 'sequence_name'),
+  data_type: cell.text(row, 'data_type'),
+});
+
+const toSequenceDetails = (row: Row): SequenceDetails => ({
+  ...toSequenceSummary(row),
+  start_value: cell.text(row, 'start_value'),
+  increment: cell.text(row, 'increment'),
+});
+
+const toExtensionInfo = (row: Row): ExtensionInfo => ({
+  name: cell.text(row, 'extname'),
+  version: cell.text(row, 'extversion'),
+  relocatable: cell.boolean(row, 'extrelocatable'),
+});
+
+interface ObjectKind {
+  list: (sqlDriver: SqlExecutor, schemaName: string) => Promise<unknown>;
+  details: (sqlDriver: SqlExecutor, schemaName: string, objectName: string) => Promise<unknown>;
+}
+
+/** Tables and views differ only in the information_schema `table_type` and the `type` label. */
+function tableKind(objectType: 'table' | 'view', tableType: string): ObjectKind {
+  return {
+    async list(sqlDriver, schemaName) {
+      const rows = await SafeSqlDriver.executeParamQuery(
+        sqlDriver,
+        `
                 SELECT table_schema, table_name, table_type
                 FROM information_schema.tables
                 WHERE table_schema = {} AND table_type = {}
                 ORDER BY table_name
                 `,
-      [schemaName, tableType]
-    );
-    objects = rows
-      ? rows.map((row) => ({
-          schema: cell(row, 'table_schema'),
-          name: cell(row, 'table_name'),
-          type: cell(row, 'table_type'),
-        }))
-      : [];
-  } else if (objectType === 'sequence') {
+        [schemaName, tableType]
+      );
+      return rows.map(toTableSummary);
+    },
+    details: (sqlDriver, schemaName, objectName) => tableDetails(sqlDriver, schemaName, objectName, objectType),
+  };
+}
+
+const sequenceKind: ObjectKind = {
+  async list(sqlDriver, schemaName) {
     const rows = await SafeSqlDriver.executeParamQuery(
       sqlDriver,
       `
@@ -64,41 +114,83 @@ export async function listObjects(
                 `,
       [schemaName]
     );
-    objects = rows
-      ? rows.map((row) => ({
-          schema: cell(row, 'sequence_schema'),
-          name: cell(row, 'sequence_name'),
-          data_type: cell(row, 'data_type'),
-        }))
-      : [];
-  } else if (objectType === 'extension') {
-    // Extensions are not schema-specific
-    const rows = await sqlDriver.executeQuery(
+    return rows.map(toSequenceSummary);
+  },
+  async details(sqlDriver, schemaName, objectName) {
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
+                SELECT sequence_schema, sequence_name, data_type, start_value, increment
+                FROM information_schema.sequences
+                WHERE sequence_schema = {} AND sequence_name = {}
+                `,
+      [schemaName, objectName]
+    );
+    const [row] = rows;
+    return row ? toSequenceDetails(row) : {};
+  },
+};
+
+const extensionKind: ObjectKind = {
+  // Extensions are not schema-specific
+  async list(sqlDriver) {
+    const rows = await queryRows(
+      sqlDriver,
       `
                 SELECT extname, extversion, extrelocatable
                 FROM pg_extension
                 ORDER BY extname
                 `
     );
-    objects = rows
-      ? rows.map((row) => ({
-          name: cell(row, 'extname'),
-          version: cell(row, 'extversion'),
-          relocatable: cell(row, 'extrelocatable'),
-        }))
-      : [];
-  } else {
+    return rows.map(toExtensionInfo);
+  },
+  async details(sqlDriver, _schemaName, objectName) {
+    const rows = await SafeSqlDriver.executeParamQuery(
+      sqlDriver,
+      `
+                SELECT extname, extversion, extrelocatable
+                FROM pg_extension
+                WHERE extname = {}
+                `,
+      [objectName]
+    );
+    const [row] = rows;
+    return row ? toExtensionInfo(row) : {};
+  },
+};
+
+const objectKinds: Record<string, ObjectKind> = {
+  table: tableKind('table', 'BASE TABLE'),
+  view: tableKind('view', 'VIEW'),
+  sequence: sequenceKind,
+  extension: extensionKind,
+};
+
+/** Runs `run` for a supported object type; an unknown type is a tool error. */
+async function withObjectKind(
+  objectType: string,
+  run: (kind: ObjectKind) => Promise<unknown>
+): Promise<CallToolResult> {
+  const kind = Object.hasOwn(objectKinds, objectType) ? objectKinds[objectType] : undefined;
+  if (!kind) {
     return formatError(`Unsupported object type: ${objectType}`);
   }
+  return formatTextResponse(toJson(await run(kind)));
+}
 
-  return formatTextResponse(toJson(objects));
+export async function listObjects(
+  sqlDriver: SqlExecutor,
+  schemaName: string,
+  objectType: string
+): Promise<CallToolResult> {
+  return await withObjectKind(objectType, (kind) => kind.list(sqlDriver, schemaName));
 }
 
 async function tableDetails(
   sqlDriver: SqlExecutor,
   schemaName: string,
   objectName: string,
-  objectType: string
+  objectType: 'table' | 'view'
 ): Promise<unknown> {
   const colRows = await SafeSqlDriver.executeParamQuery(
     sqlDriver,
@@ -110,14 +202,12 @@ async function tableDetails(
                 `,
     [schemaName, objectName]
   );
-  const columns = colRows
-    ? colRows.map((r) => ({
-        column: cell(r, 'column_name'),
-        data_type: cell(r, 'data_type'),
-        is_nullable: cell(r, 'is_nullable'),
-        default: cell(r, 'column_default'),
-      }))
-    : [];
+  const columns = colRows.map((r) => ({
+    column: cell.text(r, 'column_name'),
+    data_type: cell.text(r, 'data_type'),
+    is_nullable: cell.text(r, 'is_nullable'),
+    default: cell.nullableText(r, 'column_default'),
+  }));
 
   const conRows = await SafeSqlDriver.executeParamQuery(
     sqlDriver,
@@ -132,13 +222,13 @@ async function tableDetails(
     [schemaName, objectName]
   );
 
-  const constraints = new Map<unknown, { name: unknown; type: unknown; columns: unknown[] }>();
-  for (const row of conRows ?? []) {
-    const name = cell(row, 'constraint_name');
-    const col = cell(row, 'column_name');
+  const constraints = new Map<string, { name: string; type: string; columns: string[] }>();
+  for (const row of conRows) {
+    const name = cell.text(row, 'constraint_name');
+    const col = cell.nullableText(row, 'column_name');
     let constraint = constraints.get(name);
     if (!constraint) {
-      constraint = { name, type: cell(row, 'constraint_type'), columns: [] };
+      constraint = { name, type: cell.text(row, 'constraint_type'), columns: [] };
       constraints.set(name, constraint);
     }
     if (col) {
@@ -155,12 +245,10 @@ async function tableDetails(
                 `,
     [schemaName, objectName]
   );
-  const indexes = idxRows
-    ? idxRows.map((r) => ({
-        name: cell(r, 'indexname'),
-        definition: cell(r, 'indexdef'),
-      }))
-    : [];
+  const indexes = idxRows.map((r) => ({
+    name: cell.text(r, 'indexname'),
+    definition: cell.text(r, 'indexdef'),
+  }));
 
   return {
     basic: { schema: schemaName, name: objectName, type: objectType },
@@ -176,51 +264,5 @@ export async function getObjectDetails(
   objectName: string,
   objectType: string
 ): Promise<CallToolResult> {
-  let result: unknown;
-
-  if (objectType === 'table' || objectType === 'view') {
-    result = await tableDetails(sqlDriver, schemaName, objectName, objectType);
-  } else if (objectType === 'sequence') {
-    const rows = await SafeSqlDriver.executeParamQuery(
-      sqlDriver,
-      `
-                SELECT sequence_schema, sequence_name, data_type, start_value, increment
-                FROM information_schema.sequences
-                WHERE sequence_schema = {} AND sequence_name = {}
-                `,
-      [schemaName, objectName]
-    );
-    const row = rows?.[0];
-    result = row
-      ? {
-          schema: cell(row, 'sequence_schema'),
-          name: cell(row, 'sequence_name'),
-          data_type: cell(row, 'data_type'),
-          start_value: cell(row, 'start_value'),
-          increment: cell(row, 'increment'),
-        }
-      : {};
-  } else if (objectType === 'extension') {
-    const rows = await SafeSqlDriver.executeParamQuery(
-      sqlDriver,
-      `
-                SELECT extname, extversion, extrelocatable
-                FROM pg_extension
-                WHERE extname = {}
-                `,
-      [objectName]
-    );
-    const row = rows?.[0];
-    result = row
-      ? {
-          name: cell(row, 'extname'),
-          version: cell(row, 'extversion'),
-          relocatable: cell(row, 'extrelocatable'),
-        }
-      : {};
-  } else {
-    return formatError(`Unsupported object type: ${objectType}`);
-  }
-
-  return formatTextResponse(toJson(result));
+  return await withObjectKind(objectType, (kind) => kind.details(sqlDriver, schemaName, objectName));
 }

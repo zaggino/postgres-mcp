@@ -2,6 +2,7 @@ import pg from 'pg';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { AccessMode, getSqlDriver } from '../../../src/sql/driver-factory.ts';
+import { queryRows } from '../../../src/sql/safe-sql.ts';
 import { DbConnPool } from '../../../src/sql/sql-driver.ts';
 import { createFakePool, databaseError, noRowsResult } from '../../support/fake-pool.ts';
 import type { QueryHandler } from '../../support/fake-pool.ts';
@@ -33,7 +34,7 @@ function issued(fake: ReturnType<typeof createFakePool>): string[] {
 test('restricted mode sets a 30 second server-side statement_timeout right after BEGIN', async () => {
   const { fake, conn } = setup();
 
-  await getSqlDriver(AccessMode.RESTRICTED, conn, { statementTimeoutSeconds: 30 }).executeQuery('SELECT 1');
+  await queryRows(getSqlDriver(AccessMode.RESTRICTED, conn, { statementTimeoutSeconds: 30 }), 'SELECT 1');
 
   expect(issued(fake).slice(0, 2)).toEqual(['BEGIN TRANSACTION READ ONLY', 'SET statement_timeout = 30000']);
 });
@@ -41,7 +42,7 @@ test('restricted mode sets a 30 second server-side statement_timeout right after
 test('unrestricted mode sets no statement_timeout by default', async () => {
   const { fake, conn } = setup();
 
-  await getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 0 }).executeQuery('SELECT 1');
+  await queryRows(getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 0 }), 'SELECT 1');
 
   expect(issued(fake)).toEqual(['BEGIN', 'SELECT 1', 'COMMIT']);
 });
@@ -49,7 +50,7 @@ test('unrestricted mode sets no statement_timeout by default', async () => {
 test('an explicit statementTimeoutSeconds is applied in milliseconds', async () => {
   const { fake, conn } = setup();
 
-  await getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }).executeQuery('SELECT 1');
+  await queryRows(getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }), 'SELECT 1');
 
   expect(issued(fake).slice(0, 2)).toEqual(['BEGIN', 'SET statement_timeout = 5000']);
 });
@@ -67,7 +68,8 @@ test('restricted mode reports a Postgres statement timeout with the restricted-m
   elapseTimeoutPerRead();
   const { conn } = timingOutPool();
 
-  const pending = getSqlDriver(AccessMode.RESTRICTED, conn, { statementTimeoutSeconds: 30 }).executeQuery(
+  const pending = queryRows(
+    getSqlDriver(AccessMode.RESTRICTED, conn, { statementTimeoutSeconds: 30 }),
     'SELECT * FROM slow_table'
   );
 
@@ -79,7 +81,8 @@ test('unrestricted mode with a timeout reports it without the restricted-mode wo
   elapseTimeoutPerRead();
   const { conn } = timingOutPool();
 
-  const pending = getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }).executeQuery(
+  const pending = queryRows(
+    getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }),
     'SELECT * FROM slow_table'
   );
 
@@ -97,7 +100,8 @@ test('a 57014 that arrives before the timeout elapsed is rethrown as the origina
     return [noRowsResult];
   });
 
-  const pending = getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }).executeQuery(
+  const pending = queryRows(
+    getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 5 }),
     'SELECT * FROM slow_table'
   );
 
@@ -111,7 +115,7 @@ test('aborting the signal while the statement runs cancels it in Postgres and re
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
   const driver = getSqlDriver(AccessMode.RESTRICTED, conn, { signal: controller.signal, statementTimeoutSeconds: 30 });
 
-  const pending = driver.executeQuery('SELECT * FROM slow_table');
+  const pending = queryRows(driver, 'SELECT * FROM slow_table');
   await expect.poll(() => fake.queries.some((q) => q.text.includes('slow_table'))).toBe(true);
   expect(fake.cancel).not.toHaveBeenCalled();
   controller.abort();
@@ -128,7 +132,7 @@ test('a signal aborted before the call sends no statement', async () => {
     statementTimeoutSeconds: 0,
   });
 
-  await expect(driver.executeQuery('SELECT 1')).rejects.toThrow('Query cancelled');
+  await expect(queryRows(driver, 'SELECT 1')).rejects.toThrow('Query cancelled');
 
   expect(fake.queries).toEqual([]);
 });
@@ -138,14 +142,17 @@ test('a cancelled call does not invalidate the pool, so the next call does not r
   const fake = createFakePool(({ text }) => (text.includes('slow_table') ? fake.hang() : [noRowsResult]));
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
 
-  const cancelled = getSqlDriver(AccessMode.UNRESTRICTED, conn, {
-    signal: controller.signal,
-    statementTimeoutSeconds: 0,
-  }).executeQuery('SELECT * FROM slow_table');
+  const cancelled = queryRows(
+    getSqlDriver(AccessMode.UNRESTRICTED, conn, {
+      signal: controller.signal,
+      statementTimeoutSeconds: 0,
+    }),
+    'SELECT * FROM slow_table'
+  );
   await expect.poll(() => fake.queries.some((q) => q.text.includes('slow_table'))).toBe(true);
   controller.abort();
   await expect(cancelled).rejects.toThrow('Query cancelled');
-  await getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 0 }).executeQuery('SELECT 2');
+  await queryRows(getSqlDriver(AccessMode.UNRESTRICTED, conn, { statementTimeoutSeconds: 0 }), 'SELECT 2');
 
   expect(conn.isValid).toBe(true);
   expect(fake.queries.filter((q) => q.text === 'SELECT 1')).toHaveLength(1);

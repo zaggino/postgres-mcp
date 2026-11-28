@@ -1,14 +1,16 @@
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { queryRows } from '../sql/safe-sql.ts';
 
 async function hitRateReport(sqlDriver: SqlExecutor, query: string, label: string, threshold: number): Promise<string> {
-  const result = await sqlDriver.executeQuery(query);
-  const rate = result?.[0]?.cells.rate;
+  // NULL when there are no statistics yet; the aggregate always returns one row.
+  const rate = cell.nullableNumeric(cell.single(await queryRows(sqlDriver, query)), 'rate');
 
-  if (rate === null || rate === undefined) {
+  if (rate === null) {
     return `No ${label.toLowerCase()} cache statistics available.`;
   }
 
-  const hitRate = Number(rate) * 100;
+  const hitRate = rate * 100;
   const thresholdPct = threshold * 100;
   const position = hitRate >= thresholdPct ? 'above' : 'below';
 

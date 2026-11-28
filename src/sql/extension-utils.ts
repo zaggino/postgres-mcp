@@ -1,6 +1,6 @@
-import { logLine } from '../log.ts';
+import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
-import { SafeSqlDriver } from './safe-sql.ts';
+import { SafeSqlDriver, queryRows } from './safe-sql.ts';
 import type { DbConnPool } from './sql-driver.ts';
 
 export type MessageType = 'plain' | 'markdown';
@@ -30,7 +30,6 @@ export function resetPostgresVersionCache(): void {
 
 /**
  * Get the major PostgreSQL version as an integer (e.g. 16 for PostgreSQL 16.2).
- * Returns 0 if the version cannot be determined.
  */
 export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number> {
   const cached = versions.get(cacheKey(sqlDriver));
@@ -39,14 +38,7 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
   }
 
   try {
-    const rows = await sqlDriver.executeQuery('SHOW server_version');
-    const first = rows?.[0];
-    if (!first) {
-      logLine('Could not determine PostgreSQL version');
-      return 0;
-    }
-
-    const versionString = String(first.cells.server_version);
+    const versionString = cell.text(cell.single(await queryRows(sqlDriver, 'SHOW server_version')), 'server_version');
     // Extract the major version (before the first dot)
     const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {
@@ -75,14 +67,14 @@ export async function checkPostgresVersionRequirement(
 
   return [
     false,
-    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion || 'unknown'}.`,
+    `This feature (${featureName}) requires PostgreSQL ${minVersion} or later. Your current version is PostgreSQL ${pgVersion}.`,
   ];
 }
 
-function installedMessage(name: string, version: unknown, messageType: MessageType): string {
+function installedMessage(name: string, version: string, messageType: MessageType): string {
   return messageType === 'markdown'
-    ? `The **${name}** extension (version ${String(version)}) is already installed.`
-    : `The ${name} extension (version ${String(version)}) is already installed.`;
+    ? `The **${name}** extension (version ${version}) is already installed.`
+    : `The ${name} extension (version ${version}) is already installed.`;
 }
 
 function availableMessage(name: string, messageType: MessageType): string {
@@ -126,9 +118,9 @@ export async function checkExtension(
     defaultVersion: null,
   };
 
-  const installed = installedResult?.[0];
+  const [installed] = installedResult;
   if (installed) {
-    const version = 'extversion' in installed.cells ? installed.cells.extversion : 'unknown';
+    const version = cell.text(installed, 'extversion');
     result.isInstalled = true;
     result.isAvailable = true;
 
@@ -144,12 +136,10 @@ export async function checkExtension(
     [extensionName]
   );
 
-  const available = availableResult?.[0];
+  const [available] = availableResult;
   if (available) {
     result.isAvailable = true;
-    const defaultVersion = available.cells.default_version;
-    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-    result.defaultVersion = defaultVersion === undefined || defaultVersion === null ? null : String(defaultVersion);
+    result.defaultVersion = cell.nullableText(available, 'default_version');
 
     if (includeMessages) {
       result.message = availableMessage(extensionName, messageType);
@@ -196,8 +186,7 @@ export async function checkHypopgInstallationStatus(
     ];
   }
 
-  const pgVersion = await getPostgresVersion(sqlDriver);
-  const majorVersion = pgVersion > 0 ? `${pgVersion}` : 'XX';
+  const majorVersion = String(await getPostgresVersion(sqlDriver));
   // Extension is not available
   if (messageType === 'markdown') {
     return [

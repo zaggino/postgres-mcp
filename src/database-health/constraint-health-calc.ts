@@ -1,4 +1,7 @@
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface ConstraintMetrics {
   name: string;
@@ -8,9 +11,14 @@ interface ConstraintMetrics {
   table: string;
 }
 
-function nullableText(value: unknown): string | null {
-  // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-  return value === null || value === undefined ? null : String(value);
+function toConstraintMetrics(row: Row): ConstraintMetrics {
+  return {
+    schema: cell.text(row, 'schema'),
+    table: cell.text(row, 'table'),
+    name: cell.text(row, 'name'),
+    referencedSchema: cell.nullableText(row, 'referenced_schema'),
+    referencedTable: cell.nullableText(row, 'referenced_table'),
+  };
 }
 
 export class ConstraintHealthCalc {
@@ -43,7 +51,9 @@ export class ConstraintHealthCalc {
   }
 
   private async getInvalidConstraints(): Promise<ConstraintMetrics[]> {
-    const results = await this.sqlDriver.executeQuery(`
+    const results = await queryRows(
+      this.sqlDriver,
+      `
             SELECT
                 nsp.nspname AS schema,
                 rel.relname AS table,
@@ -62,18 +72,9 @@ export class ConstraintHealthCalc {
                 pg_catalog.pg_namespace fnsp ON fnsp.oid = frel.relnamespace
             WHERE
                 con.convalidated = 'f'
-        `);
+        `
+    );
 
-    if (!results) {
-      return [];
-    }
-
-    return results.map(({ cells }) => ({
-      schema: String(cells.schema),
-      table: String(cells.table),
-      name: String(cells.name),
-      referencedSchema: nullableText(cells.referenced_schema),
-      referencedTable: nullableText(cells.referenced_table),
-    }));
+    return results.map(toConstraintMetrics);
   }
 }

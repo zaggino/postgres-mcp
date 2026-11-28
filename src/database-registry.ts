@@ -1,8 +1,10 @@
 import { errorMessage } from './errors.ts';
 import { logLine } from './log.ts';
+import * as cell from './sql/cells.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
 import { getSqlDriver as defaultGetSqlDriver } from './sql/driver-factory.ts';
 import type { SqlExecutor } from './sql/safe-sql.ts';
+import { queryRows } from './sql/safe-sql.ts';
 import type { PoolFactory } from './sql/sql-driver.ts';
 import { DbConnPool, defaultPoolFactory, maskError } from './sql/sql-driver.ts';
 
@@ -466,11 +468,11 @@ export class DatabaseRegistry {
 
     try {
       state.pool ??= new IdlePool(serverUri, this.#poolFactory, this.#idleMinutes);
-      const rows = await state.pool.use((conn) => this.#createDriver(conn, serverUri).executeQuery(DISCOVERY_QUERY));
+      const rows = await state.pool.use((conn) => queryRows(this.#createDriver(conn, serverUri), DISCOVERY_QUERY));
 
       const found = new Map<string, UriSpec>();
-      for (const row of rows ?? []) {
-        const datname = String(row.cells.datname);
+      for (const row of rows) {
+        const datname = cell.text(row, 'datname');
         if (!state.matches(datname)) {
           continue;
         }

@@ -3,40 +3,38 @@ import { beforeAll, expect, test, vi } from 'vitest';
 import { ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import { ConditionColumnCollector, DatabaseTuningAdvisor } from '../../../src/index/dta-calc.ts';
 import type { QueryWeight } from '../../../src/index/index-opt-base.ts';
-import { IndexRecommendation } from '../../../src/index/index-opt-base.ts';
+import { IndexRecommendation, IndexTuningBase } from '../../../src/index/index-opt-base.ts';
 import { ColumnCollector, PgFloat } from '../../../src/sql/bind-params.ts';
 import { AstNode, loadParser, parseSql } from '../../../src/sql/pg-ast.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
-import type { RowResult } from '../../../src/sql/sql-driver.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const ID_FALLBACK_PATTERN = /id = (?:46|'46')/u;
 const STATUS_FALLBACK_PATTERN = /status = (?:'active'|'sample_value')/u;
 const BETWEEN_FALLBACK_PATTERN = /between (?:10 and 100|42 and 42)/u;
 const PLAN_CHANGE_PATTERN = /sequential scans replaced|new index scans/u;
 
-type Cells = Record<string, unknown>;
-type ExecuteQuery = SqlExecutor['executeQuery'];
-type QueryHandler = (query: string) => RowResult[] | null;
+type QueryHandler = (query: string) => Row[] | undefined;
 
 beforeAll(async () => {
   await loadParser();
 });
 
-function rows(...items: Cells[]): RowResult[] {
-  return items.map((cells) => ({ cells }));
+function rows(...items: Row[]): Row[] {
+  return items;
 }
 
 /** A driver answering every query through `handler` (an empty result by default). */
 function createDriver(handler: QueryHandler = () => []) {
-  const executeQuery = vi.fn<ExecuteQuery>((query) => Promise.resolve(handler(query)));
-  return { executeQuery };
+  return fakeExecutor((query) => handler(query));
 }
 
-/** Answers the n-th query with the n-th response, and later queries with null. */
-function sequential(responses: RowResult[][]): QueryHandler {
+/** Answers the n-th query with the n-th response, and later queries with no result set. */
+function sequential(responses: Row[][]): QueryHandler {
   let next = 0;
   return () => {
-    const response = responses[next] ?? null;
+    const response = responses[next];
     next += 1;
     return response;
   };
@@ -161,7 +159,6 @@ test('analyze workload recommends indexes for the workload tables', async () => 
   const driver = createDriver((query) => {
     if (query.includes('pg_stat_statements')) {
       return rows({
-        queryid: 1,
         query: 'SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)',
         calls: 100,
         avg_exec_time: 10,
@@ -178,7 +175,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       });
     }
     if (query.includes('hypopg_reset')) {
-      return null;
+      return [];
     }
     if (query.includes('FROM information_schema.columns c')) {
       return rows({
@@ -194,18 +191,18 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       return rows({ total_width: 10, total_distinct: 100 });
     }
     if (query.includes('pg_extension')) {
-      return rows({ exists: 1 });
+      return rows({ extversion: '1.4.0' });
     }
     if (query.includes('hypopg_disable_index') || query.includes('hypopg_enable_index')) {
-      return null;
+      return [];
     }
     if (query.includes('pg_total_relation_size')) {
       return rows({ rel_size: 100_000 });
     }
     if (query.includes('pg_stat_user_tables')) {
-      return rows({ last_analyze: '2023-01-01' });
+      return rows({ last_analyze: new Date('2023-01-01') });
     }
-    return null;
+    return [];
   });
   const dta = createAdvisor(driver);
 
@@ -219,7 +216,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
 
 test('analyze workload reports a failing database and tolerates invalid SQL', async () => {
   const driver = createDriver();
-  driver.executeQuery.mockRejectedValue(new Error('HypoPG not available'));
+  driver.executeResultSet.mockRejectedValue(new Error('HypoPG not available'));
   const dta = createAdvisor(driver);
 
   const session = await dta.analyzeWorkload({
@@ -228,7 +225,7 @@ test('analyze workload reports a failing database and tolerates invalid SQL', as
   });
   expect(session.error).toContain('HypoPG not available');
 
-  driver.executeQuery.mockResolvedValue(null);
+  driver.executeResultSet.mockResolvedValue({ columns: [], rows: [] });
   const columns = await dta.sqlBindParams.extractColumns('INVALID SQL');
   expect(toRecord(columns)).toEqual({});
 });
@@ -306,9 +303,36 @@ test('index exists compares table, type and columns of existing definitions', ()
 test('index size estimation handles positive, negative and zero ndistinct', () => {
   const dta = createAdvisor();
 
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 5 })).toBe(180); // 18.0 * 5.0 * 2.0
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: -0.5 })).toBe(36); // 18.0 * 1.0 * 2.0
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 0 })).toBe(36); // 18.0 * 1.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: 5 })).toBe(180); // 18.0 * 5.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: -0.5 })).toBe(36); // 18.0 * 1.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: 0 })).toBe(36); // 18.0 * 1.0 * 2.0
+});
+
+test('a string total cost in a plan is rejected instead of coerced to a number', () => {
+  expect(() => IndexTuningBase.extractCostFromJsonPlan({ Plan: { 'Total Cost': '12.5' } })).toThrow(
+    'Error extracting cost from plan'
+  );
+});
+
+test('index size estimation fails on NULL column statistics instead of assuming zero width', async () => {
+  const dta = createAdvisor(createDriver(() => rows({ total_width: null, total_distinct: 5 })));
+
+  const error = await dta.estimateIndexSize('users', ['name']).catch((error_: unknown) => error_);
+
+  expect(error).toMatchObject({ message: 'Error estimating index size' });
+  expect(error).toHaveProperty('cause.message', expect.stringContaining('total_width'));
+});
+
+test('query statistics skip a statement whose text is hidden and keep the statistics of the rest as numbers', async () => {
+  const dta = createAdvisor(
+    createDriver(() =>
+      rows({ query: null, calls: 40, avg_exec_time: 3 }, { query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 })
+    )
+  );
+
+  await expect(dta.getQueryStatsDirect()).resolves.toEqual([
+    { query: 'SELECT 1', stats: { calls: 120, avgExecTimeMs: 7.5 } },
+  ]);
 });
 
 test('filter long text columns drops candidates containing long text columns', async () => {
@@ -346,7 +370,7 @@ test('filter long text columns drops candidates containing long text columns', a
       potential_long_text: true,
     }
   );
-  const driver = createDriver((query) => (query.includes('information_schema.columns') ? typeQueryResults : null));
+  const driver = createDriver((query) => (query.includes('information_schema.columns') ? typeQueryResults : undefined));
   const dta = createAdvisor(driver);
 
   const candidates = [
@@ -374,7 +398,7 @@ test('filterLongTextColumns quotes table and column names in the catalog lookup'
 
   await dta.filterLongTextColumns([new IndexRecommendation("o'brien", ["it's"])], 100);
 
-  const query = String(driver.executeQuery.mock.calls[0]?.[0]);
+  const query = String(driver.executeResultSet.mock.calls[0]?.[0]);
   expect(query).toContain("c.table_name IN ('o''brien')");
   expect(query).toContain("c.column_name IN ('it''s')");
 });
@@ -384,19 +408,17 @@ test('basic workload analysis recommends indexes for the queried columns', async
     createDriver(
       sequential([
         // check if hypopg is enabled
-        rows({ hypopg_enabled_result: 1 }),
+        rows({ extversion: '1.4.0' }),
         // check last analyze
-        rows({ last_analyze: '2024-01-01 00:00:00' }),
+        rows({ last_analyze: new Date('2024-01-01 00:00:00') }),
         // pg_stat_statements
         rows(
           {
-            queryid: 1,
             query: "SELECT * FROM users WHERE name = 'Alice'",
             calls: 100,
             avg_exec_time: 10,
           },
           {
-            queryid: 2,
             query: 'SELECT * FROM orders WHERE user_id = 123',
             calls: 50,
             avg_exec_time: 5,
@@ -476,9 +498,10 @@ test('replace parameters binds a string column to its most common value', async 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['users', new Set(['name', 'id', 'status'])]]));
   const identify = vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['users', 'name']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'character varying',
-    common_vals: ['John', 'Alice'],
-    histogram_bounds: null,
+    dataType: 'character varying',
+    commonVals: ['John', 'Alice'],
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name = $1'.toLowerCase());
@@ -492,9 +515,10 @@ test('replace parameters binds a numeric column by range or equality', async () 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['orders', new Set(['id', 'amount', 'user_id'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['orders', 'amount']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'numeric',
-    common_vals: [99.99, 49.99],
-    histogram_bounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100), new PgFloat(500)],
+    dataType: 'numeric',
+    commonVals: [99.99, 49.99],
+    commonFreqs: null,
+    histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100), new PgFloat(500)],
   });
 
   const range = await bind.replaceParameters('SELECT * FROM orders WHERE amount > $1'.toLowerCase());
@@ -509,9 +533,10 @@ test('replace parameters binds a date column to a date literal', async () => {
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['orders', new Set(['id', 'order_date', 'user_id'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['orders', 'order_date']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'timestamp without time zone',
-    common_vals: null,
-    histogram_bounds: null,
+    dataType: 'timestamp without time zone',
+    commonVals: null,
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM orders WHERE order_date > $1'.toLowerCase());
@@ -524,9 +549,10 @@ test('replace parameters binds a LIKE parameter to a LIKE pattern', async () => 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['users', new Set(['name', 'email'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['users', 'name']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'character varying',
-    common_vals: ['John', 'Alice'],
-    histogram_bounds: null,
+    dataType: 'character varying',
+    commonVals: ['John', 'Alice'],
+    commonFreqs: null,
+    histogramBounds: null,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name LIKE $1'.toLowerCase());
@@ -553,19 +579,27 @@ test('replace parameters binds several parameters of a complex query by column',
   vi.spyOn(bind, 'getColumnStatistics').mockImplementation((table, column) => {
     if (table === 'users' && column === 'status') {
       return Promise.resolve({
-        data_type: 'character varying',
-        common_vals: ['active', 'inactive'],
+        dataType: 'character varying',
+        commonVals: ['active', 'inactive'],
+        commonFreqs: null,
+        histogramBounds: null,
       });
     }
     if (table === 'orders' && column === 'amount') {
       return Promise.resolve({
-        data_type: 'numeric',
-        common_vals: [99.99],
-        histogram_bounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100)],
+        dataType: 'numeric',
+        commonVals: [99.99],
+        commonFreqs: null,
+        histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100)],
       });
     }
     if (table === 'orders' && column === 'order_date') {
-      return Promise.resolve({ data_type: 'timestamp without time zone' });
+      return Promise.resolve({
+        dataType: 'timestamp without time zone',
+        commonVals: null,
+        commonFreqs: null,
+        histogramBounds: null,
+      });
     }
     return Promise.resolve(null);
   });
@@ -638,9 +672,10 @@ test('get replacement value depends on the column type and operator', () => {
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'character varying',
-        common_vals: ['active', 'pending', 'completed'],
-        histogram_bounds: null,
+        dataType: 'character varying',
+        commonVals: ['active', 'pending', 'completed'],
+        commonFreqs: null,
+        histogramBounds: null,
       },
       'status = $1'
     )
@@ -648,22 +683,27 @@ test('get replacement value depends on the column type and operator', () => {
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'numeric',
-        common_vals: [new PgFloat(10), new PgFloat(20)],
-        histogram_bounds: [new PgFloat(5), new PgFloat(15), new PgFloat(25), new PgFloat(50), new PgFloat(100)],
+        dataType: 'numeric',
+        commonVals: [new PgFloat(10), new PgFloat(20)],
+        commonFreqs: null,
+        histogramBounds: [new PgFloat(5), new PgFloat(15), new PgFloat(25), new PgFloat(50), new PgFloat(100)],
       },
       'amount > $1'
     )
   ).toBe('25.0');
   expect(
-    bind.getReplacementValue({ data_type: 'date', common_vals: null, histogram_bounds: null }, 'created_at < $1')
+    bind.getReplacementValue(
+      { dataType: 'date', commonVals: null, commonFreqs: null, histogramBounds: null },
+      'created_at < $1'
+    )
   ).toBe("'2023-01-15'");
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'boolean',
-        common_vals: [true, false],
-        histogram_bounds: null,
+        dataType: 'boolean',
+        commonVals: ['true', 'false'],
+        commonFreqs: null,
+        histogramBounds: null,
       },
       'is_active = $1'
     )

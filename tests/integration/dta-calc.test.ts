@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { DatabaseTuningAdvisor } from '../../src/index/dta-calc.ts';
-import type { WorkloadEntry } from '../../src/index/index-opt-base.ts';
+import type { WorkloadQuery as AdvisorWorkloadQuery } from '../../src/index/index-opt-base.ts';
 import { IndexTuningResult } from '../../src/index/index-opt-base.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
@@ -18,14 +19,16 @@ interface WorkloadQuery {
 /** Sequential calls: the statements share one workload and must run in order. */
 async function runRepeatedly(sqlDriver: SqlDriver, query: string, times: number): Promise<void> {
   for (let i = 0; i < times; i += 1) {
-    await sqlDriver.executeQuery(query);
+    await queryRows(sqlDriver, query);
   }
 }
 
 /** Set up test tables with sample data. */
 async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   // Create users table
-  await sqlDriver.executeQuery(`
+  await queryRows(
+    sqlDriver,
+    `
     DROP TABLE IF EXISTS orders;
     DROP TABLE IF EXISTS users;
 
@@ -37,10 +40,13 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         age INTEGER,
         created_at TIMESTAMP DEFAULT NOW()
     )
-    `);
+    `
+  );
 
   // Create orders table with foreign key
-  await sqlDriver.executeQuery(`
+  await queryRows(
+    sqlDriver,
+    `
     CREATE TABLE orders (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -48,10 +54,13 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         amount DECIMAL(10, 2),
         status VARCHAR(20)
     )
-    `);
+    `
+  );
 
   // Insert sample data - users
-  await sqlDriver.executeQuery(`
+  await queryRows(
+    sqlDriver,
+    `
     INSERT INTO users (id, name, email, status, age)
     SELECT
         i,
@@ -60,10 +69,13 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         CASE WHEN i % 3 = 0 THEN 'active' WHEN i % 3 = 1 THEN 'inactive' ELSE 'pending' END,
         20 + (i % 50)
     FROM generate_series(1, 10000) i
-    `);
+    `
+  );
 
   // Insert sample data - orders with DETERMINISTIC values, not random
-  await sqlDriver.executeQuery(`
+  await queryRows(
+    sqlDriver,
+    `
     INSERT INTO orders (id, user_id, order_date, amount, status)
     SELECT
         i,
@@ -72,15 +84,16 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         (i % 1000)::decimal(10,2),  -- Deterministic amount
         CASE WHEN i % 10 < 7 THEN 'completed' ELSE 'pending' END  -- Deterministic status
     FROM generate_series(1, 50000) i
-    `);
+    `
+  );
 
   // Analyze tables to update statistics
-  await sqlDriver.executeQuery('ANALYZE users, orders');
+  await queryRows(sqlDriver, 'ANALYZE users, orders');
 }
 
 async function cleanupTestTables(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS orders');
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS users');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS orders');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS users');
 }
 
 describeWithPostgres('database tuning advisor', (postgres) => {
@@ -90,14 +103,14 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     sqlDriver = new SqlDriver({ engineUrl: postgres.connectionString() });
 
     // Verify connection
-    const result = await sqlDriver.executeQuery('SELECT 1');
-    if (result === null) {
+    const result = await queryRows(sqlDriver, 'SELECT 1');
+    if (result.length === 0) {
       throw new Error('SELECT 1 returned no rows');
     }
 
     // Create the extensions if needed
-    await sqlDriver.executeQuery('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
-    await sqlDriver.executeQuery('CREATE EXTENSION IF NOT EXISTS hypopg');
+    await queryRows(sqlDriver, 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
+    await queryRows(sqlDriver, 'CREATE EXTENSION IF NOT EXISTS hypopg');
   });
 
   afterEach(async () => {
@@ -107,7 +120,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
   /** Create a DatabaseTuningAdvisor with reasonable settings for testing. */
   async function createDta(): Promise<DatabaseTuningAdvisor> {
     // Reset HypoPG to clean state
-    await sqlDriver.executeQuery('SELECT hypopg_reset()');
+    await queryRows(sqlDriver, 'SELECT hypopg_reset()');
 
     return new DatabaseTuningAdvisor(sqlDriver, {
       budgetMb: 100,
@@ -127,7 +140,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
 
       try {
         // Set up JOB-like schema (simplified movie database)
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         DROP TABLE IF EXISTS movie_cast;
         DROP TABLE IF EXISTS movie_companies;
         DROP TABLE IF EXISTS movie_genres;
@@ -181,10 +196,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             genre_id INTEGER REFERENCES genres(id),
             PRIMARY KEY (movie_id, genre_id)
         );
-        `);
+        `
+        );
 
         // Insert sample data with DETERMINISTIC values instead of random
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         -- Insert genres
         INSERT INTO genres (id, name) VALUES
             (1, 'Action'), (2, 'Comedy'), (3, 'Drama'), (4, 'Sci-Fi'), (5, 'Thriller');
@@ -273,10 +291,12 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             FROM movies m
             WHERE m.id % 3 = 0
         ) as movie_genre_assignment;
-        `);
+        `
+        );
 
         // Force a thorough ANALYZE to ensure consistent statistics
-        await sqlDriver.executeQuery(
+        await queryRows(
+          sqlDriver,
           'ANALYZE VERBOSE movies, actors, movie_cast, companies, movie_companies, genres, movie_genres'
         );
 
@@ -350,7 +370,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         ];
 
         // Clear pg_stat_statements
-        await sqlDriver.executeQuery('SELECT pg_stat_statements_reset()');
+        await queryRows(sqlDriver, 'SELECT pg_stat_statements_reset()');
 
         // Execute JOB workload multiple times to ensure stable stats
         for (let i = 0; i < 2; i += 1) {
@@ -410,18 +430,18 @@ describeWithPostgres('database tuning advisor', (postgres) => {
           const baselineTimes = new Map<string, number>();
           for (const q of jobQueries) {
             const start = performance.now();
-            await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+            await queryRows(sqlDriver, `EXPLAIN ANALYZE ${q.query}`);
             baselineTimes.set(q.query, (performance.now() - start) / 1000);
           }
 
           // Create the recommended indexes
           for (const rec of topRecs) {
             const indexDef = rec.definition.replace('hypopg_', '');
-            await sqlDriver.executeQuery(indexDef);
+            await queryRows(sqlDriver, indexDef);
           }
 
           // Force stats update after index creation
-          await sqlDriver.executeQuery('ANALYZE VERBOSE');
+          await queryRows(sqlDriver, 'ANALYZE VERBOSE');
 
           // Measure performance with indexes - use multiple runs to reduce variance
           const indexedTimes = new Map<string, number>();
@@ -430,14 +450,15 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             const times: number[] = [];
             for (let i = 0; i < 3; i += 1) {
               const start = performance.now();
-              await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+              await queryRows(sqlDriver, `EXPLAIN ANALYZE ${q.query}`);
               times.push((performance.now() - start) / 1000);
             }
             indexedTimes.set(q.query, times.reduce((a, b) => a + b, 0) / times.length);
           }
 
           // Clean up created indexes
-          await sqlDriver.executeQuery(
+          await queryRows(
+            sqlDriver,
             `DROP INDEX IF EXISTS ${topRecs.map((r) => r.definition.split(' ')[2]).join(', ')}`
           );
 
@@ -470,7 +491,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
       } finally {
         // Clean up tables in finally block to ensure cleanup even if test fails
         try {
-          await sqlDriver.executeQuery(`
+          await queryRows(
+            sqlDriver,
+            `
         DROP TABLE IF EXISTS movie_genres;
         DROP TABLE IF EXISTS genres;
         DROP TABLE IF EXISTS movie_companies;
@@ -478,7 +501,8 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         DROP TABLE IF EXISTS movie_cast;
         DROP TABLE IF EXISTS actors;
         DROP TABLE IF EXISTS movies;
-        `);
+        `
+          );
         } finally {
           await cleanupTestTables(sqlDriver);
         }
@@ -492,7 +516,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     const dta = await createDta();
 
     // Create test tables designed to benefit from multi-column indexes
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     DROP TABLE IF EXISTS sales;
     DROP TABLE IF EXISTS customers;
     DROP TABLE IF EXISTS products;
@@ -525,10 +551,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         payment_method VARCHAR(20),
         status VARCHAR(20)
     );
-    `);
+    `
+    );
 
     // Create highly correlated data with strong patterns
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     -- Insert customers with strong region-city correlation
     INSERT INTO customers (region, city, age, income_level, signup_date)
     SELECT
@@ -588,13 +617,14 @@ describeWithPostgres('database tuning advisor', (postgres) => {
              WHEN i % 50 < 48 THEN 'Processing'
              ELSE 'Canceled' END
     FROM generate_series(1, 20000) i;
-    `);
+    `
+    );
 
     // Analyze tables to update statistics (CRUCIAL for correct index recommendations)
-    await sqlDriver.executeQuery('ANALYZE customers, products, sales');
+    await queryRows(sqlDriver, 'ANALYZE customers, products, sales');
 
     // Clear pg_stat_statements
-    await sqlDriver.executeQuery('SELECT pg_stat_statements_reset()');
+    await queryRows(sqlDriver, 'SELECT pg_stat_statements_reset()');
 
     // Define queries that explicitly benefit from multi-column indexes
     // Use more extreme selectivity patterns and include ORDER BY clauses
@@ -659,7 +689,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
       // Run each query multiple times to make sure it appears in query stats
       for (let i = 0; i < 3; i += 1) {
         try {
-          await sqlDriver.executeQuery(queryInfo.query);
+          await queryRows(sqlDriver, queryInfo.query);
         } catch {
           // Query execution errors are expected during testing
         }
@@ -667,16 +697,10 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     }
 
     // Manually populate query stats in session class to ensure proper weighting
-    const workload: WorkloadEntry[] = multiColumnQueries.map((queryInfo, i) => ({
+    const workload: AdvisorWorkloadQuery[] = multiColumnQueries.map((queryInfo) => ({
       query: queryInfo.query,
-      queryid: 1000 + i, // Made-up queryid
-      calls: queryInfo.calls,
-      avg_exec_time: 50, // Significant execution time
-      min_exec_time: 10,
-      max_exec_time: 100,
-      mean_exec_time: 50,
-      stddev_exec_time: 10,
-      rows: 100,
+      // Significant execution time
+      stats: { calls: queryInfo.calls, avgExecTimeMs: 50 },
     }));
 
     // Analyze with both workload sources to maximize chances of finding patterns
@@ -702,7 +726,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     for (const q of multiColumnQueries) {
       const start = performance.now();
       try {
-        await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+        await queryRows(sqlDriver, `EXPLAIN ANALYZE ${q.query}`);
         baselineTimes.set(q.query, (performance.now() - start) / 1000);
       } catch {
         // Error measuring baseline for query
@@ -714,7 +738,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     for (const rec of topRecs) {
       try {
         const indexDef = rec.definition.replace('hypopg_', '');
-        await sqlDriver.executeQuery(indexDef);
+        await queryRows(sqlDriver, indexDef);
         createdIndexes.push(rec.definition.split(' ')[2] ?? '');
       } catch {
         // Error creating index
@@ -725,7 +749,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     for (const q of multiColumnQueries) {
       if (baselineTimes.has(q.query)) {
         try {
-          await sqlDriver.executeQuery(`EXPLAIN ANALYZE ${q.query}`);
+          await queryRows(sqlDriver, `EXPLAIN ANALYZE ${q.query}`);
         } catch {
           // Error measuring indexed performance
         }
@@ -735,18 +759,21 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     // Clean up created indexes
     if (createdIndexes.length > 0) {
       try {
-        await sqlDriver.executeQuery(`DROP INDEX IF EXISTS ${createdIndexes.join(', ')}`);
+        await queryRows(sqlDriver, `DROP INDEX IF EXISTS ${createdIndexes.join(', ')}`);
       } catch {
         // Error dropping indexes
       }
     }
 
     // Clean up tables
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     DROP TABLE IF EXISTS sales;
     DROP TABLE IF EXISTS products;
     DROP TABLE IF EXISTS customers;
-    `);
+    `
+    );
   });
 
   test(
@@ -759,10 +786,12 @@ describeWithPostgres('database tuning advisor', (postgres) => {
 
       try {
         // Clear pg_stat_statements
-        await sqlDriver.executeQuery('SELECT pg_stat_statements_reset()');
+        await queryRows(sqlDriver, 'SELECT pg_stat_statements_reset()');
 
         // Set up schema with tables designed to show diminishing returns
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         DROP TABLE IF EXISTS large_table CASCADE;
 
         CREATE TABLE large_table (
@@ -775,10 +804,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             low_cardinality_col1 INTEGER,
             low_cardinality_col2 VARCHAR(10)
         );
-        `);
+        `
+        );
 
         // Create data with specific cardinality patterns - fully deterministic
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         -- Insert data with specific cardinality patterns
         INSERT INTO large_table (
             high_cardinality_col1, high_cardinality_col2, high_cardinality_col3,
@@ -799,10 +831,11 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             (i % 5),                                -- 5 distinct values
             (ARRAY['A', 'B', 'C'])[1 + (i % 3)]     -- 3 distinct values
         FROM generate_series(1, 50000) i;
-        `);
+        `
+        );
 
         // Force a thorough ANALYZE to ensure consistent statistics
-        await sqlDriver.executeQuery('ANALYZE VERBOSE large_table');
+        await queryRows(sqlDriver, 'ANALYZE VERBOSE large_table');
 
         // Create queries with different index benefits
         // Order them to show diminishing returns pattern
@@ -930,7 +963,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
           `Lower threshold (0.01) didn't produce at least as many recommendations as higher threshold (0.05): ${sessionWithLowThreshold.recommendations.length} vs ${sessionWithThreshold.recommendations.length}`
         ).toBeGreaterThanOrEqual(sessionWithThreshold.recommendations.length);
       } finally {
-        await sqlDriver.executeQuery('DROP TABLE IF EXISTS large_table');
+        await queryRows(sqlDriver, 'DROP TABLE IF EXISTS large_table');
       }
     }
   );
@@ -945,7 +978,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
 
       try {
         // Create a simple test table
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         DROP TABLE IF EXISTS pareto_test CASCADE;
 
         CREATE TABLE pareto_test (
@@ -955,10 +990,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             col3 INTEGER,
             col4 VARCHAR(100)
         );
-        `);
+        `
+        );
 
         // Insert a reasonable amount of data
-        await sqlDriver.executeQuery(`
+        await queryRows(
+          sqlDriver,
+          `
         INSERT INTO pareto_test (col1, col2, col3, col4)
         SELECT
             i % 1000,
@@ -966,10 +1004,11 @@ describeWithPostgres('database tuning advisor', (postgres) => {
             (i * 2) % 2000,
             'text-' || (i % 100)
         FROM generate_series(1, 10000) i;
-        `);
+        `
+        );
 
         // Force a thorough ANALYZE to ensure consistent statistics
-        await sqlDriver.executeQuery('ANALYZE VERBOSE pareto_test');
+        await queryRows(sqlDriver, 'ANALYZE VERBOSE pareto_test');
 
         // Simple queries that should be easy to index
         const queries = [
@@ -988,7 +1027,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         }
 
         // Reset HypoPG to ensure clean state
-        await sqlDriver.executeQuery('SELECT hypopg_reset()');
+        await queryRows(sqlDriver, 'SELECT hypopg_reset()');
 
         // Try running DTA with clear settings
         dta.minTimeImprovement = 0.01; // Use minimal threshold
@@ -1014,7 +1053,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
           expect(hasExpectedColumn, `Recommendation ${rec.definition} doesn't include any expected columns`).toBe(true);
         }
       } finally {
-        await sqlDriver.executeQuery('DROP TABLE IF EXISTS pareto_test');
+        await queryRows(sqlDriver, 'DROP TABLE IF EXISTS pareto_test');
       }
     }
   );
@@ -1024,7 +1063,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     const dta = await createDta();
 
     // Create a test table with columns of varying sizes
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     DROP TABLE IF EXISTS wide_table CASCADE;
 
     CREATE TABLE wide_table (
@@ -1039,10 +1080,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         created_at TIMESTAMP,
         status VARCHAR(20)
     );
-    `);
+    `
+    );
 
     // Insert data with different column size profiles
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     INSERT INTO wide_table (
         small_col, medium_col, large_col, huge_col,
         user_id, created_at, status
@@ -1059,10 +1103,11 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         CURRENT_DATE - ((i % 365) || ' days')::INTERVAL,  -- Even date distribution
         (ARRAY['active', 'pending', 'completed', 'archived'])[1 + (i % 4)]  -- Status distribution
     FROM generate_series(1, 20000) i;
-    `);
+    `
+    );
 
     // Analyze table for accurate statistics
-    await sqlDriver.executeQuery('ANALYZE wide_table');
+    await queryRows(sqlDriver, 'ANALYZE wide_table');
 
     // Create queries that would benefit from indexes with varying size-to-benefit ratios
     const queries: WorkloadQuery[] = [
@@ -1162,7 +1207,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     );
 
     // Clean up
-    await sqlDriver.executeQuery('DROP TABLE IF EXISTS wide_table');
+    await queryRows(sqlDriver, 'DROP TABLE IF EXISTS wide_table');
   });
 
   // oxlint-disable-next-line vitest/no-disabled-tests -- skipped upstream, kept one to one with the reason in the title
@@ -1170,7 +1215,9 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     const dta = await createDta();
 
     // Create a test table with characteristics that demonstrate Pareto optimality
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     DROP TABLE IF EXISTS pareto_test CASCADE;
     CREATE TABLE pareto_test (
         id SERIAL PRIMARY KEY,
@@ -1180,10 +1227,13 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         date_col DATE,
         value NUMERIC(10,2)
     );
-    `);
+    `
+    );
 
     // Insert test data
-    await sqlDriver.executeQuery(`
+    await queryRows(
+      sqlDriver,
+      `
     INSERT INTO pareto_test (col1, col2, col3, date_col, value)
     SELECT
         i % 10000,          -- Many distinct values (high cardinality)
@@ -1192,10 +1242,11 @@ describeWithPostgres('database tuning advisor', (postgres) => {
         CURRENT_DATE - ((i % 730) || ' days')::INTERVAL, -- Dates spanning 2 years
         (random() * 1000)::numeric(10,2) -- Random values
     FROM generate_series(1, 50000) i;
-    `);
+    `
+    );
 
     // Analyze the table
-    await sqlDriver.executeQuery('ANALYZE pareto_test');
+    await queryRows(sqlDriver, 'ANALYZE pareto_test');
 
     // Create a workload with specific benefit profiles
     const queries = [
@@ -1276,6 +1327,6 @@ describeWithPostgres('database tuning advisor', (postgres) => {
     expect(storageSize, 'Storage-sensitive recommendations should use less space').toBeLessThanOrEqual(performanceSize);
 
     // Clean up
-    await sqlDriver.executeQuery('DROP TABLE IF EXISTS pareto_test');
+    await queryRows(sqlDriver, 'DROP TABLE IF EXISTS pareto_test');
   });
 });

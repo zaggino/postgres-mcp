@@ -1,0 +1,55 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  CellError,
+  bigint,
+  int8,
+  integer,
+  nullableNumberArray,
+  nullableText,
+  numeric,
+  single,
+  text,
+} from '../../../src/sql/cells.ts';
+
+describe('cell readers', () => {
+  it('reject a column the row does not have, naming it', () => {
+    expect(() => text({ relname: 't' }, 'rel_name')).toThrow('Column "rel_name" is missing from the result');
+  });
+
+  it('reject NULL in a non-nullable reader and pass it through a nullable one', () => {
+    expect(() => text({ name: null }, 'name')).toThrow('Column "name": expected text, got NULL');
+    expect(nullableText({ name: null }, 'name')).toBeNull();
+  });
+
+  it('keep an int8 beyond a safe integer out of integer but return it from int8 and bigint', () => {
+    const row = { id: 9_007_199_254_740_993n };
+    expect(() => integer(row, 'id')).toThrow('expected integer, got bigint');
+    expect(int8(row, 'id')).toBe(9_007_199_254_740_993n);
+    expect(bigint({ id: 42 }, 'id')).toBe(42n);
+  });
+
+  it('parse numeric text to a number and reject text that is not a finite number', () => {
+    expect(numeric({ rate: '0.9875' }, 'rate')).toBe(0.9875);
+    expect(numeric({ rate: 0.5 }, 'rate')).toBe(0.5);
+    expect(() => numeric({ rate: 'NaN' }, 'rate')).toThrow('expected a finite number, got string');
+    expect(() => numeric({ rate: '' }, 'rate')).toThrow('expected a finite number');
+  });
+
+  it('accept only arrays of numbers as a number array', () => {
+    expect(nullableNumberArray({ freqs: [0.5, 0.25] }, 'freqs')).toEqual([0.5, 0.25]);
+    expect(() => nullableNumberArray({ freqs: '{0.5}' }, 'freqs')).toThrow('expected array of numbers, got string');
+  });
+
+  it('return the row of a one-row result and throw a CellError carrying the count otherwise', () => {
+    const row = { n: 1 };
+    expect(single([row])).toBe(row);
+    expect(() => single([])).toThrow(CellError);
+    expect(() => single([])).toThrow('Expected exactly one row, got 0');
+    expect(() => single([row, row])).toThrow('Expected exactly one row, got 2');
+  });
+
+  it('keep a nullable reader from turning a misspelt column into NULL', () => {
+    expect(() => nullableText({}, 'x')).toThrow('Column "x" is missing from the result');
+  });
+});

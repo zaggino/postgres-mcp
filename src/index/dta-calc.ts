@@ -2,10 +2,12 @@ import { errorMessage } from '../errors.ts';
 import { isJsonObject } from '../json.ts';
 import { formatFixed, formatPercent, naturalSize, pyFloatStr } from '../py-format.ts';
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
+import * as cell from '../sql/cells.ts';
 import { literal } from '../sql/literal.ts';
 import { AstNode, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 import type { IndexConfiguration, QueryWeight } from './index-opt-base.ts';
 import { candidateStr, IndexRecommendation, IndexTuningBase } from './index-opt-base.ts';
 
@@ -71,28 +73,53 @@ function* combinations<T>(items: readonly T[], size: number): Generator<T[]> {
   }
 }
 
+/** A column of a candidate table; avgWidth is null when pg_stats has no statistics for it. */
+interface LongTextRow {
+  tableName: string;
+  columnName: string;
+  avgWidth: number | null;
+  potentialLongText: boolean;
+}
+
+function toLongTextRow(row: Row): LongTextRow {
+  return {
+    tableName: cell.text(row, 'table_name'),
+    columnName: cell.text(row, 'column_name'),
+    avgWidth: cell.nullableInteger(row, 'avg_width'),
+    potentialLongText: cell.boolean(row, 'potential_long_text'),
+  };
+}
+
+/** An index of the database, as pg_indexes describes it. */
+export interface ExistingIndex {
+  schema: string;
+  table: string;
+  name: string;
+  definition: string;
+}
+
+function toExistingIndex(row: Row): ExistingIndex {
+  return {
+    schema: cell.text(row, 'schema'),
+    table: cell.text(row, 'table'),
+    name: cell.text(row, 'name'),
+    definition: cell.text(row, 'definition'),
+  };
+}
+
 /**
  * Classifies a catalog row of a column. avg_width from pg_stats is a
  * heuristic: a high value means the column likely contains long text.
  */
-function classifyLongText(
-  cells: Readonly<Record<string, unknown>>,
-  maxTextLength: number
-): 'problematic' | 'potential' | undefined {
-  if (!cells.potential_long_text) {
+function classifyLongText(row: LongTextRow, maxTextLength: number): 'problematic' | 'potential' | undefined {
+  if (!row.potentialLongText) {
     return undefined;
   }
-  const { avg_width: avgWidth } = cells;
-  const unknownWidth = avgWidth === null || avgWidth === undefined;
-  return unknownWidth || Number(avgWidth) > maxTextLength * 0.4 ? 'problematic' : 'potential';
+  return row.avgWidth === null || row.avgWidth > maxTextLength * 0.4 ? 'problematic' : 'potential';
 }
 
 function pairKey(table: string, column: string): string {
   return JSON.stringify([table, column]);
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === 'string' ? value : String(value);
 }
 
 /** The `sval`s of the String nodes of a list field. */
@@ -134,7 +161,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
   /** Generate index recommendations using a 'seed + greedy' approach with a time cutoff. */
   protected override async generateRecommendations(queryWeights: readonly QueryWeight[]): Promise<IndexConfiguration> {
-    const existingIndexDefs = new Set((await this.getExistingIndexes()).map((idx) => stringValue(idx.definition)));
+    const existingIndexDefs = new Set((await this.getExistingIndexes()).map((idx) => idx.definition));
 
     const allCandidates = await this.generateCandidates(queryWeights, existingIndexDefs);
 
@@ -253,20 +280,19 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     );
 
     // Get estimated sizes without resetting indexes yet
-    const result = await this.sqlDriver.executeQuery(
+    const result = await queryRows(
+      this.sqlDriver,
       'SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;'
     );
-    if (result !== null) {
-      const indexMap = new Map(result.map((r) => [r.cells.index_name, r.cells.index_size]));
-      for (const idx of candidates) {
-        const size = indexMap.get(idx.name);
-        if (size !== undefined) {
-          idx.estimatedSizeBytes = Number(size);
-        }
+    const indexMap = new Map(result.map((r) => [cell.text(r, 'index_name'), cell.integer(r, 'index_size')]));
+    for (const idx of candidates) {
+      const size = indexMap.get(idx.name);
+      if (size !== undefined) {
+        idx.estimatedSizeBytes = size;
       }
     }
 
-    await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
+    await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
   }
 
   /**
@@ -554,9 +580,9 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
             AND c.column_name IN (${columnsArray})
         `;
 
-    const result = await this.sqlDriver.executeQuery(typeQuery);
+    const result = (await queryRows(this.sqlDriver, typeQuery)).map(toLongTextRow);
 
-    if (!result || result.length === 0) {
+    if (result.length === 0) {
       return [];
     }
 
@@ -565,8 +591,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const potentialProblematicColumns = new Set<string>();
 
     for (const row of result) {
-      const key = pairKey(stringValue(row.cells.table_name), stringValue(row.cells.column_name));
-      const kind = classifyLongText(row.cells, maxTextLength);
+      const key = pairKey(row.tableName, row.columnName);
+      const kind = classifyLongText(row, maxTextLength);
       if (kind === 'problematic') {
         problematicColumns.add(key);
       } else if (kind === 'potential') {
@@ -588,7 +614,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
   }
 
   /** Get all existing indexes. */
-  async getExistingIndexes(): Promise<Record<string, unknown>[]> {
+  async getExistingIndexes(): Promise<ExistingIndex[]> {
     // TODO: we should get the indexes that are relevant to the query
     const query = `
         SELECT schemaname as schema,
@@ -599,8 +625,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
         ORDER BY schemaname, tablename, indexname
         `;
-    const result = await this.sqlDriver.executeQuery(query);
-    return result ? result.map((row) => ({ ...row.cells })) : [];
+    const result = await queryRows(this.sqlDriver, query);
+    return result.map(toExistingIndex);
   }
 
   /**
@@ -706,8 +732,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         }
         const { ival } = expr.fields;
         if (isJsonObject(ival)) {
-          // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-          return String(ival.ival ?? 0);
+          // libpg-query omits ival.ival when the integer is 0
+          return typeof ival.ival === 'number' ? String(ival.ival) : '0';
         }
         const { fval } = expr.fields;
         if (isJsonObject(fval) && typeof fval.fval === 'string') {

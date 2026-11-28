@@ -4,10 +4,12 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyTypeName } from '../py-format.ts';
 import { SqlBindParams } from '../sql/bind-params.ts';
+import * as cell from '../sql/cells.ts';
 import { checkPostgresVersionRequirement } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 const BIND_VARIABLE_PATTERN = /\$\d+/u;
 const LIKE_PATTERN = /\bLIKE\b/iu;
@@ -27,6 +29,12 @@ function parsePlanColumn(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+/** The parsed `QUERY PLAN` of an EXPLAIN result, or undefined when it returned no row. */
+function queryPlan(rows: readonly Row[]): unknown {
+  const [row] = rows;
+  return row ? parsePlanColumn(cell.value(row, 'QUERY PLAN')) : undefined;
 }
 
 function isTruthy(value: unknown): boolean {
@@ -187,20 +195,11 @@ export class ExplainPlanTool {
       }
 
       const explainQ = `EXPLAIN (${explainOptions.join(', ')}) ${query}`;
-      const rows = await this.sqlDriver.executeQuery(explainQ);
-      if (rows === null) {
+      const rows = await queryRows(this.sqlDriver, explainQ);
+      const queryPlanData = queryPlan(rows);
+      if (queryPlanData === undefined) {
         return new ErrorResult('No results returned from EXPLAIN');
       }
-
-      const [firstRow] = rows;
-      if (!firstRow) {
-        throw new Error('list index out of range');
-      }
-      if (!('QUERY PLAN' in firstRow.cells)) {
-        throw new Error("'QUERY PLAN'");
-      }
-      const queryPlanData = parsePlanColumn(firstRow.cells['QUERY PLAN']);
-
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
       }
@@ -252,7 +251,7 @@ export class ExplainPlanTool {
       }
 
       const explainPlanQuery = `${createIndexesQuery}EXPLAIN (${explainOptions.join(', ')}) ${queryText}`;
-      const planResult = await this.sqlDriver.executeQuery(explainPlanQuery);
+      const planResult = await queryRows(this.sqlDriver, explainPlanQuery);
 
       // The tracer is mandatory on every path that reaches the trace calls
       const trace = (message: string): void => {
@@ -263,7 +262,7 @@ export class ExplainPlanTool {
       };
 
       // Extract the plan
-      const planData = parsePlanColumn(planResult?.[0]?.cells['QUERY PLAN']);
+      const planData = queryPlan(planResult);
       if (isTruthy(planData)) {
         if (Array.isArray(planData)) {
           return planData[0];

@@ -8,19 +8,43 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
+import * as cell from '../sql/cells.ts';
 import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
 const MEGABYTE = 1024 * 1024;
 const DEFAULT_TABLE_SIZE_BYTES = 10 * MEGABYTE;
 
-/** An entry of the analysed workload; a pg_stat_statements row or a synthetic entry. */
-export type WorkloadEntry = Record<string, unknown>;
+/** A query of the analysed workload, with its pg_stat_statements statistics when it came from there. */
+export interface WorkloadQuery {
+  query: string;
+  stats?: { calls: number; avgExecTimeMs: number };
+}
+
+/** A workload query that parsed to an analysable statement. */
+interface ParsedWorkloadQuery extends WorkloadQuery {
+  stmt: AstNode;
+}
+
+/** The row's workload query, or null when its text is hidden or gone. */
+function toWorkloadQuery(row: Row): WorkloadQuery | null {
+  // NULL when the role cannot see another role's text or the query-text file was garbage-collected
+  const query = cell.nullableText(row, 'query');
+  if (query === null) {
+    return null;
+  }
+  return {
+    query,
+    // calls is only a weight, so rounding a bigint beyond 2^53 does not matter
+    stats: { calls: Number(cell.int8(row, 'calls')), avgExecTimeMs: cell.numeric(row, 'avg_exec_time') },
+  };
+}
 
 /** A validated workload query: its (lowercased) text, parsed statement and weight. */
 export type QueryWeight = readonly [query: string, stmt: AstNode, weight: number];
@@ -47,19 +71,6 @@ function isEmptyPlan(plan: unknown): boolean {
     return Object.keys(plan).length === 0;
   }
   return !plan;
-}
-
-/** Python's `int(value)` for a database cell. */
-function toInt(value: unknown): number {
-  if (value === null || value === undefined) {
-    throw new TypeError('Expected a number');
-  }
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-    throw new TypeError(`Invalid number: ${String(value)}`);
-  }
-  return Math.trunc(parsed);
 }
 
 /** Represents a database index with size estimation and definition. */
@@ -182,7 +193,7 @@ export class IndexTuningResult {
   budgetMb: number;
   /** 'args', 'query_list', 'query_store', 'sql_file' */
   workloadSource = 'n/a';
-  workload: WorkloadEntry[] | null = null;
+  workload: WorkloadQuery[] | null = null;
   recommendations: IndexRecommendationAnalysis[] = [];
   error: string | null = null;
   dtaTraces: string[] = [];
@@ -217,7 +228,7 @@ export interface AnalyzeWorkloadOptions {
   /** Path to a file containing SQL queries. */
   sqlFile?: string;
   /** Explicit workload data. */
-  workload?: WorkloadEntry[];
+  workload?: WorkloadQuery[];
 }
 
 export abstract class IndexTuningBase implements DtaTracer {
@@ -280,10 +291,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         session.workload = workload;
       } else if (queryList && queryList.length > 0) {
         session.workloadSource = 'query_list';
-        session.workload = queryList.map((query, i) => ({
-          query,
-          queryid: `direct-${i}`,
-        }));
+        session.workload = queryList.map((query) => ({ query }));
       } else if (sqlFile) {
         session.workloadSource = 'sql_file';
         session.workload = this.getWorkloadFromFile(sqlFile);
@@ -297,9 +305,9 @@ export abstract class IndexTuningBase implements DtaTracer {
         return session;
       }
 
-      session.workload = await this.validateAndParseWorkload(session.workload);
+      const parsedWorkload = await this.validateAndParseWorkload(session.workload);
 
-      const queryWeights = this.convertWorkloadToQueryWeights(session.workload);
+      const queryWeights = this.convertWorkloadToQueryWeights(parsedWorkload);
 
       if (queryWeights.length === 0) {
         this.dtaTrace('No query provided');
@@ -313,7 +321,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
 
         // Reset HypoPG only once at the end
-        await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
+        await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
       }
     } catch (error) {
       logLine(`Error in workload analysis: ${errorMessage(error)}`);
@@ -335,10 +343,11 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
 
     // Pre-check 2: ANALYZE has been run at least once
-    const result = await this.sqlDriver.executeQuery(
+    const result = await queryRows(
+      this.sqlDriver,
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (!result?.some((row) => row.cells.last_analyze !== null && row.cells.last_analyze !== undefined)) {
+    if (!result.some((row) => cell.nullableDate(row, 'last_analyze') !== null)) {
       const message =
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
@@ -352,15 +361,14 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Validate the workload to ensure it is analyzable. */
-  async validateAndParseWorkload(workload: readonly WorkloadEntry[]): Promise<WorkloadEntry[]> {
-    const validated: WorkloadEntry[] = [];
+  async validateAndParseWorkload(workload: readonly WorkloadQuery[]): Promise<ParsedWorkloadQuery[]> {
+    const validated: ParsedWorkloadQuery[] = [];
     for (const entry of workload) {
-      const rawQuery = entry.query;
-      if (typeof rawQuery !== 'string' || rawQuery === '') {
+      if (entry.query === '') {
         continue;
       }
       // The whole workload SQL is lowercased
-      const loweredQuery = rawQuery.trim().toLowerCase();
+      const loweredQuery = entry.query.trim().toLowerCase();
 
       // Replace parameter placeholders with dummy values
       const queryText = await this.sqlBindParams.replaceParameters(loweredQuery);
@@ -376,20 +384,14 @@ export abstract class IndexTuningBase implements DtaTracer {
     return validated;
   }
 
-  convertWorkloadToQueryWeights(workload: readonly WorkloadEntry[]): QueryWeight[] {
-    const weights: QueryWeight[] = [];
-    for (const entry of workload) {
-      const { query, stmt } = entry;
-      if (typeof query === 'string' && stmt instanceof AstNode) {
-        weights.push([query, stmt, this.convertQueryInfoToWeight(entry)]);
-      }
-    }
-    return weights;
+  convertWorkloadToQueryWeights(workload: readonly ParsedWorkloadQuery[]): QueryWeight[] {
+    return workload.map((entry) => [entry.query, entry.stmt, this.convertQueryInfoToWeight(entry)]);
   }
 
   /** Convert query info to weight based on query frequency. */
-  convertQueryInfoToWeight(queryInfo: WorkloadEntry): number {
-    return Number(queryInfo.calls ?? 1) * Number(queryInfo.avg_exec_time ?? 1);
+  convertQueryInfoToWeight(entry: WorkloadQuery): number {
+    // An entry without statistics weighs 1
+    return entry.stats ? entry.stats.calls * entry.stats.avgExecTimeMs : 1;
   }
 
   /**
@@ -421,14 +423,14 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Load queries from an SQL file, split on semicolons. */
-  getWorkloadFromFile(filePath: string): WorkloadEntry[] {
+  getWorkloadFromFile(filePath: string): WorkloadQuery[] {
     try {
       const content = readFileSync(filePath, 'utf-8');
       return content
         .split(';')
         .map((text) => text.trim())
         .filter((text) => text !== '')
-        .map((query, i) => ({ queryid: i, query }));
+        .map((query) => ({ query }));
     } catch (error) {
       throw new Error(`Error loading queries from file ${filePath}`, {
         cause: error,
@@ -437,13 +439,13 @@ export abstract class IndexTuningBase implements DtaTracer {
   }
 
   /** Get query statistics from pg_stat_statements. */
-  getQueryStats(minCalls: number, minAvgTimeMs: number, limit: number): Promise<WorkloadEntry[]> {
+  getQueryStats(minCalls: number, minAvgTimeMs: number, limit: number): Promise<WorkloadQuery[]> {
     return this.getQueryStatsDirect(minCalls, minAvgTimeMs, limit);
   }
 
-  async getQueryStatsDirect(minCalls = 50, minAvgTimeMs = 5, limit = 100): Promise<WorkloadEntry[]> {
+  async getQueryStatsDirect(minCalls = 50, minAvgTimeMs = 5, limit = 100): Promise<WorkloadQuery[]> {
     const query = `
-        SELECT queryid, query, calls, total_exec_time/calls as avg_exec_time
+        SELECT query, calls, total_exec_time/calls as avg_exec_time
         FROM pg_stat_statements
         WHERE calls >= {}
         AND total_exec_time/calls >= {}
@@ -451,7 +453,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         LIMIT {}
         `;
     const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [minCalls, minAvgTimeMs, limit]);
-    return result ? result.map((row) => ({ ...row.cells })) : [];
+    return result.flatMap((row) => toWorkloadQuery(row) ?? []);
   }
 
   /** Check if a statement can be analyzed for index recommendations. */
@@ -535,23 +537,23 @@ export abstract class IndexTuningBase implements DtaTracer {
             WHERE tablename = {} AND attname = ANY({})
             `;
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        const sizeEstimate = this.estimateIndexSizeInternal(first.cells);
-        this.sizeEstimateCache.set(cacheKey, sizeEstimate);
-        return sizeEstimate;
-      }
-      return 0;
+      // An aggregate without GROUP BY always returns one row
+      const first = cell.single(result);
+      const sizeEstimate = this.estimateIndexSizeInternal({
+        totalWidth: cell.integer(first, 'total_width'),
+        totalDistinct: cell.numeric(first, 'total_distinct'),
+      });
+      this.sizeEstimateCache.set(cacheKey, sizeEstimate);
+      return sizeEstimate;
     } catch (error) {
       throw new Error('Error estimating index size', { cause: error });
     }
   }
 
-  estimateIndexSizeInternal(stats: Readonly<Record<string, unknown>>): number {
+  estimateIndexSizeInternal(stats: { totalWidth: number; totalDistinct: number }): number {
     // 8 bytes for the heap TID
-    const width = (Number(stats.total_width ?? 0) || 0) + 8;
-    let ndistinct = Number(stats.total_distinct ?? 0) || 1;
-    ndistinct = ndistinct > 0 ? ndistinct : 1;
+    const width = stats.totalWidth + 8;
+    const ndistinct = stats.totalDistinct > 0 ? stats.totalDistinct : 1;
     // simplistic formula
     return Math.trunc(width * ndistinct * 2);
   }
@@ -623,11 +625,10 @@ export abstract class IndexTuningBase implements DtaTracer {
       return Number.POSITIVE_INFINITY;
     }
 
-    const cost = Number(totalCost);
-    if (Number.isNaN(cost)) {
+    if (typeof totalCost !== 'number' || Number.isNaN(totalCost)) {
       throw new Error('Error extracting cost from plan');
     }
-    return cost;
+    return totalCost;
   }
 
   /**
@@ -645,13 +646,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       const query = 'SELECT pg_total_relation_size(quote_ident({})) as rel_size';
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [table]);
 
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        size = toInt(first.cells.rel_size);
-      } else {
-        // If the query fails, use our estimation method
-        size = await this.estimateTableSize(table);
-      }
+      size = cell.integer(cell.single(result), 'rel_size');
     } catch (error) {
       logLine(`Error getting table size for ${table}: ${errorMessage(error)}`);
       size = await this.estimateTableSize(table);
@@ -668,12 +663,9 @@ export abstract class IndexTuningBase implements DtaTracer {
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, 'SELECT count(*) as row_count FROM {}', [
         table,
       ]);
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        const rowCount = toInt(first.cells.row_count);
-        // Rough estimate: assume 1KB per row
-        return rowCount * 1024;
-      }
+      const rowCount = cell.integer(cell.single(result), 'row_count');
+      // Rough estimate: assume 1KB per row
+      return rowCount * 1024;
     } catch (error) {
       logLine(`Error estimating table size for ${table}: ${errorMessage(error)}`);
     }

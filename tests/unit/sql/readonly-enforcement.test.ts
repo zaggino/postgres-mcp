@@ -9,7 +9,7 @@ async function beginStatementFor(accessMode: AccessMode, forceReadonly?: boolean
   const conn = new DbConnPool('postgresql://user:pass@localhost/db', () => fake.pool);
   const driver = getSqlDriver(accessMode, conn, { statementTimeoutSeconds: 0 });
 
-  await driver.executeQuery('SELECT 1', null, forceReadonly);
+  await driver.executeResultSet('SELECT 1', null, forceReadonly);
 
   return fake.queries[1]?.text;
 }

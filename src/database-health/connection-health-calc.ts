@@ -1,4 +1,6 @@
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { queryRows } from '../sql/safe-sql.ts';
 
 export class ConnectionHealthCalc {
   private readonly maxIdleConnections: number;
@@ -46,20 +48,26 @@ export class ConnectionHealthCalc {
   }
 
   private async getTotalConnections(): Promise<number> {
-    const result = await this.sqlDriver.executeQuery(`
+    const result = await queryRows(
+      this.sqlDriver,
+      `
             SELECT COUNT(*) as count
             FROM pg_stat_activity
-        `);
-    return Number(result?.[0]?.cells.count ?? 0);
+        `
+    );
+    return cell.integer(cell.single(result), 'count');
   }
 
   /** Number of connections that are idle in transaction. */
   private async getIdleConnections(): Promise<number> {
-    const result = await this.sqlDriver.executeQuery(`
+    const result = await queryRows(
+      this.sqlDriver,
+      `
             SELECT COUNT(*) as count
             FROM pg_stat_activity
             WHERE state = 'idle in transaction'
-        `);
-    return Number(result?.[0]?.cells.count ?? 0);
+        `
+    );
+    return cell.integer(cell.single(result), 'count');
   }
 }

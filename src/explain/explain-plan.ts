@@ -19,13 +19,14 @@ export interface DtaTracer {
   dtaTrace: (message: string) => void;
 }
 
-/** The `pg` json type arrives parsed; parse it when a driver hands over text. */
+/**
+ * The plan as plain JSON values. The pool parses json losslessly, so a cost or row count a double cannot write back
+ * exactly (EXPLAIN prints `%.2f`, e.g. `98765432109876.54`) arrives as a raw JSON value; plan readers do arithmetic
+ * and need doubles, so the plan is re-parsed with plain JSON.parse. A driver that hands over text is parsed the same.
+ */
 function parsePlanColumn(value: unknown): unknown {
-  if (typeof value !== 'string') {
-    return value;
-  }
   try {
-    return JSON.parse(value) as unknown;
+    return JSON.parse(typeof value === 'string' ? value : JSON.stringify(value)) as unknown;
   } catch {
     return value;
   }

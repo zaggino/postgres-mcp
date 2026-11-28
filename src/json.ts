@@ -43,22 +43,18 @@ function normalizeDecimal(text: string): string {
 }
 
 /**
- * JSON.parse that keeps the source digits of a number a double cannot hold. pg's own parse rounds those (integers
- * beyond 2^53, 1e400, long decimals). A number stays a JS number when the double's shortest round-trip decimal (or,
- * for integers, its exact value) equals the source's value; otherwise it is kept as raw JSON with its source digits,
- * which `toJson` writes back unchanged. Value-equal numbers are therefore written in their shortest form: `12.50`
- * comes back as `12.5` and `-0` as `0`.
+ * JSON.parse that keeps the source digits of a number a double cannot write back. pg's own parse rounds those
+ * (integers beyond 2^53, 1e400, long decimals). A number stays a JS number when the double's shortest round-trip
+ * decimal equals the source's value, so `toJson` writes the same value; otherwise it is kept as a raw JSON value
+ * (an object, not a number) that `toJson` writes back with its source digits. Code that does arithmetic on the result
+ * must convert raw values first (see `parsePlanColumn` in `src/explain/explain-plan.ts`). Value-equal numbers are
+ * written in their shortest form: `12.50` comes back as `12.5` and `-0` as `0`.
  */
 export function parseJsonLossless(text: string): unknown {
   return JSON.parse(text, (_key, value, context) => {
     const { source } = context;
     if (typeof value === 'number' && source !== undefined) {
-      const normalized = normalizeDecimal(source);
-      // EXPLAIN prints the exact decimal expansion of a large double, which is not its shortest round-trip text.
-      const exact =
-        Number.isFinite(value) &&
-        (normalized === normalizeDecimal(String(value)) ||
-          (Number.isInteger(value) && normalized === normalizeDecimal(BigInt(value).toString())));
+      const exact = Number.isFinite(value) && normalizeDecimal(source) === normalizeDecimal(String(value));
       return exact ? value : JSON.rawJSON(source);
     }
     return value;

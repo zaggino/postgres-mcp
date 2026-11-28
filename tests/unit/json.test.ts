@@ -7,9 +7,8 @@ test('parseJsonLossless keeps a number a double cannot hold with its source digi
   expect(toJson(parsed)).toBe('{"a":9007199254740993,"b":1e400,"c":3.14159265358979323846}');
 });
 
-test('parseJsonLossless keeps the exact expansion of a large double, as EXPLAIN prints it, a plain number', () => {
-  const parsed = parseJsonLossless('{"Plan Rows": 1000003000003000064, "Total Cost": 99999999999999991611392.00}');
-  expect(parsed).toEqual({ 'Plan Rows': 1_000_003_000_003_000_064, 'Total Cost': 99_999_999_999_999_991_611_392 });
+test('parseJsonLossless keeps the digits of an integer a double holds exactly but writes back differently', () => {
+  expect(toJson(parseJsonLossless('{"n":1000003000003000064}'))).toBe('{"n":1000003000003000064}');
 });
 
 test('parseJsonLossless writes value-equal numbers in their shortest form', () => {

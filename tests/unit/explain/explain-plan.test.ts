@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorResult, ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import { ExplainPlanTool } from '../../../src/explain/explain-plan.ts';
+import { parseJsonLossless } from '../../../src/json.ts';
 import { resetPostgresVersionCache } from '../../../src/sql/extension-utils.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import type { ResultSet, Row } from '../../../src/sql/sql-driver.ts';
@@ -98,6 +99,18 @@ describe(ExplainPlanTool, () => {
     expect(result).toMatchObject({
       value: JSON.stringify(seqScanPlan, null, 2),
     });
+  });
+
+  it('explains a plan whose costs and rows the pool parsed as raw JSON numbers', async () => {
+    const { driver, executeResultSet } = createDriver();
+    const plan = parseJsonLossless(
+      '[{"Plan": {"Node Type": "Nested Loop", "Startup Cost": 0.00, "Total Cost": 98765432109876.54, "Plan Rows": 1000003000003000064, "Plan Width": 12}}]'
+    );
+    executeResultSet.mockResolvedValue(cell({ 'QUERY PLAN': plan }));
+
+    const result = await new ExplainPlanTool(driver).explain('SELECT * FROM a, b, c');
+
+    expect(result).toBeInstanceOf(ExplainPlanArtifact);
   });
 
   it('uses GENERIC_PLAN for bind variables on PostgreSQL 16', async () => {

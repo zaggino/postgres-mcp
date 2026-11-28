@@ -11,12 +11,11 @@ function parseInt8(value: string): number | bigint {
 
 const TEXT_ARRAY_OID = 1009;
 
-// pg types the OID as an enum and the parser as any; the OID is a plain number here.
-const textParserFor = (oid: number): TextParser =>
-  (pg.types.getTypeParser as (oid: number, format: 'text') => TextParser)(oid, 'text');
-
-/** Parses a text[] literal into strings (null for NULL), nested for multi-dimensional arrays. */
-const parseTextArray: TextParser = textParserFor(TEXT_ARRAY_OID);
+/**
+ * Parses a text[] literal into strings (null for NULL), nested for multi-dimensional arrays. pg types the OID as an
+ * enum and the parser as any, hence the cast.
+ */
+const parseTextArray = (pg.types.getTypeParser as (oid: number, format: 'text') => TextParser)(TEXT_ARRAY_OID, 'text');
 
 function mapElements(parsed: unknown, convert: (element: string) => unknown): unknown {
   if (Array.isArray(parsed)) {
@@ -36,8 +35,8 @@ const { builtins } = pg.types;
 /**
  * Text-format parsers that return the value as Postgres sent it, or as exactly as a JS value can hold it: [scalar OID,
  * array OID, element parser]. Without these pg gives Dates (shifted by the host time zone, millisecond precision,
- * infinity as null), Buffers, objects for interval and geometric types, rounded floats for numeric[] and JSON numbers
- * a double cannot hold.
+ * infinity as null), Buffers, objects for point, circle and interval, numeric[] elements parsed to doubles, and JSON
+ * numbers rounded to a double. pg parses no other geometric array, so `box[]` and the like stay one string.
  */
 const TYPES: readonly (readonly [number, number, TextParser])[] = [
   [builtins.DATE, 1182 /* date[] */, identity],

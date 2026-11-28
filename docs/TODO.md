@@ -347,8 +347,8 @@ The per-sequence `SELECT … FROM <sequence>` in `src/database-health/sequence-h
 
 `ReplicationCalc` (`src/database-health/replication-calc.ts`) reads `server_version_num` itself and keeps `pg_last_xlog_*` and pre-9.4 slot branches. Decide the oldest supported server, delete the dead branches, and use `getPostgresVersion` (`src/sql/extension-utils.ts`) if a version check remains.
 
-## 2026-11-28 · Minor · Bug · Arrays of user-defined types come back as one string
+## 2026-11-28 · Minor · Bug · Arrays of user-defined types and some geometric types come back as one string
 
 _BREAKING CHANGE REQUIRED_
 
-`pg` has parsers only for built-in array types, and `customTypes` in `src/sql/type-parsers.ts` covers built-in OIDs only, so an array of an enum, domain or composite type reaches `execute_sql` output as the Postgres array literal in one string: `ARRAY['a','b']::my_enum[]` returns `"{a,b}"`, while a `text[]` returns `["a","b"]`. Their OIDs differ per database, so a parser has to be chosen at query time, for example from the field's `typcategory` or by `typelem` lookup per pool. `tests/integration/value-types.test.ts` pins the current form.
+`pg` has parsers only for some built-in array types, and `customTypes` in `src/sql/type-parsers.ts` adds a few more, so an array of an enum, domain or composite type, and a `box[]`, `lseg[]`, `line[]`, `path[]` or `polygon[]`, reaches `execute_sql` output as the Postgres array literal in one string: `ARRAY['a','b']::my_enum[]` returns `"{a,b}"`, while a `text[]` returns `["a","b"]`. User-defined OIDs differ per database, so a parser has to be chosen at query time, for example from the field's `typcategory` or by `typelem` lookup per pool; `box[]` uses `;` as its delimiter, which the `text[]` parser does not. `tests/integration/value-types.test.ts` pins the enum-array form.

@@ -33,7 +33,7 @@ export function serverInstructions(registry: DatabaseRegistry): string {
     accessModeClause(registry),
     'Cancelling a call cancels its running statement.',
     offersCancelQuery(registry) ? 'Call cancel_query to list running calls or cancel one by call_id.' : '',
-    'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, missing extension or ANALYZE, connection, configuration or server failure). The index advisor tools set isError on every failure.',
+    'An "Error:" result without isError is Postgres rejecting the statement; with isError the SQL got no answer from Postgres (restricted-mode refusal, invalid argument, missing extension or ANALYZE, connection, configuration or server failure). The index advisor tools set isError on every failure, a Postgres rejection included.',
     'analyze_db_health reports a failing check on its own line and still runs the others.',
     // oxlint-disable-next-line eslint/no-template-curly-in-string -- the literal ${VAR} names the config syntax
     'On a failure, show the user the error first, then check likely causes: an unset ${VAR}, wrong credentials, an unreachable host, or missing grants (which also empty the listing tools). list_databases shows the last connection error of each database.',

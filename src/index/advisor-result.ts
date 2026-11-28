@@ -59,9 +59,6 @@ export const NO_COSTS: CostBenefit = { base_cost: null, new_cost: null, improvem
 export function costBenefit(baseCost: number, newCost: number): CostBenefit {
   const base = Number.isFinite(baseCost) ? baseCost : null;
   const next = Number.isFinite(newCost) ? newCost : null;
-  return {
-    base_cost: base,
-    new_cost: next,
-    improvement_multiple: base !== null && next !== null && base > 0 && next > 0 ? base / next : null,
-  };
+  const multiple = base !== null && next !== null && base > 0 && next > 0 ? base / next : Number.NaN;
+  return { base_cost: base, new_cost: next, improvement_multiple: Number.isFinite(multiple) ? multiple : null };
 }

@@ -307,8 +307,16 @@ _BREAKING CHANGE REQUIRED_
 
 ## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
 
-With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result.
+With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result. Move the trace handling to the tool layer first (`advisorResponse` in `src/tools/analysis.ts` can read `indexTuning.dtaTraces`), which also removes `AdvisorOutput` from `src/index/presentation.ts`.
 
 ## 2026-11-28 · Minor · Bug · A zero workload cost is reported as a base cost of 1
 
 `generateRecommendations` in `src/index/index-opt-base.ts` computes the base cost as `evaluateConfigurationCost(...) || 1`, so a workload the planner costs at 0 reports `base_cost: 1` in the advisor's `benefit_*` objects and summary, and its improvement multiple is computed against that 1. `costBenefit` (`src/index/advisor-result.ts`) already reports a zero cost as a null multiple; drop the fallback so the real cost reaches the output.
+
+## 2026-11-28 · Minor · Performance · The advisor computes hypopg index sizes it never reads
+
+`storeHypotheticalSizes` in `src/index/dta-calc.ts` runs a batched `hypopg_create_index`, a `hypopg_relation_size` read and a `hypopg_reset` per analysis and writes the size onto each candidate, but the greedy search and the result both size indexes with `estimateIndexSize` (the `pg_stats` formula). Either report the hypopg size as `index_size_bytes` or delete `storeHypotheticalSizes`.
+
+## 2026-11-28 · Minor · Refactor · The outputSchema rule is held by convention, not types
+
+`registerDatabaseTool` in `src/server.ts` sets `isError` on every failure of a tool with an `outputSchema`, which holds only because such a tool's body throws instead of returning an error result (`src/tools/analysis.ts`). A body that returns `formatError(...)` or text without `structuredContent` type-checks and then fails SDK output validation with an opaque error. Let the wrapper build `{ content, structuredContent }` from a typed body return for these tools; it fits with "Each tool is split between `src/server.ts` and `src/tools/`".

@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExtensionStatus } from '../../../src/sql/extension-utils.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import type { Row } from '../../../src/sql/sql-driver.ts';
 import { TopQueriesCalc } from '../../../src/top-queries/top-queries-calc.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const extensionUtils = vi.hoisted(() => ({
-  checkExtension: vi.fn(),
+  requirePgStatStatements: vi.fn(),
   getPostgresVersion: vi.fn(),
 }));
 
@@ -17,16 +16,6 @@ type ExecuteResultSet = SqlExecutor['executeResultSet'];
 
 function row(cells: Row): Row {
   return cells;
-}
-
-function extensionStatus(isInstalled: boolean): ExtensionStatus {
-  return {
-    isInstalled,
-    isAvailable: true,
-    name: 'pg_stat_statements',
-    message: isInstalled ? 'Extension is installed' : 'Extension not installed',
-    defaultVersion: isInstalled ? '1.0' : null,
-  };
 }
 
 /** A driver that simulates the given PostgreSQL major version. */
@@ -73,7 +62,7 @@ function executedQuery(executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSe
 describe(TopQueriesCalc, () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    extensionUtils.checkExtension.mockResolvedValue(extensionStatus(true));
+    extensionUtils.requirePgStatStatements.mockResolvedValue(undefined);
   });
 
   it('sorts by total_time on PostgreSQL 12 when sorting by total', async () => {
@@ -140,26 +129,6 @@ describe(TopQueriesCalc, () => {
 
     expect(result).toContain('"calls":9007199254740993');
     expect(result).toContain('"mean_exec_time":"NaN"');
-  });
-
-  it('returns installation instructions when the extension is not installed', async () => {
-    const { driver, executeResultSet } = createDriver(13);
-    extensionUtils.checkExtension.mockResolvedValue(extensionStatus(false));
-
-    const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
-
-    expect(result).toContain('extension is required to report');
-    expect(result).toContain('CREATE EXTENSION');
-    expect(executeResultSet).not.toHaveBeenCalled();
-  });
-
-  it('reports a database error instead of throwing', async () => {
-    const { driver, executeResultSet } = createDriver(13);
-    executeResultSet.mockRejectedValue(new Error('Database error'));
-
-    const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
-
-    expect(result).toContain('Error getting slow queries: Database error');
   });
 
   it('aliases the PostgreSQL 12 columns and zeroes wal_bytes in resource queries', async () => {

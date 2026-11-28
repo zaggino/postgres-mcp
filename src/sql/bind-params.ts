@@ -602,14 +602,6 @@ export class SqlBindParams {
    * have been replaced with $1, $2, etc.
    */
   async replaceParameters(query: string): Promise<string> {
-    try {
-      return await this.replaceParametersUnchecked(query);
-    } catch (error) {
-      throw new Error('Error replacing parameters', { cause: error });
-    }
-  }
-
-  private async replaceParametersUnchecked(query: string): Promise<string> {
     if (!hasParam(query)) {
       return query;
     }

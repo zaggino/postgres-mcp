@@ -86,10 +86,6 @@ Statistics values in `src/sql/bind-params.ts` pass through `number`, so very lar
 
 The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so `ExplainPlanArtifact` in `src/artifacts.ts` cannot be created from it.
 
-## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
-
-`src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant.
-
 ## 2026-11-26 · Minor · Bug · Index-health column split breaks on expression indexes
 
 `src/database-health/index-health-calc.ts` splits column lists on `", "`, so an expression index containing a comma is split into bogus columns.
@@ -209,12 +205,6 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 
 `shutdown()` in `src/main.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
 
-## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
-
-_BREAKING CHANGE REQUIRED_
-
-`formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
-
 ## 2026-11-27 · Minor · Security · Query cancel requests are sent without TLS
 
 `sendCancelRequest` in `src/sql/sql-driver.ts` sends the CancelRequest (backend pid and secret key) over plain TCP even when the connection uses TLS, as libpq and pg do; an observer on the network path can then cancel that connection's statements. Postgres 18 / protocol 3.2 allows cancel over TLS; send it over TLS when the connection uses it.
@@ -283,7 +273,7 @@ _BREAKING CHANGE REQUIRED_
 
 No tool declares an `outputSchema` or returns `structuredContent`, so a client cannot validate a result. Give the two tools a zod output schema with one type per field: numbers as numbers, `null` where a cost or multiple is not finite, the unit in the key name (`size_bytes`), and an empty array for no recommendations. Then declare it as `outputSchema` and return `structuredContent` next to the text.
 
-Do this after "Health, top-queries and index tools report failures without `isError`". The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`, and today the advisor returns its failures as ordinary `{ "error": ... }` output. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
+The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`. The advisor's failures go through `formatError`, which leaves `isError` off when Postgres rejected the statement, so such a result would be refused; those failures need `isError` for these two tools. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
 
 Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
 
@@ -292,10 +282,10 @@ Changing a field's type breaks callers that read the current shape, so commit it
 Shapes carried over from Python that TypeScript would write as named objects and interfaces:
 
 - `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
-- Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
+- Two functions return a tuple: `checkPostgresVersionRequirement` (`src/sql/extension-utils.ts`) returns `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
 - `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
 
-Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Let `checkHypopgInstallationStatus` return the extension's status and let its two callers render the message, which also removes its `messageType` parameter. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
 
 ## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
 
@@ -326,3 +316,15 @@ _BREAKING CHANGE REQUIRED_
 ## 2026-11-28 · Minor · Security · Hypothetical index definitions are built from unquoted input
 
 `IndexDefinition.definition` in `src/sql/index-definition.ts` interpolates `table`, `columns` and `using` into `CREATE INDEX ... ON <table> USING <using> (<columns>)` without quoting, and `explain_query` takes all three from the client (only typed as non-empty strings by the schema in `src/server.ts`). The text reaches Postgres as a quoted literal argument of `hypopg_create_index`, which builds a hypothetical index rather than running it, so no injection path is known; but restricted mode's allowlist walk sees only that literal, not the index expression inside it, and the values also feed the generated `postgres_mcp_idx_*` name. Harden by checking `table` as a (possibly schema-qualified) identifier, limiting `using` to the index methods (`btree`, `hash`, `gist`, `spgist`, `gin`, `brin`), and checking that each column parses as an index element.
+
+## 2026-11-28 · Major · Bug · Hypothetical indexes stay on pooled connections
+
+`generateExplainPlanWithHypotheticalIndexes` (`src/explain/explain-plan.ts`) runs `hypopg_reset(); hypopg_create_index(...); EXPLAIN ...` as one statement and leaves the indexes on that backend, and the index advisor's closing `hypopg_reset()` (`analyzeWorkload` in `src/index/index-opt-base.ts`) is a separate checkout from a pool of five, so it can reach a different backend; a failed analysis does not reset at all. A later plain `explain_query`, `execute_sql` `EXPLAIN` or advisor run on that backend then plans against indexes that do not exist. Reset on the same client that created them, for example by letting the driver run the create, `EXPLAIN` and reset on one checkout and return the `EXPLAIN` result rather than the last one.
+
+## 2026-11-28 · Minor · Bug · A `pg_stat_statements` that is installed but not preloaded passes the extension check
+
+`requirePgStatStatements` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
+
+## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
+
+With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result.

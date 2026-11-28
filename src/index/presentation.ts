@@ -1,6 +1,5 @@
 import { calculateImprovementMultiple, ExplainPlanArtifact } from '../artifacts.ts';
-import { errorMessage } from '../errors.ts';
-import { logLine } from '../log.ts';
+import { UsageError } from '../errors.ts';
 import { formatFixed, naturalSize } from '../py-format.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
@@ -34,7 +33,7 @@ export class TextPresentation {
 
   /**
    * Analyze the query history (frequently executed and costly queries) and
-   * recommend indexes. Resolves with the recommendations or an error.
+   * recommend indexes.
    */
   analyzeWorkload(maxIndexSizeMb = 10_000): Promise<JsonRecord> {
     return this.executeAnalysis({
@@ -47,10 +46,10 @@ export class TextPresentation {
 
   /** Analyze a list of SQL queries and recommend indexes. */
   analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<JsonRecord> {
+    // An empty list would fall through to the pg_stat_statements workload
     if (queries.length === 0) {
-      return Promise.resolve({ error: 'No queries provided for analysis' });
+      return Promise.reject(new UsageError('No queries provided for analysis'));
     }
-
     return this.executeAnalysis({
       queryList: queries,
       // Ignore min calls, min time and limit for an explicit query list
@@ -72,62 +71,52 @@ export class TextPresentation {
     });
   }
 
-  /** Execute indexing analysis; resolves with the recommendations or an error. */
+  /** Execute indexing analysis; resolves with the recommendations, rejects when the analysis fails. */
   async executeAnalysis(options: ExecuteAnalysisOptions): Promise<JsonRecord> {
-    try {
-      const session = await this.indexTuning.analyzeWorkload({
-        queryList: options.queryList,
-        minCalls: options.minCalls ?? 50,
-        minAvgTimeMs: options.minAvgTimeMs ?? 5,
-        limit: options.limit ?? 100,
-        maxIndexSizeMb: options.maxIndexSizeMb ?? 10_000,
-      });
+    const session = await this.indexTuning.analyzeWorkload({
+      queryList: options.queryList,
+      minCalls: options.minCalls ?? 50,
+      minAvgTimeMs: options.minAvgTimeMs ?? 5,
+      limit: options.limit ?? 100,
+      maxIndexSizeMb: options.maxIndexSizeMb ?? 10_000,
+    });
 
-      // Prepare the response to send back to the caller
-      // Debugging output that costs an agent tokens on every call, so only on request
-      const includeLangfuseTrace = process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE?.toLowerCase() === 'true';
-      const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};
+    // Debugging output that costs an agent tokens on every call, so only on request
+    const includeLangfuseTrace = process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE?.toLowerCase() === 'true';
+    const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};
 
-      if (session.error) {
-        return { error: session.error, ...langfuseTrace };
-      }
-
-      const { recommendations: analyses } = session;
-      const [firstRecommendation] = analyses;
-      const lastRecommendation = analyses.at(-1);
-      if (!(firstRecommendation && lastRecommendation)) {
-        return {
-          recommendations: 'No index recommendations found.',
-          ...langfuseTrace,
-        };
-      }
-
-      const totalSizeBytes = analyses.reduce((total, rec) => total + rec.estimatedSizeBytes, 0);
-
-      // Overall performance improvement
-      const initialCost = firstRecommendation.progressiveBaseCost;
-      const newCost = lastRecommendation.progressiveRecommendationCost;
-      const improvementMultiple = calculateImprovementMultiple(initialCost, newCost);
-
-      const recommendations = this.buildRecommendationsList(session);
-      const queryImpact = await this.generateQueryImpact(session);
-
+    const { recommendations: analyses } = session;
+    const [firstRecommendation] = analyses;
+    const lastRecommendation = analyses.at(-1);
+    if (!(firstRecommendation && lastRecommendation)) {
       return {
-        summary: {
-          total_recommendations: analyses.length,
-          base_cost: formatFixed(initialCost, 1),
-          new_cost: formatFixed(newCost, 1),
-          total_size_bytes: naturalSize(totalSizeBytes),
-          improvement_multiple: formatFixed(improvementMultiple, 1),
-        },
-        recommendations,
-        query_impact: queryImpact,
+        recommendations: 'No index recommendations found.',
         ...langfuseTrace,
       };
-    } catch (error) {
-      logLine(`Error analyzing queries: ${errorMessage(error)}`);
-      return { error: `Error analyzing queries: ${errorMessage(error)}` };
     }
+
+    const totalSizeBytes = analyses.reduce((total, rec) => total + rec.estimatedSizeBytes, 0);
+
+    // Overall performance improvement
+    const initialCost = firstRecommendation.progressiveBaseCost;
+    const newCost = lastRecommendation.progressiveRecommendationCost;
+    const improvementMultiple = calculateImprovementMultiple(initialCost, newCost);
+
+    const recommendations = this.buildRecommendationsList(session);
+    const queryImpact = await this.generateQueryImpact(session);
+
+    return {
+      summary: {
+        total_recommendations: analyses.length,
+        base_cost: formatFixed(initialCost, 1),
+        new_cost: formatFixed(newCost, 1),
+        total_size_bytes: naturalSize(totalSizeBytes),
+        improvement_multiple: formatFixed(improvementMultiple, 1),
+      },
+      recommendations,
+      query_impact: queryImpact,
+      ...langfuseTrace,
+    };
   }
 
   buildRecommendationsList(session: IndexTuningResult): JsonRecord[] {

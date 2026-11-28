@@ -1,4 +1,4 @@
-import { errorMessage } from './errors.ts';
+import { errorMessage, UsageError } from './errors.ts';
 import { logLine } from './log.ts';
 import * as cell from './sql/cells.ts';
 import type { AccessMode } from './sql/driver-factory.ts';
@@ -57,7 +57,7 @@ export interface RegistryListing {
 }
 
 /** A database that cannot be used: unknown, misconfigured, ambiguous, or its driver cannot be created. */
-export class DatabaseAccessError extends Error {}
+export class DatabaseAccessError extends UsageError {}
 
 export const NOT_A_POSTGRES_URL = 'Server uri must be a postgres:// or postgresql:// URL';
 

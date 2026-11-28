@@ -1,25 +1,10 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test } from 'vitest';
 
-import type { ExtensionStatus } from '../../src/sql/extension-utils.ts';
+import { UsageError } from '../../src/errors.ts';
 import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
-import { PG_STAT_STATEMENTS, TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
+import { TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
-
-const checkExtensionOverride = vi.hoisted(() => ({
-  status: null as ExtensionStatus | null,
-}));
-
-// ESM imports cannot be monkeypatched, so the module is wrapped instead: the
-// real check runs unless a test installs an override.
-vi.mock('../../src/sql/extension-utils.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/sql/extension-utils.ts')>();
-  return {
-    ...actual,
-    checkExtension: (...args: Parameters<typeof actual.checkExtension>) =>
-      checkExtensionOverride.status ? Promise.resolve(checkExtensionOverride.status) : actual.checkExtension(...args),
-  };
-});
 
 /** Set up test data with sample queries to analyze. */
 async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
@@ -101,12 +86,10 @@ describeWithPostgres('top queries with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(() => {
-    checkExtensionOverride.status = null;
     sqlDriver = new SqlDriver({ engineUrl: postgres.connectionString() });
   });
 
   afterEach(async () => {
-    checkExtensionOverride.status = null;
     await sqlDriver.conn?.close();
   });
 
@@ -147,20 +130,12 @@ describeWithPostgres('top queries with a real database', (postgres) => {
     }
   });
 
-  test('returns installation instructions when pg_stat_statements is not installed', async () => {
-    const calc = new TopQueriesCalc(sqlDriver);
-    checkExtensionOverride.status = {
-      isInstalled: false,
-      isAvailable: true,
-      name: PG_STAT_STATEMENTS,
-      message: 'Extension not installed',
-      defaultVersion: null,
-    };
+  test('rejects with installation instructions when pg_stat_statements is not installed', async () => {
+    await queryRows(sqlDriver, 'DROP EXTENSION IF EXISTS pg_stat_statements');
 
-    const result = await calc.getTopQueriesByTime();
+    const result = new TopQueriesCalc(sqlDriver).getTopQueriesByTime();
 
-    // Check that we get installation instructions
-    expect(result).toContain('not currently installed');
-    expect(result).toContain('CREATE EXTENSION');
+    await expect(result).rejects.toBeInstanceOf(UsageError);
+    await expect(result).rejects.toThrow('CREATE EXTENSION pg_stat_statements');
   });
 });

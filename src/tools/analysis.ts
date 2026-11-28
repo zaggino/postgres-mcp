@@ -9,7 +9,7 @@ import { DatabaseTuningAdvisor } from '../index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from '../index/index-opt-base.ts';
 import { TextPresentation } from '../index/presentation.ts';
 import { toJson } from '../json.ts';
-import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
+import { requireHypopg } from '../sql/extension-utils.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { TopQueriesCalc } from '../top-queries/top-queries-calc.ts';
 import { formatError, formatTextResponse } from './result.ts';
@@ -28,13 +28,7 @@ export async function explainQuery(
     if (analyze) {
       return formatError('Cannot use analyze and hypothetical indexes together');
     }
-    const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(sqlDriver);
-
-    // If hypopg is not installed, return the message
-    if (!isHypopgInstalled) {
-      return formatTextResponse(hypopgMessage);
-    }
-
+    await requireHypopg(sqlDriver);
     result = await explainTool.explainWithHypotheticalIndexes(sql, hypotheticalIndexes);
   } else if (analyze) {
     result = await explainTool.explainAnalyze(sql);

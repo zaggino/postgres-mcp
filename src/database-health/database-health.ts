@@ -1,5 +1,5 @@
-import { errorMessage } from '../errors.ts';
-import { log, logLine } from '../log.ts';
+import { errorMessage, UsageError } from '../errors.ts';
+import { log } from '../log.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { BufferHealthCalc } from './buffer-health-calc.ts';
 import { isCheckLocalFailure } from './check-failure.ts';
@@ -92,37 +92,30 @@ export class DatabaseHealthTool {
    * Run database health checks for the specified components.
    *
    * `healthType` is a comma-separated list of: index, connection, vacuum,
-   * sequence, replication, buffer, constraint, all.
+   * sequence, replication, buffer, constraint, all. An invalid type, and a failure
+   * that is not local to one check (connection, cancellation), are thrown.
    */
   async health(healthType: string): Promise<string> {
     const requested = healthType.split(',').map((x) => x.trim());
     const healthTypes = new Set<HealthType>();
     for (const type of requested) {
       if (!isHealthType(type)) {
-        return (
+        throw new UsageError(
           `Invalid health types provided: '${healthType}'. ` +
-          `Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}. ` +
-          'Please try again with a comma-separated list of valid health types.'
+            `Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}. ` +
+            'Please try again with a comma-separated list of valid health types.'
         );
       }
       healthTypes.add(type);
     }
 
-    try {
-      const all = healthTypes.has('all');
-      let result = '';
-      for (const check of healthChecks(this.sqlDriver)) {
-        if (all || healthTypes.has(check.type)) {
-          result += await section(check);
-        }
+    const all = healthTypes.has('all');
+    let result = '';
+    for (const check of healthChecks(this.sqlDriver)) {
+      if (all || healthTypes.has(check.type)) {
+        result += await section(check);
       }
-
-      return result || 'No health checks were performed.';
-    } catch (error) {
-      // Failures that are not local to one check (connection, cancellation) abort the whole report.
-      const message = errorMessage(error);
-      logLine(`Error calculating database health: ${message}`);
-      return `Error calculating database health: ${message}`;
     }
+    return result || 'No health checks were performed.';
   }
 }

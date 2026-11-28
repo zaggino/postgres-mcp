@@ -1,26 +1,8 @@
-import { errorMessage } from '../errors.ts';
 import { toJson } from '../json.ts';
-import { logLine } from '../log.ts';
-import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
+import { getPostgresVersion, requirePgStatStatements } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
-
-export const PG_STAT_STATEMENTS = 'pg_stat_statements';
-
-const INSTALL_PG_STAT_STATEMENTS_MESSAGE =
-  'The pg_stat_statements extension is required to ' +
-  'report slow queries, but it is not currently ' +
-  'installed.\n\n' +
-  'You can install it by running: ' +
-  '`CREATE EXTENSION pg_stat_statements;`\n\n' +
-  '**What does it do?** It records statistics (like ' +
-  'execution time, number of calls, rows returned) for ' +
-  'every query executed against the database.\n\n' +
-  "**Is it safe?** Installing 'pg_stat_statements' is " +
-  'generally safe and a standard practice for performance ' +
-  'monitoring. It adds overhead by tracking statistics, ' +
-  'but this is usually negligible unless under extreme load.';
 
 /** Column names for the pg_stat_statements view, which vary by PostgreSQL version. */
 export interface PgStatStatementsColumns {
@@ -75,44 +57,32 @@ export class TopQueriesCalc {
    * execution time or by `"mean"` execution time per call (default).
    */
   async getTopQueriesByTime(limit = 10, sortBy: 'total' | 'mean' = 'mean'): Promise<string> {
-    try {
-      const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
+    await requirePgStatStatements(this.sqlDriver, 'report slow queries');
 
-      if (!extensionStatus.isInstalled) {
-        logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
-        // Return installation instructions if the extension is not installed
-        return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
-      }
+    // Get version-appropriate column names
+    const pgVersion = await getPostgresVersion(this.sqlDriver);
+    const cols = getPgStatStatementsColumns(pgVersion);
 
-      // Get version-appropriate column names
-      const pgVersion = await getPostgresVersion(this.sqlDriver);
-      const cols = getPgStatStatementsColumns(pgVersion);
+    // Determine which column to sort by based on the sortBy parameter
+    const orderByColumn = sortBy === 'total' ? cols.totalTime : cols.meanTime;
 
-      // Determine which column to sort by based on the sortBy parameter
-      const orderByColumn = sortBy === 'total' ? cols.totalTime : cols.meanTime;
+    const query = `
+              SELECT
+                  query,
+                  calls,
+                  ${cols.totalTime},
+                  ${cols.meanTime},
+                  rows
+              FROM pg_stat_statements
+              ORDER BY ${orderByColumn} DESC
+              LIMIT {};
+          `;
+    const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [limit]);
 
-      const query = `
-                SELECT
-                    query,
-                    calls,
-                    ${cols.totalTime},
-                    ${cols.meanTime},
-                    rows
-                FROM pg_stat_statements
-                ORDER BY ${orderByColumn} DESC
-                LIMIT {};
-            `;
-      const slowQueryRows = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [limit]);
+    // Create result description based on sort criteria
+    const criteria = sortBy === 'total' ? 'total execution time' : 'mean execution time per call';
 
-      // Create result description based on sort criteria
-      const criteria = sortBy === 'total' ? 'total execution time' : 'mean execution time per call';
-
-      return `Top ${slowQueryRows.length} slowest queries by ${criteria}:\n${toJson(slowQueryRows)}`;
-    } catch (error) {
-      const message = errorMessage(error);
-      logLine(`Error getting slow queries: ${message}`);
-      return `Error getting slow queries: ${message}`;
-    }
+    return `Top ${slowQueryRows.length} slowest queries by ${criteria}:\n${toJson(slowQueryRows)}`;
   }
 
   /**
@@ -120,78 +90,66 @@ export class TopQueriesCalc {
    * `fracThreshold` filters queries by their fraction of total usage.
    */
   async getTopResourceQueries(fracThreshold = 0.05): Promise<string> {
-    try {
-      const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
+    await requirePgStatStatements(this.sqlDriver, 'report slow queries');
 
-      if (!extensionStatus.isInstalled) {
-        logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
-        // Return installation instructions if the extension is not installed
-        return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
-      }
+    // Get version-appropriate column names
+    const pgVersion = await getPostgresVersion(this.sqlDriver);
+    const cols = getPgStatStatementsColumns(pgVersion);
 
-      // Get version-appropriate column names
-      const pgVersion = await getPostgresVersion(this.sqlDriver);
-      const cols = getPgStatStatementsColumns(pgVersion);
+    const threshold = literal(fracThreshold);
+    const query = `
+              WITH resource_fractions AS (
+                  SELECT
+                      query,
+                      calls,
+                      rows,
+                      ${cols.totalTime} AS total_exec_time,
+                      ${cols.meanTime} AS mean_exec_time,
+                      ${cols.stddevTime} AS stddev_exec_time,
+                      shared_blks_hit,
+                      shared_blks_read,
+                      shared_blks_dirtied,
+                      ${cols.walBytesSelect},
+                      ${cols.totalTime} / NULLIF(SUM(${cols.totalTime}) OVER (), 0)
+                          AS total_exec_time_frac,
+                      (shared_blks_hit + shared_blks_read)
+                          / NULLIF(SUM(shared_blks_hit + shared_blks_read) OVER (), 0)
+                          AS shared_blks_accessed_frac,
+                      shared_blks_read / NULLIF(SUM(shared_blks_read) OVER (), 0)
+                          AS shared_blks_read_frac,
+                      shared_blks_dirtied / NULLIF(SUM(shared_blks_dirtied) OVER (), 0)
+                          AS shared_blks_dirtied_frac,
+                      ${cols.walBytesFrac}
+                  FROM pg_stat_statements
+              )
+              SELECT
+                  query,
+                  calls,
+                  rows,
+                  total_exec_time,
+                  mean_exec_time,
+                  stddev_exec_time,
+                  total_exec_time_frac,
+                  shared_blks_accessed_frac,
+                  shared_blks_read_frac,
+                  shared_blks_dirtied_frac,
+                  total_wal_bytes_frac,
+                  shared_blks_hit,
+                  shared_blks_read,
+                  shared_blks_dirtied,
+                  wal_bytes
+              FROM resource_fractions
+              WHERE
+                  total_exec_time_frac > ${threshold}
+                  OR shared_blks_accessed_frac > ${threshold}
+                  OR shared_blks_read_frac > ${threshold}
+                  OR shared_blks_dirtied_frac > ${threshold}
+                  OR total_wal_bytes_frac > ${threshold}
+              ORDER BY total_exec_time DESC
+          `;
 
-      const threshold = literal(fracThreshold);
-      const query = `
-                WITH resource_fractions AS (
-                    SELECT
-                        query,
-                        calls,
-                        rows,
-                        ${cols.totalTime} AS total_exec_time,
-                        ${cols.meanTime} AS mean_exec_time,
-                        ${cols.stddevTime} AS stddev_exec_time,
-                        shared_blks_hit,
-                        shared_blks_read,
-                        shared_blks_dirtied,
-                        ${cols.walBytesSelect},
-                        ${cols.totalTime} / NULLIF(SUM(${cols.totalTime}) OVER (), 0)
-                            AS total_exec_time_frac,
-                        (shared_blks_hit + shared_blks_read)
-                            / NULLIF(SUM(shared_blks_hit + shared_blks_read) OVER (), 0)
-                            AS shared_blks_accessed_frac,
-                        shared_blks_read / NULLIF(SUM(shared_blks_read) OVER (), 0)
-                            AS shared_blks_read_frac,
-                        shared_blks_dirtied / NULLIF(SUM(shared_blks_dirtied) OVER (), 0)
-                            AS shared_blks_dirtied_frac,
-                        ${cols.walBytesFrac}
-                    FROM pg_stat_statements
-                )
-                SELECT
-                    query,
-                    calls,
-                    rows,
-                    total_exec_time,
-                    mean_exec_time,
-                    stddev_exec_time,
-                    total_exec_time_frac,
-                    shared_blks_accessed_frac,
-                    shared_blks_read_frac,
-                    shared_blks_dirtied_frac,
-                    total_wal_bytes_frac,
-                    shared_blks_hit,
-                    shared_blks_read,
-                    shared_blks_dirtied,
-                    wal_bytes
-                FROM resource_fractions
-                WHERE
-                    total_exec_time_frac > ${threshold}
-                    OR shared_blks_accessed_frac > ${threshold}
-                    OR shared_blks_read_frac > ${threshold}
-                    OR shared_blks_dirtied_frac > ${threshold}
-                    OR total_wal_bytes_frac > ${threshold}
-                ORDER BY total_exec_time DESC
-            `;
+    const slowQueryRows = await queryRows(this.sqlDriver, query);
 
-      const slowQueryRows = await queryRows(this.sqlDriver, query);
-
-      return toJson(slowQueryRows);
-    } catch (error) {
-      const message = errorMessage(error);
-      logLine(`Error getting resource-intensive queries: ${message}`);
-      return `Error resource-intensive queries: ${message}`;
-    }
+    return toJson(slowQueryRows);
   }
 }

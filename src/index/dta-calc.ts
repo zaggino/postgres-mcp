@@ -1,4 +1,3 @@
-import { errorMessage } from '../errors.ts';
 import { isJsonObject } from '../json.ts';
 import { formatFixed, formatPercent, naturalSize, pyFloatStr } from '../py-format.ts';
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
@@ -507,24 +506,18 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const conditionColumns = new Map<string, Set<string>>();
 
     for (const [, stmt] of workload) {
-      try {
-        const collector = new ConditionColumnCollector();
-        collector.visit(stmt);
+      const collector = new ConditionColumnCollector();
+      collector.visit(stmt);
 
-        for (const [table, cols] of collector.conditionColumns) {
-          let merged = conditionColumns.get(table);
-          if (!merged) {
-            merged = new Set();
-            conditionColumns.set(table, merged);
-          }
-          for (const col of cols) {
-            merged.add(col);
-          }
+      for (const [table, cols] of collector.conditionColumns) {
+        let merged = conditionColumns.get(table);
+        if (!merged) {
+          merged = new Set();
+          conditionColumns.set(table, merged);
         }
-      } catch (error) {
-        throw new Error('Error extracting condition columns from query', {
-          cause: error,
-        });
+        for (const col of cols) {
+          merged.add(col);
+        }
       }
     }
 
@@ -635,31 +628,23 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
    * structure. The parser must be loaded (`loadParser()`) beforehand.
    */
   indexExists(index: IndexRecommendation, existingDefs: ReadonlySet<string>): boolean {
-    try {
-      const candidateInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(index.definition));
+    const candidateInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(index.definition));
 
-      for (const existingDef of existingDefs) {
-        try {
-          // Skip if it's obviously not an index
-          const upper = existingDef.toUpperCase();
-          if (!(upper.includes('CREATE INDEX') || upper.includes('CREATE UNIQUE INDEX'))) {
-            continue;
-          }
-
-          const existingInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(existingDef));
-
-          if (this.isSameIndex(candidateInfo, existingInfo)) {
-            return true;
-          }
-        } catch (error) {
-          throw new Error('Error parsing existing index', { cause: error });
-        }
+    for (const existingDef of existingDefs) {
+      // Skip if it's obviously not an index
+      const upper = existingDef.toUpperCase();
+      if (!(upper.includes('CREATE INDEX') || upper.includes('CREATE UNIQUE INDEX'))) {
+        continue;
       }
 
-      return false;
-    } catch (error) {
-      throw new Error('Error in robust index comparison', { cause: error });
+      const existingInfo = this.extractIndexInfo(DatabaseTuningAdvisor.parseFirstStatement(existingDef));
+
+      if (this.isSameIndex(candidateInfo, existingInfo)) {
+        return true;
+      }
     }
+
+    return false;
   }
 
   private static parseFirstStatement(sql: string): AstNode | undefined {
@@ -672,81 +657,70 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
   /** Extract key information from a parsed index node. */
   extractIndexInfo(node: AstNode | undefined): IndexInfo {
-    try {
-      if (!node?.is('IndexStmt')) {
-        throw new TypeError(`Not an index statement: ${node?.type}`);
-      }
-
-      // `relation` is a bare RangeVar struct
-      const relationJson = node.fields.relation;
-      const relation = isJsonObject(relationJson)
-        ? (AstNode.from(relationJson) ?? new AstNode('RangeVar', relationJson))
-        : undefined;
-      const tableName = relation?.string('relname');
-      if (tableName === undefined) {
-        throw new TypeError('Index statement has no table name');
-      }
-
-      const columns: string[] = [];
-      for (const idxElem of node.nodes('indexParams')) {
-        const name = idxElem.string('name');
-        const expr = idxElem.node('expr');
-        if (name) {
-          columns.push(name);
-        } else if (expr) {
-          // The expression becomes a string such as "lower(name)"
-          columns.push(this.astExprToString(expr));
-        }
-      }
-
-      return {
-        table: tableName.toLowerCase(),
-        columns: columns.map((col) => col.toLowerCase()),
-        // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- an empty access method falls back to btree, as upstream's `or` does
-        type: (node.string('accessMethod') || 'btree').toLowerCase(),
-        unique: node.fields.unique === true,
-      };
-    } catch (error) {
-      this.dtaTrace(`Error extracting index info: ${errorMessage(error)}`);
-      throw new Error('Error extracting index info', { cause: error });
+    if (!node?.is('IndexStmt')) {
+      throw new TypeError(`Not an index statement: ${node?.type}`);
     }
+
+    // `relation` is a bare RangeVar struct
+    const relationJson = node.fields.relation;
+    const relation = isJsonObject(relationJson)
+      ? (AstNode.from(relationJson) ?? new AstNode('RangeVar', relationJson))
+      : undefined;
+    const tableName = relation?.string('relname');
+    if (tableName === undefined) {
+      throw new TypeError('Index statement has no table name');
+    }
+
+    const columns: string[] = [];
+    for (const idxElem of node.nodes('indexParams')) {
+      const name = idxElem.string('name');
+      const expr = idxElem.node('expr');
+      if (name) {
+        columns.push(name);
+      } else if (expr) {
+        // The expression becomes a string such as "lower(name)"
+        columns.push(this.astExprToString(expr));
+      }
+    }
+
+    return {
+      table: tableName.toLowerCase(),
+      columns: columns.map((col) => col.toLowerCase()),
+      // oxlint-disable-next-line typescript/prefer-nullish-coalescing -- an empty access method falls back to btree, as upstream's `or` does
+      type: (node.string('accessMethod') || 'btree').toLowerCase(),
+      unique: node.fields.unique === true,
+    };
   }
 
   /** Convert an AST expression (like FuncCall) to a string, e.g. "lower(name)". */
   astExprToString(expr: AstNode): string {
-    try {
-      if (expr.is('FuncCall')) {
-        const names = stringList(expr, 'funcname');
-        const funcName = names.length > 0 ? names.join('.') : 'unknown_func';
-        const args = expr.nodes('args').map((arg) => this.astExprToString(arg));
-        return `${funcName}(${args.join(',')})`;
-      }
-      if (expr.is('ColumnRef')) {
-        const fields = stringList(expr, 'fields');
-        return fields.length > 0 ? fields.join('.') : 'unknown_column';
-      }
-      if (expr.is('A_Const')) {
-        const sval = expr.node('sval')?.string('sval');
-        if (sval !== undefined) {
-          return sval;
-        }
-        const { ival } = expr.fields;
-        if (isJsonObject(ival)) {
-          // libpg-query omits ival.ival when the integer is 0
-          return typeof ival.ival === 'number' ? String(ival.ival) : '0';
-        }
-        const { fval } = expr.fields;
-        if (isJsonObject(fval) && typeof fval.fval === 'string') {
-          return fval.fval;
-        }
-      }
-      // Other expressions never equal a plain column name
-      return `<${expr.type}>`;
-    } catch (error) {
-      throw new Error('Error converting expression to string', {
-        cause: error,
-      });
+    if (expr.is('FuncCall')) {
+      const names = stringList(expr, 'funcname');
+      const funcName = names.length > 0 ? names.join('.') : 'unknown_func';
+      const args = expr.nodes('args').map((arg) => this.astExprToString(arg));
+      return `${funcName}(${args.join(',')})`;
     }
+    if (expr.is('ColumnRef')) {
+      const fields = stringList(expr, 'fields');
+      return fields.length > 0 ? fields.join('.') : 'unknown_column';
+    }
+    if (expr.is('A_Const')) {
+      const sval = expr.node('sval')?.string('sval');
+      if (sval !== undefined) {
+        return sval;
+      }
+      const { ival } = expr.fields;
+      if (isJsonObject(ival)) {
+        // libpg-query omits ival.ival when the integer is 0
+        return typeof ival.ival === 'number' ? String(ival.ival) : '0';
+      }
+      const { fval } = expr.fields;
+      if (isJsonObject(fval) && typeof fval.fval === 'string') {
+        return fval.fval;
+      }
+    }
+    // Other expressions never equal a plain column name
+    return `<${expr.type}>`;
   }
 
   /** Check if two indexes are functionally equivalent. */

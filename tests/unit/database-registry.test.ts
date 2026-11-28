@@ -168,7 +168,7 @@ test('a server uri without port or database discovers through the postgres datab
   await reg.use('one', query);
 
   expect(urls).toEqual(['postgresql://u:p@h:5432/postgres', 'postgresql://u:p@h:5432/one']);
-  expect(servers).toEqual([{ server: 'h:5432', prefix: '' }]);
+  expect(servers).toEqual([{ server: 'h:5432', databases: ['one'] }]);
 });
 
 test('list labels a server with the port of its port query parameter', async () => {
@@ -177,7 +177,7 @@ test('list labels a server with the port of its port query parameter', async () 
 
   const { servers } = await reg.list();
 
-  expect(servers).toEqual([{ server: 'h:6543', prefix: '' }]);
+  expect(servers).toEqual([{ server: 'h:6543', databases: [] }]);
 });
 
 test('a second call restarts the idle timer', async () => {
@@ -234,6 +234,13 @@ test('rejects a name discovered on two servers unless a prefix separates them', 
   await expect(distinct.use('b-shared', query)).resolves.toEqual([]);
 });
 
+test('a discovered name that an explicit database also uses is listed with the explicit database only', async () => {
+  const { poolFactory } = setup(datnames(['app']));
+  const reg = registry({ poolFactory, databases: [{ ...APP_DB, source: 'config' }], servers: [source()] });
+
+  await expect(reg.list()).resolves.toEqual({ config: ['app'], servers: [{ server: 'h:5432', databases: [] }] });
+});
+
 test('list shows a name found on two servers as an error entry', async () => {
   const { poolFactory } = setup(datnames(['shared']));
   const reg = registry({
@@ -241,12 +248,14 @@ test('list shows a name found on two servers as an error entry', async () => {
     servers: [source(), source({ uri: { uri: 'postgresql://u:p@other:5432/postgres' } })],
   });
 
-  const { databases } = await reg.list();
+  const { servers } = await reg.list();
 
-  expect(databases.map(({ database, state }) => ({ database, state }))).toEqual([
-    { database: 'shared', state: 'error' },
-  ]);
-  expect(databases[0]?.error).toContain('found on more than one server');
+  const shared = {
+    database: 'shared',
+    state: 'error',
+    error: expect.stringContaining('found on more than one server') as unknown,
+  };
+  expect(servers?.map(({ databases }) => databases)).toEqual([[shared], [shared]]);
 });
 
 test('reports a database whose uri could not be resolved', async () => {
@@ -259,16 +268,11 @@ test('reports a database whose uri could not be resolved', async () => {
   await expect(reg.use('app', query)).rejects.toThrow(
     'Database "app": environment variable APP_DATABASE_URI is not set'
   );
-  const { databases } = await reg.list();
-  expect(databases).toEqual([
-    {
-      database: 'app',
-      source: 'config',
-      state: 'error',
-      idle_seconds_left: null,
-      error: 'Database "app": environment variable APP_DATABASE_URI is not set',
-    },
-  ]);
+  await expect(reg.list()).resolves.toEqual({
+    config: [
+      { database: 'app', state: 'error', error: 'Database "app": environment variable APP_DATABASE_URI is not set' },
+    ],
+  });
 });
 
 test('an unknown name triggers discovery again and finds a database created since', async () => {
@@ -331,20 +335,20 @@ test('a driver that cannot be created for discovery is reported on its server, m
 
   const { servers } = await reg.list();
 
-  expect(servers[0]?.error).toMatch(/cannot use postgresql:\/\/u:.*@h\/postgres/u);
-  expect(servers[0]?.error).not.toContain('secret');
+  expect(servers?.[0]?.error).toMatch(/cannot use postgresql:\/\/u:.*@h\/postgres/u);
+  expect(servers?.[0]?.error).not.toContain('secret');
 });
 
 test('a discovered name with a reserved URL character is an error, not a connection to another database', async () => {
   const { urls, poolFactory } = setup(datnames(['a/b', 'ok']));
   const reg = registry({ poolFactory, servers: [source()] });
 
-  const { databases } = await reg.list();
+  const { servers } = await reg.list();
 
-  expect(databases.find(({ database }) => database === 'a/b')).toMatchObject({
-    state: 'error',
-    error: expect.stringContaining('cannot be used') as unknown,
-  });
+  expect(servers?.[0]?.databases).toEqual([
+    { database: 'a/b', state: 'error', error: expect.stringContaining('cannot be used') as unknown },
+    'ok',
+  ]);
   await expect(reg.use('a/b', query)).rejects.toThrow('Database "a/b" cannot be used');
   expect(urls.filter((url) => !url.endsWith('/postgres'))).toEqual([]);
 });
@@ -370,9 +374,38 @@ test('a pool whose last query failed still lists as open while its idle timer ru
   const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
   await expect(reg.use('app', query)).rejects.toThrow('syntax error');
 
-  const { databases } = await reg.list();
+  const { cli } = await reg.list();
 
-  expect(databases[0]).toMatchObject({ database: 'app', state: 'open', idle_seconds_left: 300 });
+  expect(cli?.[0]).toMatchObject({ database: 'app', state: 'open', idle_seconds_left: 300 });
+});
+
+test('an open pool with a call running lists without idle seconds', async () => {
+  const { poolFactory } = setup();
+  const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
+  const { promise: gate, resolve: release } = Promise.withResolvers<undefined>();
+  const running = reg.use('app', async (driver) => {
+    await query(driver);
+    await gate;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+
+  const { cli } = await reg.list();
+
+  expect(cli).toEqual([{ database: 'app', state: 'open' }]);
+  release(undefined);
+  await running;
+});
+
+test('a pool that could not connect lists as closed with its error and no idle seconds', async () => {
+  const { poolFactory } = setup(() => {
+    throw new Error('connection refused');
+  });
+  const reg = registry({ poolFactory, idleMinutes: 5, databases: [APP_DB] });
+  await expect(reg.use('app', query)).rejects.toThrow('connection refused');
+
+  const { cli } = await reg.list();
+
+  expect(cli).toEqual([{ database: 'app', state: 'closed', last_error: 'connection refused' }]);
 });
 
 test('closeAll also closes a pool retired while its call is still running', async () => {
@@ -401,9 +434,9 @@ test('the discovery query passes restricted-mode validation', async () => {
   const { fakes, poolFactory } = setup(datnames(['app']));
   const reg = registry({ poolFactory, accessMode: AccessMode.RESTRICTED, servers: [source()] });
 
-  const { databases } = await reg.list();
+  const { servers } = await reg.list();
 
-  expect(databases.map((entry) => entry.database)).toEqual(['app']);
+  expect(servers?.[0]?.databases).toEqual(['app']);
   expect(fakes[0]?.queries.some(({ text }) => text.includes('pg_database'))).toBe(true);
 });
 
@@ -414,8 +447,8 @@ test('applies include, exclude and prefix, and points each database at its own U
     servers: [source({ prefix: 'stg-', include: ['app?', 'my *', 'postgres'], exclude: ['postgres', 'app2'] })],
   });
 
-  const { databases } = await reg.list();
-  expect(databases.map((entry) => entry.database)).toEqual(['stg-app1', 'stg-my db']);
+  const { servers } = await reg.list();
+  expect(servers).toEqual([{ server: 'h:5432', prefix: 'stg-', databases: ['stg-app1', 'stg-my db'] }]);
 
   await reg.use('stg-my db', query);
   expect(urls.at(-1)).toBe('postgresql://u:p@h:5432/my%20db');

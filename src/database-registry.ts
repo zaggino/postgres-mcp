@@ -35,25 +35,32 @@ export interface RegistryOptions {
   getSqlDriver?: typeof defaultGetSqlDriver;
 }
 
-export interface DatabaseListing {
-  database: string;
-  source: 'cli' | 'config' | 'server';
-  state: 'open' | 'closed' | 'error';
-  idle_seconds_left: number | null;
-  error?: string;
-  /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
-  last_error?: string;
-}
+/** A database in the listing: its bare name when its pool is closed and nothing went wrong. */
+export type DatabaseListing =
+  | string
+  | {
+      database: string;
+      state: 'open' | 'closed' | 'error';
+      /** Seconds until an open pool closes; absent while a call is running or when pools never close. */
+      idle_seconds_left?: number;
+      error?: string;
+      /** Why the last call could not reach the database, password-masked; absent once a call succeeds. */
+      last_error?: string;
+    };
 
 export interface ServerListing {
   server: string;
-  prefix: string;
+  /** Absent when the server adds no prefix. */
+  prefix?: string;
   error?: string;
+  databases: DatabaseListing[];
 }
 
+/** The databases grouped by where they come from; a group with nothing in it is left out. */
 export interface RegistryListing {
-  databases: DatabaseListing[];
-  servers: ServerListing[];
+  cli?: DatabaseListing[];
+  config?: DatabaseListing[];
+  servers?: ServerListing[];
 }
 
 /** A database that cannot be used: unknown, misconfigured, ambiguous, or its driver cannot be created. */
@@ -364,33 +371,48 @@ export class DatabaseRegistry {
   async list(): Promise<RegistryListing> {
     await this.#discover();
 
-    const databases = [...this.#catalog]
-      .map(([name, { source, uri }]): DatabaseListing => {
+    const listing: RegistryListing = {};
+    for (const group of ['cli', 'config'] as const) {
+      const databases = this.#listDatabases((_name, { source }) => source === group);
+      if (databases.length > 0) {
+        listing[group] = databases;
+      }
+    }
+    if (this.#sources.length > 0) {
+      listing.servers = this.#sources.map(({ source, found, error }): ServerListing => {
+        const message = 'error' in source.uri ? source.uri.error : error;
+        return {
+          server: 'uri' in source.uri ? serverLabel(source.uri.uri) : '',
+          ...(source.prefix && { prefix: source.prefix }),
+          ...(message && { error: message }),
+          databases: this.#listDatabases((name, entry) => entry.source === 'server' && found.has(name)),
+        };
+      });
+    }
+    return listing;
+  }
+
+  /** The listing entries of the catalog databases `keep` selects, sorted by name. */
+  #listDatabases(keep: (name: string, entry: CatalogEntry) => boolean): DatabaseListing[] {
+    return [...this.#catalog]
+      .filter(([name, entry]) => keep(name, entry))
+      .toSorted(([a], [b]) => (a < b ? -1 : Number(a > b)))
+      .map(([name, { uri }]) => {
         const pool = this.#pools.get(name);
+        const state = 'error' in uri ? 'error' : poolState(pool);
+        const lastError = pool?.lastError;
+        if (state === 'closed' && !lastError) {
+          return name;
+        }
+        const secondsLeft = pool?.isOpen ? pool.secondsLeft : null;
         return {
           database: name,
-          source,
-          state: 'error' in uri ? 'error' : poolState(pool),
-          idle_seconds_left: pool?.secondsLeft ?? null,
+          state,
+          ...(secondsLeft !== null && { idle_seconds_left: secondsLeft }),
           ...('error' in uri && { error: uri.error }),
-          ...(pool?.lastError && { last_error: pool.lastError }),
+          ...(lastError && { last_error: lastError }),
         };
-      })
-      .sort((a, b) => (a.database < b.database ? -1 : Number(a.database > b.database)));
-
-    const servers = this.#sources.map(({ source, error }): ServerListing => {
-      const listing: ServerListing = {
-        server: 'uri' in source.uri ? serverLabel(source.uri.uri) : '',
-        prefix: source.prefix,
-      };
-      const message = 'error' in source.uri ? source.uri.error : error;
-      if (message) {
-        listing.error = message;
-      }
-      return listing;
-    });
-
-    return { databases, servers };
+      });
   }
 
   async closeAll(): Promise<void> {

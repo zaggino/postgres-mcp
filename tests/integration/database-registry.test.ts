@@ -48,8 +48,8 @@ describeWithPostgres('DatabaseRegistry discovery', ({ connectionString }) => {
   });
 
   test('lists databases that allow connections and connects to each by its prefixed name', async () => {
-    const { databases } = await registry.list();
-    expect(databases.map((entry) => entry.database)).toEqual(['x-mcp_disc_a', 'x-mcp_disc_b']);
+    const { servers } = await registry.list();
+    expect(servers?.[0]?.databases).toEqual(['x-mcp_disc_a', 'x-mcp_disc_b']);
 
     const rows = await registry.use('x-mcp_disc_a', (driver) => queryRows(driver, 'SELECT current_database() AS db'));
     expect(rows[0]?.db).toBe('mcp_disc_a');

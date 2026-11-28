@@ -283,7 +283,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
     'list_databases',
     {
       description:
-        'List the databases this server can query, with the state of each connection pool and any configuration errors.',
+        'List the databases this server can query, grouped by source, with the state of each connection pool and any configuration errors; a bare name is a closed pool with no error.',
       inputSchema: {},
       annotations: { title: 'List Databases', readOnlyHint: true },
     },

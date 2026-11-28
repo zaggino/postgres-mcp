@@ -31,18 +31,12 @@ test('a tool call for an unknown database returns an error naming it', async () 
   expect(fakes.size).toBe(0);
 });
 
-test('list_databases reports each configured database with its state and source without opening a pool', async () => {
-  const { client, fakes } = await connect(['a', 'b']);
+test('list_databases lists closed databases by name under their source without opening a pool', async () => {
+  const { client, fakes } = await connect(['b', 'a']);
 
   const text = await callToolText(client, 'list_databases');
 
-  expect(JSON.parse(text)).toMatchObject({
-    databases: [
-      { database: 'a', source: 'cli', state: 'closed' },
-      { database: 'b', source: 'cli', state: 'closed' },
-    ],
-    servers: [],
-  });
+  expect(JSON.parse(text)).toEqual({ cli: ['a', 'b'] });
   expect(fakes.size).toBe(0);
 });
 
@@ -90,8 +84,8 @@ test('list_databases shows why the last call could not reach a database, passwor
   });
   const client = await connectClient(createServer(registry));
   await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 42 AS answer' });
-  expect(JSON.parse(await callToolText(client, 'list_databases'))).toMatchObject({
-    databases: [{ database: 'a', state: 'closed', last_error: 'could not connect to postgresql://u:****@h:5432/a' }],
+  expect(JSON.parse(await callToolText(client, 'list_databases'))).toEqual({
+    cli: [{ database: 'a', state: 'closed', last_error: 'could not connect to postgresql://u:****@h:5432/a' }],
   });
 
   reachable = true;
@@ -112,7 +106,7 @@ test('a connection error stays listed after its pool closes, through a call canc
     registry.use('a', (driver) => queryRows(driver, 'SELECT 2'), { signal: AbortSignal.abort() })
   ).rejects.toThrow('Query cancelled');
 
-  expect((await registry.list()).databases).toMatchObject([{ database: 'a', last_error: 'connection refused' }]);
+  expect((await registry.list()).cli).toMatchObject([{ database: 'a', last_error: 'connection refused' }]);
 });
 
 test('execute_sql tells a statement with no result set from a SELECT that returns no rows', async () => {

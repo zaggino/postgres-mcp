@@ -93,7 +93,7 @@ export async function main(argv: string[], transports: Transports = defaultTrans
     return;
   }
 
-  const http = httpOptions(options, transport);
+  const http = httpOptions(options);
   warnIfExposed(http, accessMode);
-  await transports[transport](factory, http);
+  await transports['streamable-http'](factory, http);
 }

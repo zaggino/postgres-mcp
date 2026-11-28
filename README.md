@@ -27,7 +27,8 @@ The fork no longer tracks upstream and fixes inherited defects as it finds them.
 - Index advisor results are deterministic. Upstream's depended on Python set ordering.
 - Plan diffs are computed with jsdiff instead of Python's `difflib`, so hunks can be aligned differently.
 - Numbers are rounded with JavaScript's `toFixed`, which rounds exact ties up where Python rounds them to even, so a last digit can differ.
-- The HTTP transports check the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
+- The SSE transport is removed: the server offers stdio and streamable HTTP only (`--transport=sse`, `--sse-host` and `--sse-port` are gone). Use `--transport=streamable-http` and the `/mcp` endpoint instead.
+- The streamable HTTP transport checks the `Host` and `Origin` headers of every request against an allow-list (`--allowed-hosts`, `--allowed-origins`), and the server refuses to start on a non-loopback bind without `--allowed-hosts`. Request bodies are limited to 4 MB. HTTP sessions are capped (`--max-sessions`) and expire when idle (`--session-idle-minutes`); upstream has neither.
 - Statement timeouts are enforced by Postgres (`statement_timeout`), so a statement that runs too long is stopped; `--statement-timeout` sets the limit in either mode (default 30 seconds in restricted mode, none in unrestricted mode). Upstream stops waiting after 30 seconds in restricted mode and leaves the statement running.
 - Cancelling a tool call (`notifications/cancelled`) cancels its running statement in Postgres. In unrestricted mode a new `cancel_query` tool lists the session's running calls and cancels one by id. Upstream ignores cancellation.
 - Only a connection-level failure (a lost connection, any error that is not from Postgres, a FATAL error, or SQLSTATE class 08 or 28, 53300, 57P01 to 57P03) invalidates a database's pool and discards its connection. A statement Postgres rejects leaves both in use. Upstream reconnects the whole pool after any error, a syntax error included.
@@ -48,7 +49,7 @@ Features:
 - **Schema information**: list schemas, objects, and object details so the agent can write correct SQL.
 - **Safe SQL execution**: configurable access control, including a read-only mode with SQL parsing, for both development and production.
 
-The server supports the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio), [SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) and streamable HTTP transports.
+The server supports the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) and streamable HTTP transports.
 
 ## Quick Start
 
@@ -151,13 +152,12 @@ Pools open on the first call to a database, and the server makes no connection a
 
 ## Transports
 
-| Transport       | Flags                                                                       | Endpoint                                    |
-| --------------- | --------------------------------------------------------------------------- | ------------------------------------------- |
-| stdio (default) | `--transport=stdio`                                                         | standard input and output                   |
-| SSE             | `--transport=sse --sse-host --sse-port`                                     | `/sse` (messages are posted to `/messages`) |
-| Streamable HTTP | `--transport=streamable-http --streamable-http-host --streamable-http-port` | `/mcp`                                      |
+| Transport       | Flags                                                                       | Endpoint                  |
+| --------------- | --------------------------------------------------------------------------- | ------------------------- |
+| stdio (default) | `--transport=stdio`                                                         | standard input and output |
+| Streamable HTTP | `--transport=streamable-http --streamable-http-host --streamable-http-port` | `/mcp`                    |
 
-The SSE and streamable HTTP transports let several MCP clients share one server. For example:
+The streamable HTTP transport lets several MCP clients share one server. For example:
 
 ```bash
 MCP_APP_DATABASE_URI=postgresql://username:password@localhost:5432/dbname \
@@ -184,16 +184,14 @@ In Codex's `~/.codex/config.toml`:
 url = "http://localhost:8000/mcp"
 ```
 
-For SSE, start the server with `--transport=sse` and in Claude Code use `"type": "sse"` with `http://localhost:8000/sse` as the URL.
-
-The HTTP transports check every request on every MCP endpoint (`/mcp`, `/sse` and `/messages`) and answer 403 when it fails:
+The HTTP transport checks every request to `/mcp` and answers 403 when it fails:
 
 - `Host` must be on the allow-list. On a loopback bind (`localhost`, `127.0.0.1`, `::1`) that is those three names with the bound port plus whatever `--allowed-hosts` adds. On any other bind it is `--allowed-hosts` alone, and the server refuses to start without it; pass `--allowed-hosts='*'` to accept any Host (`*` cannot be mixed with other entries). An entry without a port matches that hostname on any port; matching ignores case. Entries are checked at startup: no scheme or path, and IPv6 addresses in brackets (`[::1]:8000`).
 - `Origin`, when the request has one, must be on the allow-list: `http://localhost:<port>`, `http://127.0.0.1:<port>` and `http://[::1]:<port>` on a loopback bind, plus whatever `--allowed-origins` adds; on any other bind `--allowed-origins` alone. `--allowed-origins='*'` accepts any Origin. Each entry must be exactly `scheme://host[:port]`, with no path or trailing slash. Requests without an `Origin` header (non-browser clients) are not checked.
 
 A 403 is sent as `text/plain` with `X-Content-Type-Options: nosniff`.
 
-Each HTTP transport holds at most `--max-sessions` sessions (default 100) and answers 503 `Too many sessions` to a new streamable HTTP `initialize` or a new `GET /sse` beyond that. A session with no request for `--session-idle-minutes` (default 30, `0` never) is closed, and its id then gets 404. On streamable HTTP the timer does not run while a request for the session is in flight, and starts afresh when the last one ends: a tool call longer than the idle time keeps its session, and so does an open `GET` stream, so a listening client is not closed. On SSE each `POST /messages` restarts the timer, but the result of a tool call travels over the `GET /sse` stream, which does not hold the session: a tool call longer than the idle time with no other message can still lose its session. The session cap bounds memory; it is not a security control, since anyone who passes the `Host` check can occupy the sessions.
+The HTTP transport holds at most `--max-sessions` sessions (default 100) and answers 503 `Too many sessions` to a new `initialize` beyond that. A session with no request for `--session-idle-minutes` (default 30, `0` never) is closed, and its id then gets 404. The timer does not run while a request for the session is in flight, and starts afresh when the last one ends: a tool call longer than the idle time keeps its session, and so does an open `GET` stream, so a listening client is not closed. The session cap bounds memory; it is not a security control, since anyone who passes the `Host` check can occupy the sessions.
 
 There is no authentication. A server bound to a non-loopback address logs a warning at startup saying so; put it behind something that authenticates.
 
@@ -210,9 +208,7 @@ postgres-mcp [options] (--database NAME ... | --config FILE)
 | `--idle-minutes`         | `10`          | Close a database's pool after this many idle minutes; `0` never closes; max 35791.                                               |
 | `--statement-timeout`    | `30` / `0`    | Seconds after which Postgres cancels a statement: `30` in restricted mode, `0` (none) in unrestricted mode; max 2147483.         |
 | `--access-mode`          | `restricted`  | `unrestricted` or `restricted`.                                                                                                  |
-| `--transport`            | `stdio`       | `stdio`, `sse` or `streamable-http`.                                                                                             |
-| `--sse-host`             | `localhost`   | Host to bind the SSE server to.                                                                                                  |
-| `--sse-port`             | `8000`        | Port of the SSE server.                                                                                                          |
+| `--transport`            | `stdio`       | `stdio` or `streamable-http`.                                                                                                    |
 | `--streamable-http-host` | `localhost`   | Host to bind the streamable HTTP server to.                                                                                      |
 | `--streamable-http-port` | `8000`        | Port of the streamable HTTP server.                                                                                              |
 | `--allowed-hosts`        | loopback only | Comma-separated `Host` values to accept, added to loopback on a loopback bind; required on a non-loopback bind; `*` accepts any. |

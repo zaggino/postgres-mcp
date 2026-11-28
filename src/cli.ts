@@ -11,7 +11,7 @@ import { DEFAULT_MAX_SESSIONS, DEFAULT_SESSION_IDLE_MINUTES } from './transports
 
 export class CliError extends Error {}
 
-const TRANSPORTS = ['stdio', 'sse', 'streamable-http'] as const;
+const TRANSPORTS = ['stdio', 'streamable-http'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
 
 export interface CliOptions {
@@ -20,8 +20,6 @@ export interface CliOptions {
   configPath: string | undefined;
   idleMinutes: number | undefined;
   statementTimeoutSeconds: number | undefined;
-  sseHost: string;
-  ssePort: number;
   streamableHttpHost: string;
   streamableHttpPort: number;
   allowedHosts: AllowList | undefined;
@@ -31,15 +29,11 @@ export interface CliOptions {
   transport: Transport;
 }
 
-/** The HTTP transports' `--transport` values. */
-export type HttpTransport = Exclude<Transport, 'stdio'>;
-
-/** The options of the HTTP transport `transport`. Session limits and allow-lists default where they are used. */
-export function httpOptions(options: CliOptions, transport: HttpTransport): HttpServerOptions {
-  const sse = transport === 'sse';
+/** The options of the streamable HTTP transport. Session limits and allow-lists default where they are used. */
+export function httpOptions(options: CliOptions): HttpServerOptions {
   return {
-    host: sse ? options.sseHost : options.streamableHttpHost,
-    port: sse ? options.ssePort : options.streamableHttpPort,
+    host: options.streamableHttpHost,
+    port: options.streamableHttpPort,
     allowedHosts: options.allowedHosts,
     allowedOrigins: options.allowedOrigins,
     maxSessions: options.maxSessions,
@@ -50,7 +44,6 @@ export function httpOptions(options: CliOptions, transport: HttpTransport): Http
 const PROG = 'postgres-mcp';
 const USAGE = `usage: ${PROG} [-h] [--access-mode {${ACCESS_MODES.join(',')}}]
                     [--transport {${TRANSPORTS.join(',')}}]
-                    [--sse-host SSE_HOST] [--sse-port SSE_PORT]
                     [--streamable-http-host STREAMABLE_HTTP_HOST]
                     [--streamable-http-port STREAMABLE_HTTP_PORT]
                     [--allowed-hosts HOSTS] [--allowed-origins ORIGINS]
@@ -80,27 +73,25 @@ options:
                         (default: 30 in restricted mode, 0 = none in
                         unrestricted mode; 0 = no timeout)
   --transport {${TRANSPORTS.join(',')}}
-                        Select MCP transport: stdio (default), sse, or
+                        Select MCP transport: stdio (default) or
                         streamable-http
-  --sse-host SSE_HOST   Host to bind SSE server to (default: localhost)
-  --sse-port SSE_PORT   Port for SSE server (default: 8000)
   --streamable-http-host STREAMABLE_HTTP_HOST
                         Host to bind streamable HTTP server to (default:
                         localhost)
   --streamable-http-port STREAMABLE_HTTP_PORT
                         Port for streamable HTTP server (default: 8000)
   --allowed-hosts HOSTS
-                        Comma-separated Host header values the HTTP transports
-                        accept, in addition to loopback on a loopback bind. An
+                        Comma-separated Host header values the HTTP transport
+                        accepts, in addition to loopback on a loopback bind. An
                         entry without a port matches any port; '*' accepts any
                         Host. Write IPv6 addresses in brackets. Required when
                         the bind host is not loopback
   --allowed-origins ORIGINS
                         Comma-separated Origin header values (scheme://host[:port])
-                        the HTTP transports accept, in addition to loopback on a
+                        the HTTP transport accepts, in addition to loopback on a
                         loopback bind; '*' accepts any Origin. Requests without
                         an Origin header are not checked
-  --max-sessions N      Most concurrent sessions the HTTP transports hold;
+  --max-sessions N      Most concurrent sessions the HTTP transport holds;
                         further ones get 503 (default: ${DEFAULT_MAX_SESSIONS})
   --session-idle-minutes N
                         Close an HTTP session after N minutes without a request
@@ -202,7 +193,7 @@ function requireAllowedHosts(options: CliOptions): void {
   if (options.transport === 'stdio') {
     return;
   }
-  const http = httpOptions(options, options.transport);
+  const http = httpOptions(options);
   if (!LOOPBACK_HOSTS.has(http.host) && http.allowedHosts === undefined) {
     throw new CliError(
       `binding ${http.host} exposes the server to the network: pass --allowed-hosts with the Host header values clients use (or --allowed-hosts='*' to accept any Host)`
@@ -223,8 +214,6 @@ function parseRaw(argv: string[]) {
         'idle-minutes': { type: 'string' },
         'statement-timeout': { type: 'string' },
         transport: { type: 'string' },
-        'sse-host': { type: 'string' },
-        'sse-port': { type: 'string' },
         'streamable-http-host': { type: 'string' },
         'streamable-http-port': { type: 'string' },
         'allowed-hosts': { type: 'string' },
@@ -258,8 +247,6 @@ export function parseCli(argv: string[]): CliOptions | null {
       max: MAX_STATEMENT_TIMEOUT_SECONDS,
     }),
     transport: choice('--transport', values.transport, TRANSPORTS) ?? 'stdio',
-    sseHost: values['sse-host'] ?? 'localhost',
-    ssePort: parseIntFlag('--sse-port', values['sse-port']) ?? DEFAULT_PORT,
     streamableHttpHost: values['streamable-http-host'] ?? 'localhost',
     streamableHttpPort: parseIntFlag('--streamable-http-port', values['streamable-http-port']) ?? DEFAULT_PORT,
     allowedHosts: parseAllowList('--allowed-hosts', values['allowed-hosts'], hostEntryProblem),

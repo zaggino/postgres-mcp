@@ -6,7 +6,7 @@ export type AllowList = 'any' | readonly string[];
 /** Hosts a server can bind to without being reachable from the network. */
 export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '::1']);
 
-/** Options shared by the HTTP transports. Unset fields take their defaults where they are used. */
+/** Options of the HTTP transport. Unset fields take their defaults where they are used. */
 export interface HttpServerOptions {
   /** Host header values to accept besides loopback on a loopback bind. */
   allowedHosts?: AllowList;

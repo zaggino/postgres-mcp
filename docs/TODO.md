@@ -34,11 +34,11 @@ The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so 
 
 ## 2026-11-26 · Minor · Bug · A zero-column SELECT is reported as "no result set"
 
-`executeQuery` in `src/sql/sql-driver.ts` returns `null` for a result with no columns, so `SELECT FROM t` is indistinguishable from a statement without a result set.
+`executeResultSet` in `src/sql/sql-driver.ts` reports both a result with no columns and a statement without a result set as `columns: []`, so `execute_sql` answers "No results" for `SELECT FROM t`. Telling them apart needs the statement's command tag, which `QueryResultLike` does not carry yet.
 
 ## 2026-11-26 · Minor · Bug · Duplicate column names collapse in a row object
 
-Rows in `src/sql/sql-driver.ts` are `Record<string, unknown>`, so `SELECT 1 AS a, 2 AS a` returns one `a` value. Later columns overwrite earlier ones.
+Rows (`Row` in `src/sql/safe-sql.ts`) are `Record<string, unknown>`, so `SELECT 1 AS a, 2 AS a` returns one `a` value: later columns overwrite earlier ones. `executeResultSet` returns the column names, including duplicates, so `execute_sql` could fetch rows in array mode and keep every column; how duplicates should appear in its JSON output is undecided.
 
 ## 2026-11-26 · Minor · Bug · Restricted mode rejects `VACUUM <table>` and `ANALYZE <table>`
 
@@ -92,18 +92,6 @@ Statistics values in `src/sql/bind-params.ts` pass through `number`, so very lar
 
 The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so `ExplainPlanArtifact` in `src/artifacts.ts` cannot be created from it.
 
-## 2026-11-26 · Minor · Bug · A never-used sequence makes the whole health check fail
-
-`SequenceHealthCalc` in `src/database-health/sequence-health-calc.ts` converts `last_value` with `toBigInt`, which fails on `NULL` for a sequence that has never been used. The error aborts the whole `analyze_db_health` call.
-
-## 2026-11-26 · Minor · Bug · NULL replication lag disables lag checks permanently
-
-`ReplicationCalc` in `src/database-health/replication-calc.ts` treats a `NULL` lag as an unsupported feature and never re-checks it for the lifetime of that instance.
-
-## 2026-11-26 · Minor · Bug · Physical replication slot prints `(database: None)`
-
-The slot formatter in `src/database-health/replication-calc.ts` prints the database as Python's `None` for physical slots, which have no database. Leave the database out for physical slots.
-
 ## 2026-11-26 · Minor · Bug · Error message prefix is missing a word
 
 `src/top-queries/top-queries-calc.ts` returns "Error resource-intensive queries:" where "Error getting resource-intensive queries:" is meant.
@@ -144,10 +132,6 @@ The zod schema in `src/server.ts` accepts only an array, so clients that send `n
 
 `toColumnList` in `src/explain/explain-plan.ts` treats a string `columns` value as an iterable and splits it into characters. The zod schema in `src/server.ts` also leaves hypothetical index entries untyped, so nothing rejects the bad shape.
 
-## 2026-11-26 · Minor · Bug · Missing or non-numeric costs and NULL counters become 0
-
-Plan costs and NULL counters are coerced with `Number()` in `src/index/index-opt-base.ts` and `src/database-health/vacuum-health-calc.ts`, so a missing or non-numeric value silently turns into 0 instead of being reported.
-
 ## 2026-11-26 · Minor · Security · Publishing has no approval gate
 
 The `main` environment that `.github/workflows/release-please.yml` publishes from only restricts deployments to the `main` branch, so merging a release PR (or dispatching the workflow with `publish`) publishes to npm without a second person's approval. Required reviewers cannot simply be added to `main`: the `release-please` job uses it too and would then wait for approval on every push. Move the `publish` job to its own environment (and the npm trusted publisher with it) with required reviewers, "Prevent self-review" on and admin bypass off, or the person who triggers a run can approve it alone. (Creating `v*` tags, which the publish guard trusts, is already limited to admins by the "release tags: creation" ruleset.)
@@ -160,10 +144,6 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 
 `tests/integration/dta-calc.test.ts` skips when no recommendation is produced and retries twice, so a regression that stops recommendations can pass.
 
-## 2026-11-26 · Minor · Bug · Sequence health treats `smallint` sequences as `bigint`
-
-`src/database-health/sequence-health-calc.ts` computes the maximum value of every sequence as if it were `bigint`, so `smallint` sequences are never reported as near exhaustion.
-
 ## 2026-11-26 · Major · Refactor · `ConditionColumnCollector` inherits from a class it does not use
 
 `ConditionColumnCollector` in `src/index/dta-calc.ts` extends `ColumnCollector` (`src/sql/bind-params.ts`) but overrides or disables all of its behaviour and redeclares its state under new names. Make it extend `Visitor` directly, move it to its own file, and share the scope and alias helpers between the two collectors.
@@ -171,24 +151,6 @@ The `main` environment that `.github/workflows/release-please.yml` publishes fro
 ## 2026-11-26 · Major · Refactor · AST struct-shape table lives in the security allowlist file
 
 `STRUCT_FIELD_TYPES` in `src/sql/allowlists.ts` describes parse-tree shape, not policy, and `src/sql/pg-ast.ts` imports it from there. Move it next to the parser, add `IndexStmt.relation`, and expose one value classifier that both the visitor traversal (`pg-ast.ts`) and the validator (`src/sql/safe-sql.ts`) use, so the two walkers cannot disagree.
-
-## 2026-11-26 · Major · Refactor · Python-shaped data contracts
-
-Query results move through the code as untyped rows, in a shape carried over from Python:
-
-- `RowResult { cells }` (`src/sql/sql-driver.ts`) wraps every row and has no behaviour. `executeWithClient` copies each row into it, and the callers that pass rows through unwrap or copy them again (`rows.map((r) => r.cells)`, `{ ...row.cells }`). About 75 lines in 17 files of `src/`, and 9 test files, read or build `cells`.
-- `executeQuery` returns `RowResult[] | null`, where `null` means the statement had no result set. Only `execute_sql` (`src/tools/analysis.ts`) and `explain` (`src/explain/explain-plan.ts`, "No results returned from EXPLAIN") act on that; every other caller treats `null` as no rows.
-- Each module decodes cells itself with `String(...)`, `Number(...)` and `Boolean(...)`, or a local helper: `toInt` (`src/index/index-opt-base.ts`), `toMb` and `nullableText` (`src/database-health/index-health-calc.ts`), a second `nullableText` (`constraint-health-calc.ts`), `toBigInt` (`sequence-health-calc.ts`), `stringValue` (`src/index/dta-calc.ts`) and `cell` (`src/tools/objects.ts`). Only `toInt` and `toBigInt` check the value. Everywhere else a misspelt column or a NULL becomes `"undefined"`, `NaN` or `false` without an error. `src/tools/objects.ts` keeps `unknown` up to the output, including a `Map<unknown, ...>`.
-
-What to do, in this order; none of it changes the tool surface:
-
-1. Add `src/sql/cells.ts` with strict readers that take a row and a column name: text, nullable text, integer, bigint, boolean, numeric. A reader only narrows the value `pg` produced, and throws on a missing column or an unexpected type. Which JavaScript value a Postgres type becomes stays with `customTypes` in `src/sql/sql-driver.ts`, and turning a value into text stays with "Objects, arrays and dates are stringified as `[object Object]` and similar". Decide first between reader functions and zod schemas built from shared `pg` codecs. Zod is already the validation layer (`src/config.ts`, `src/server.ts`) and needs one declaration per query; readers give control over the error message. Do not use `executeQuery<T>()` with a cast, which checks nothing.
-2. Convert one module at a time: map the rows to a named interface at the query, so nothing after that handles `unknown`. There are about 45 call sites. Keep what `toInt` and `toBigInt` reject today, and decide for each column whether NULL is legal. Isolate the health checks from each other before converting them: `DatabaseHealthTool` (`src/database-health/database-health.ts`) has one `catch` around all of them, so one reader that throws would replace the whole report with an error, as in "A never-used sequence makes the whole health check fail".
-3. `cells` is then left in `cells.ts` and the callers that pass rows through (`execute_sql`, `list_schemas`, the top-queries rows and two copies in `src/index/`). Delete `RowResult`: `SqlExecutor.executeQuery` (`src/sql/safe-sql.ts`) returns `Promise<Row[]>`, with `type Row = Record<string, unknown>` defined next to `SqlExecutor`, and a second method returns `{ fields, rows }` for `execute_sql` alone. `explain` reports an empty array the way it reports `null` today.
-
-This removes the local helpers and five of the eight `typescript/no-base-to-string` disables: the two `nullableText` helpers, `replication-calc.ts`, `src/sql/extension-utils.ts` and `toInt`. The other three (`src/sql/literal.ts`, `src/sql/bind-params.ts`, `src/index/dta-calc.ts`) write a value into SQL or read a parse tree, and stay with the stringification entry. Delete "Missing or non-numeric costs and NULL counters become 0" when this lands. The `{ fields, rows }` result is where "A zero-column SELECT is reported as "no result set"" and "Duplicate column names collapse in a row object" can be fixed.
-
-The other shapes this entry used to list have their own entries: "Tuples and forwarding classes in the advisor and explain code" and "Advisor sets compare `IndexRecommendation` objects by identity".
 
 ## 2026-11-26 · Minor · Tooling · `promise-function-async` and `strict-boolean-expressions` are switched off
 
@@ -202,20 +164,6 @@ Replacing a truthiness check on a nullable string or boolean changes which value
 - `any` values in conditionals in `src/database-health/index-health-calc.ts`, `src/index/dta-calc.ts`, `src/index/index-opt-base.ts` and `src/tools/objects.ts`.
 
 Go through the findings, keep the current behaviour unless a change is intended, and switch the rules back on.
-
-## 2026-11-26 · Minor · Bug · Objects, arrays and dates are stringified as `[object Object]` and similar
-
-Eight sites, each marked with an inline `typescript/no-base-to-string` disable, turn an `unknown` value into text with `String(value)`:
-
-- `nullableText` in `src/database-health/constraint-health-calc.ts` and in `src/database-health/index-health-calc.ts`
-- `src/database-health/replication-calc.ts`
-- `src/sql/extension-utils.ts`
-- `src/sql/literal.ts`
-- `src/sql/bind-params.ts`
-- `src/index/index-opt-base.ts`
-- `src/index/dta-calc.ts`
-
-That is fine for strings and numbers, but not for the parsed `json`/`jsonb` objects, arrays and `Date` values that `pg` returns: an object prints as `[object Object]`, an array as `1,2`, and a date in the long JavaScript form. `src/sql/literal.ts` puts the result into SQL array-literal text. Route the sites through one shared cell-to-text helper, which is the "shared cell readers" step of "Python-shaped data contracts", using JSON for objects and arrays and ISO 8601 for dates (check that the SQL array-literal site still produces valid literals).
 
 ## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
 
@@ -376,9 +324,8 @@ Shapes carried over from Python that TypeScript would write as named objects and
 - `QueryWeight` and `IndexConfiguration` (`src/index/index-opt-base.ts`) are tuples, labelled but read by position.
 - Three functions return a tuple: `checkPostgresVersionRequirement` and `checkHypopgInstallationStatus` (`src/sql/extension-utils.ts`) return `[boolean, string]`, and `replaceQueryParametersIfNeeded` (`src/explain/explain-plan.ts`) returns `[query, useGenericPlan]`. The only caller of `checkPostgresVersionRequirement` discards the message.
 - `IndexRecommendation` is five getters forwarding to its `IndexDefinition` plus two mutable fields. `IndexRecommendationAnalysis` copies an `Init` interface field by field into a class and adds five more forwarding getters and `toIndex()`.
-- `WorkloadEntry` (`index-opt-base.ts`) and `ColumnStats` (`src/sql/bind-params.ts`) are `Record<string, unknown>`.
 
-Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Let `checkHypopgInstallationStatus` return the extension's status and let its two callers render the message, which also removes its `messageType` parameter. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions, and give `WorkloadEntry` and `ColumnStats` named fields. No output changes.
+Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ query, useGenericPlan }`, and return a boolean for the version requirement. Let `checkHypopgInstallationStatus` return the extension's status and let its two callers render the message, which also removes its `messageType` parameter. Turn the two recommendation classes into readonly interfaces with the improvement multiples as functions. No output changes.
 
 ## 2026-11-28 · Minor · Bug · Advisor sets compare `IndexRecommendation` objects by identity
 
@@ -441,3 +388,7 @@ No test checks the JSON a value of any type comes back as. The unit tests replac
 - NULL, a text array holding NULL and the string `NULL`, a boolean array and a two-dimensional array.
 
 Arrays of enums and of other user-defined types have not been checked at all; `pg` has no parser for them, so they probably come back as one string such as `{a,b}`.
+
+## 2026-11-28 · Minor · Bug · The index advisor never uses a column's most common value as a range bound
+
+`boundValues` in `src/sql/bind-params.ts` picks a range bound from the most common values and their frequencies, then from the histogram, and had a last fallback to the first most common value. That fallback read `most_common_vals`, which `STATS_QUERY` selects as `common_vals`, so it never fired and was dropped when the statistics got a typed interface. When the frequencies are missing or do not match the values, the advisor falls back to a type default although a real value is available. Restore the fallback on the typed `commonVals` field, with a test, and check that the advisor results for the integration workload still make sense.

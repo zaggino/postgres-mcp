@@ -12,6 +12,7 @@ The fork no longer tracks upstream and fixes inherited defects as it finds them.
 - TypeScript on Node.js 26+ instead of Python.
 - Installed from npm. There is no Docker image and no PyPI package.
 - Structured tool results are JSON instead of Python repr text.
+- `execute_sql` returns each value as Postgres sends it. `date`, `timestamp`, `timestamptz`, `time`, `interval`, `bytea` (hex, `\x...`), geometric types, ranges and `numeric` (also in arrays) are their Postgres text. `int8` and numbers inside `json`/`jsonb` are JSON numbers with every digit kept, also beyond 2^53. A float `NaN`, `Infinity` or `-Infinity` is the string `"NaN"`, `"Infinity"` or `"-Infinity"`.
 - The experimental LLM index tuning method (`method="llm"`) is not included. `method` accepts only `"dta"`.
 - Restricted mode runs statements in an enforced read-only transaction.
 - The default access mode is `restricted`. Upstream defaults to `unrestricted`.

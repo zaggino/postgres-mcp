@@ -2,7 +2,7 @@ import type { Row } from './sql-driver.ts';
 
 /**
  * Strict readers for one column of a result row. A reader narrows the value pg's type parsers produced (see
- * `customTypes` in `sql-driver.ts`) and throws a CellError naming the column on a missing column or a value of an
+ * `customTypes` in `type-parsers.ts`) and throws a CellError naming the column on a missing column or a value of an
  * unexpected kind, so a misspelt column or an unexpected NULL fails loudly instead of becoming "undefined", NaN or
  * false. The only conversions are `numeric`, which parses decimal text because pg leaves numeric as text, and
  * `bigint`, which widens a number. `single` also throws a CellError, for a wrong row count, so every failure in this
@@ -34,9 +34,6 @@ function kindOf(cell: unknown): string {
   }
   if (Array.isArray(cell)) {
     return 'array';
-  }
-  if (cell instanceof Date) {
-    return 'date';
   }
   return typeof cell;
 }
@@ -126,17 +123,6 @@ export function numeric(row: Row, column: string): number {
 }
 
 export const nullableNumeric = nullable(numeric);
-
-/** timestamp, timestamptz or date, which pg parses to a Date. */
-export function date(row: Row, column: string): Date {
-  const cell = value(row, column);
-  if (!(cell instanceof Date)) {
-    throw CellError.unexpected(column, 'date', cell);
-  }
-  return cell;
-}
-
-export const nullableDate = nullable(date);
 
 /** A float or integer array (float4[], int4[], ...), which pg parses to an array of numbers. */
 export function numberArray(row: Row, column: string): number[] {

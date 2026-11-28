@@ -331,64 +331,6 @@ Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ qu
 
 `generateRecommendations` in `src/index/dta-calc.ts` keeps candidates and chosen indexes in `Set<IndexRecommendation>`. A JavaScript `Set` compares objects by identity, where the Python original compared them by table, columns and method. `candidateIndexes.delete(idx)` therefore never removes a seed index, because the candidates are new objects, and two candidates for the same index would both stay in the set. Neither is reachable today: the only seed is the empty one (see "Seed-column handling in the advisor is partly dead"), and no path is known to produce two equal candidates. Key the sets by `IndexDefinition.key`, as `configurationKey` (`src/index/index-opt-base.ts`) does.
 
-## 2026-11-28 · Major · Bug · `date` and `timestamp` values are shifted by the host's time zone
-
-_BREAKING CHANGE REQUIRED_
-
-`pg` parses `date`, `timestamp` and `timestamptz` into JavaScript `Date` objects, and `toJson` (`src/tools/result.ts`) prints a `Date` as a UTC instant. `customTypes` in `src/sql/sql-driver.ts` replaces only the `int8` parser. On a host at UTC+1 with the session time zone UTC, `execute_sql` returns:
-
-- `date '2024-03-10'` as `"2024-03-09T23:00:00.000Z"`, the day before.
-- `timestamp '2024-03-10 12:34:56.123456'` as `"2024-03-10T11:34:56.123Z"`, shifted by the host's offset and marked as UTC.
-- `timestamptz` as the right instant, but cut to milliseconds like the other two.
-- `infinity` and `-infinity` of all three as `null`, the same as NULL.
-- `date '0044-03-15 BC'` as `"-000043-03-14T23:02:16.000Z"`.
-
-Arrays of these types behave the same. An agent reading a `date` column therefore gets the wrong day unless the server's host runs in UTC. Return the three types and their arrays as the text Postgres sends, through parsers in `customTypes`. No internal query reads a `Date` today; `src/sql/literal.ts` only writes one. It changes tool output, so commit it as `feat!` and add it to README's "Differences from upstream".
-
-## 2026-11-28 · Minor · Bug · Float `NaN` and `Infinity` are returned as `null`
-
-_BREAKING CHANGE REQUIRED_
-
-`pg` parses `float4` and `float8` into JavaScript numbers, and `JSON.stringify` writes `NaN`, `Infinity` and `-Infinity` as `null`. `toJson` (`src/tools/result.ts`) and `rowsToJson` (`src/top-queries/top-queries-calc.ts`) therefore return `'NaN'::float8` and `'Infinity'::float8` as `null`, alone or in an array, and an agent cannot tell them from NULL. `'NaN'::numeric` is not affected, because `numeric` stays a string. Write the three values as the strings `"NaN"`, `"Infinity"` and `"-Infinity"`.
-
-## 2026-11-28 · Minor · Bug · Numbers beyond a double are returned inconsistently or rounded
-
-_BREAKING CHANGE REQUIRED_
-
-`customTypes` in `src/sql/sql-driver.ts` parses a scalar `int8` to a `number` when it is safe and a `bigint` otherwise, and `toJson` (`src/tools/result.ts`) writes a `bigint` as a string. Everything else uses the `pg` defaults. `execute_sql` then returns:
-
-- `int8` as a JSON number up to 2^53 and as a string above it, so one column can hold both.
-- `int8[]` as an array of strings, whatever the values.
-- `numeric[]` as an array of JavaScript numbers: `12345678901234567890.123456789` comes back as `12345678901234567000`, while a scalar `numeric` is an exact string.
-- An integer above 2^53 inside `json` or `jsonb` rounded, because `pg` runs `JSON.parse` on the column: `{"n": 9007199254740993}` comes back with `9007199254740992`.
-
-Decide one rule for `int8` (always a string, or a number when safe) and apply it to the array type; parse `numeric[]` to strings; return `json` and `jsonb` as the text Postgres sends, or parse them without losing digits. `rowsToJson` in `src/top-queries/top-queries-calc.ts` repeats the `bigint` replacer of `toJson` and should use it. A changed type is a breaking change (`feat!`).
-
-## 2026-11-28 · Minor · Bug · `bytea` values are returned as a `Buffer` object
-
-_BREAKING CHANGE REQUIRED_
-
-`pg` parses `bytea` into a `Buffer`, which `toJson` (`src/tools/result.ts`) writes through `Buffer.toJSON`: `'\xdeadbeef'::bytea` comes back as `{"type":"Buffer","data":[222,173,190,239]}`, one array element per byte, also inside a `bytea[]`. A column of small binary values fills an agent's context, and the output is not something Postgres accepts back. Return the hex text Postgres sends (`\xdeadbeef`).
-
-## 2026-11-28 · Minor · Feature · `interval`, `point` and `circle` are returned as driver objects
-
-_BREAKING CHANGE REQUIRED_
-
-`pg` parses three types into its own objects, which `toJson` (`src/tools/result.ts`) writes as they are: `interval '1 year 2 mons 3 days 04:05:06.789'` as `{"years":1,"months":2,"days":3,"hours":4,"minutes":5,"seconds":6,"milliseconds":789}`, `point '(1,2)'` as `{"x":1,"y":2}` and `circle '<(1,2),3>'` as `{"x":1,"y":2,"radius":3}`. Every other geometric type, and every range, comes back as Postgres text (`box` as `"(1,1),(0,0)"`), and none of the three objects can be pasted back into SQL. Return the text Postgres sends for these three and their arrays. It changes tool output (`feat!`).
-
-## 2026-11-28 · Major · Tests · No test covers how `execute_sql` returns each Postgres type
-
-No test checks the JSON a value of any type comes back as. The unit tests replace `pg` (`tests/support/fake-pool.ts`), so the type parsers never run, and no integration test reads a typed value. The five type entries above were found by hand. Add one integration test that selects literals through `execute_sql` and compares the returned JSON, covering at least:
-
-- `int8` below and above 2^53, `int8[]`, `numeric`, `numeric[]`, `numeric 'NaN'`, `float8` with `NaN` and both infinities, `money`, `oid`, `xid8`.
-- `date`, `timestamp`, `timestamptz` with microseconds, their `infinity` values, a BC date, `time`, `timetz`, `interval`, and an array of each date and time type. Run it with `TZ` set to a zone other than UTC, or it cannot see the shift.
-- `json` and `jsonb` holding an integer above 2^53, and `jsonb[]`.
-- `bytea` and `bytea[]`.
-- `uuid`, `inet`, `macaddr`, `bit`, `point`, `circle`, `box`, a range, a multirange (Postgres 14 and later), `tsvector`, `xml`, a composite row, an enum and an array of an enum.
-- NULL, a text array holding NULL and the string `NULL`, a boolean array and a two-dimensional array.
-
-Arrays of enums and of other user-defined types have not been checked at all; `pg` has no parser for them, so they probably come back as one string such as `{a,b}`.
-
 ## 2026-11-28 · Minor · Bug · The index advisor never uses a column's most common value as a range bound
 
 `boundValues` in `src/sql/bind-params.ts` picks a range bound from the most common values and their frequencies, then from the histogram, and had a last fallback to the first most common value. That fallback read `most_common_vals`, which `STATS_QUERY` selects as `common_vals`, so it never fired and was dropped when the statistics got a typed interface. When the frequencies are missing or do not match the values, the advisor falls back to a type default although a real value is available. Restore the fallback on the typed `commonVals` field, with a test, and check that the advisor results for the integration workload still make sense.
@@ -404,3 +346,9 @@ The per-sequence `SELECT … FROM <sequence>` in `src/database-health/sequence-h
 ## 2026-11-28 · Minor · Refactor · Replication health keeps branches for servers before PostgreSQL 10
 
 `ReplicationCalc` (`src/database-health/replication-calc.ts`) reads `server_version_num` itself and keeps `pg_last_xlog_*` and pre-9.4 slot branches. Decide the oldest supported server, delete the dead branches, and use `getPostgresVersion` (`src/sql/extension-utils.ts`) if a version check remains.
+
+## 2026-11-28 · Minor · Bug · Arrays of user-defined types come back as one string
+
+_BREAKING CHANGE REQUIRED_
+
+`pg` has parsers only for built-in array types, and `customTypes` in `src/sql/type-parsers.ts` covers built-in OIDs only, so an array of an enum, domain or composite type reaches `execute_sql` output as the Postgres array literal in one string: `ARRAY['a','b']::my_enum[]` returns `"{a,b}"`, while a `text[]` returns `["a","b"]`. Their OIDs differ per database, so a parser has to be chosen at query time, for example from the field's `typcategory` or by `typelem` lookup per pool. `tests/integration/value-types.test.ts` pins the current form.

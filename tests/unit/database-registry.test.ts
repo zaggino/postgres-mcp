@@ -5,6 +5,7 @@ import { DatabaseAccessError, DatabaseRegistry } from '../../src/database-regist
 import { AccessMode, getSqlDriver } from '../../src/sql/driver-factory.ts';
 import { getPostgresVersion, resetPostgresVersionCache } from '../../src/sql/extension-utils.ts';
 import type { SqlExecutor } from '../../src/sql/safe-sql.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { DbConnPool } from '../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../support/fake-executor.ts';
 import type { QueryHandler } from '../support/fake-pool.ts';
@@ -48,7 +49,7 @@ function registry(options: Partial<RegistryOptions>) {
   });
 }
 
-const query = (driver: SqlExecutor) => driver.executeQuery('SELECT 1 AS one');
+const query = (driver: SqlExecutor) => queryRows(driver, 'SELECT 1 AS one');
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -445,7 +446,7 @@ test('keeps the version cache separate for each connection pool', async () => {
 test('caches the version per executor when the executor has no pool', async () => {
   const executor = (version: string) => {
     const driver: SqlExecutor = fakeExecutor(() => [{ server_version: version }]);
-    return { executeQuery: driver.executeQuery, driver };
+    return { executeResultSet: driver.executeResultSet, driver };
   };
   const a = executor('15.4');
   const b = executor('16.2');
@@ -457,5 +458,5 @@ test('caches the version per executor when the executor has no pool', async () =
   ];
 
   expect(versions).toEqual([15, 15, 16]);
-  expect(a.executeQuery).toHaveBeenCalledOnce();
+  expect(a.executeResultSet).toHaveBeenCalledOnce();
 });

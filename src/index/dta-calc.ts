@@ -2,11 +2,12 @@ import { errorMessage } from '../errors.ts';
 import { isJsonObject } from '../json.ts';
 import { formatFixed, formatPercent, naturalSize, pyFloatStr } from '../py-format.ts';
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
-import { boolean, integer, nullableInteger, text } from '../sql/cells.ts';
+import * as cell from '../sql/cells.ts';
 import { literal } from '../sql/literal.ts';
 import { AstNode, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
-import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 import type { IndexConfiguration, QueryWeight } from './index-opt-base.ts';
 import { candidateStr, IndexRecommendation, IndexTuningBase } from './index-opt-base.ts';
 
@@ -82,10 +83,10 @@ interface LongTextRow {
 
 function toLongTextRow(row: Row): LongTextRow {
   return {
-    tableName: text(row, 'table_name'),
-    columnName: text(row, 'column_name'),
-    avgWidth: nullableInteger(row, 'avg_width'),
-    potentialLongText: boolean(row, 'potential_long_text'),
+    tableName: cell.text(row, 'table_name'),
+    columnName: cell.text(row, 'column_name'),
+    avgWidth: cell.nullableInteger(row, 'avg_width'),
+    potentialLongText: cell.boolean(row, 'potential_long_text'),
   };
 }
 
@@ -99,10 +100,10 @@ export interface ExistingIndex {
 
 function toExistingIndex(row: Row): ExistingIndex {
   return {
-    schema: text(row, 'schema'),
-    table: text(row, 'table'),
-    name: text(row, 'name'),
-    definition: text(row, 'definition'),
+    schema: cell.text(row, 'schema'),
+    table: cell.text(row, 'table'),
+    name: cell.text(row, 'name'),
+    definition: cell.text(row, 'definition'),
   };
 }
 
@@ -279,11 +280,12 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     );
 
     // Get estimated sizes without resetting indexes yet
-    const result = await this.sqlDriver.executeQuery(
+    const result = await queryRows(
+      this.sqlDriver,
       'SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;'
     );
     if (result.length > 0) {
-      const indexMap = new Map(result.map((r) => [text(r, 'index_name'), integer(r, 'index_size')]));
+      const indexMap = new Map(result.map((r) => [cell.text(r, 'index_name'), cell.integer(r, 'index_size')]));
       for (const idx of candidates) {
         const size = indexMap.get(idx.name);
         if (size !== undefined) {
@@ -292,7 +294,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
       }
     }
 
-    await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
+    await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
   }
 
   /**
@@ -580,7 +582,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
             AND c.column_name IN (${columnsArray})
         `;
 
-    const result = (await this.sqlDriver.executeQuery(typeQuery)).map(toLongTextRow);
+    const result = (await queryRows(this.sqlDriver, typeQuery)).map(toLongTextRow);
 
     if (result.length === 0) {
       return [];
@@ -625,7 +627,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
         ORDER BY schemaname, tablename, indexname
         `;
-    const result = await this.sqlDriver.executeQuery(query);
+    const result = await queryRows(this.sqlDriver, query);
     return result.map(toExistingIndex);
   }
 

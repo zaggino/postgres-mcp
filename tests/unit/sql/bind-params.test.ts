@@ -2,7 +2,8 @@ import { expect, test } from 'vitest';
 
 import { SqlBindParams, TableAliasVisitor } from '../../../src/sql/bind-params.ts';
 import { AstNode, parseSql } from '../../../src/sql/pg-ast.ts';
-import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const noDatabase: SqlExecutor = fakeExecutor(() => []);

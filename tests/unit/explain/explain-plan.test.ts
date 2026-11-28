@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorResult, ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import { ExplainPlanTool } from '../../../src/explain/explain-plan.ts';
 import { resetPostgresVersionCache } from '../../../src/sql/extension-utils.ts';
-import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { ResultSet, Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const bindParams = vi.hoisted(() => ({ replacement: '' }));
@@ -17,22 +18,24 @@ vi.mock('../../../src/sql/bind-params.ts', () => ({
   },
 }));
 
-type ExecuteQuery = SqlExecutor['executeQuery'];
+type ExecuteResultSet = SqlExecutor['executeResultSet'];
 
-function cell(data: Row): Row[] {
-  return [data];
+function cell(data: Row): ResultSet {
+  return { columns: Object.keys(data), rows: [data] };
 }
+
+const noResultSet: ResultSet = { columns: [], rows: [] };
 
 function createDriver(): {
   driver: SqlExecutor;
-  executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>;
+  executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSet>>;
 } {
   const driver = fakeExecutor(() => []);
-  return { driver, executeQuery: driver.executeQuery };
+  return { driver, executeResultSet: driver.executeResultSet };
 }
 
-function queries(executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>) {
-  return executeQuery.mock.calls.map(([query]) => query);
+function queries(executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSet>>) {
+  return executeResultSet.mock.calls.map(([query]) => query);
 }
 
 const seqScanPlan = {
@@ -84,13 +87,13 @@ describe(ExplainPlanTool, () => {
   });
 
   it('explains a query without bind variables using plain FORMAT JSON', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue(cell({ 'QUERY PLAN': [seqScanPlan] }));
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockResolvedValue(cell({ 'QUERY PLAN': [seqScanPlan] }));
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
-    expect(executeQuery).toHaveBeenCalledOnce();
-    expect(queries(executeQuery)[0]).toContain('EXPLAIN (FORMAT JSON) SELECT * FROM users');
+    expect(executeResultSet).toHaveBeenCalledOnce();
+    expect(queries(executeResultSet)[0]).toContain('EXPLAIN (FORMAT JSON) SELECT * FROM users');
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     expect(result).toMatchObject({
       value: JSON.stringify(seqScanPlan, null, 2),
@@ -98,8 +101,8 @@ describe(ExplainPlanTool, () => {
   });
 
   it('uses GENERIC_PLAN for bind variables on PostgreSQL 16', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockImplementation((query) =>
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockImplementation((query) =>
       Promise.resolve(
         query === 'SHOW server_version' ? cell({ server_version: '16.0' }) : cell({ 'QUERY PLAN': [seqScanPlan] })
       )
@@ -108,27 +111,27 @@ describe(ExplainPlanTool, () => {
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users WHERE id = $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
-    const explainCall = queries(executeQuery).find((q) => q.includes('EXPLAIN'));
+    const explainCall = queries(executeResultSet).find((q) => q.includes('EXPLAIN'));
     expect(explainCall).toContain('EXPLAIN (FORMAT JSON, GENERIC_PLAN) SELECT * FROM users WHERE id = $1');
   });
 
   it('replaces bind variables instead of using GENERIC_PLAN on PostgreSQL 15', async () => {
     bindParams.replacement = 'SELECT * FROM users WHERE id = 42';
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockImplementation((query) => {
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockImplementation((query) => {
       if (query === 'SHOW server_version') {
         return Promise.resolve(cell({ server_version: '15.4' }));
       }
       if (query.includes('EXPLAIN') && query.includes('id = 42')) {
         return Promise.resolve(cell({ 'QUERY PLAN': [seqScanPlan] }));
       }
-      return Promise.resolve([]);
+      return Promise.resolve(noResultSet);
     });
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users WHERE id = $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
-    const sent = queries(executeQuery);
+    const sent = queries(executeResultSet);
     expect(sent.some((q) => q.includes('server_version'))).toBe(true);
     const explainCall = sent.find((q) => q.includes('EXPLAIN'));
     expect(explainCall).toBeDefined();
@@ -138,29 +141,29 @@ describe(ExplainPlanTool, () => {
 
   it('explain analyze with bind variables uses parameter replacement', async () => {
     bindParams.replacement = 'SELECT * FROM users WHERE id = 42';
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockImplementation((query) =>
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockImplementation((query) =>
       Promise.resolve(
-        query.includes('EXPLAIN') && query.includes('id = 42') ? cell({ 'QUERY PLAN': [analyzedPlan] }) : []
+        query.includes('EXPLAIN') && query.includes('id = 42') ? cell({ 'QUERY PLAN': [analyzedPlan] }) : noResultSet
       )
     );
 
     const result = await new ExplainPlanTool(driver).explainAnalyze('SELECT * FROM users WHERE id = $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
-    const lastQuery = queries(executeQuery).at(-1);
+    const lastQuery = queries(executeResultSet).at(-1);
     expect(lastQuery).toContain('ANALYZE');
     expect(lastQuery).not.toContain('GENERIC_PLAN');
     expect(lastQuery).toContain('id = 42');
   });
 
   it('explain analyze sends FORMAT JSON, ANALYZE and returns the plan', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue(cell({ 'QUERY PLAN': [analyzedPlan] }));
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockResolvedValue(cell({ 'QUERY PLAN': [analyzedPlan] }));
 
     const result = await new ExplainPlanTool(driver).explainAnalyze('SELECT * FROM users');
 
-    expect(queries(executeQuery).at(-1)).toContain('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
+    expect(queries(executeResultSet).at(-1)).toContain('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
     expect(result).toMatchObject({
       value: JSON.stringify(analyzedPlan, null, 2),
@@ -168,8 +171,8 @@ describe(ExplainPlanTool, () => {
   });
 
   it('returns an error result when the database fails', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockRejectedValue(new Error('Database error'));
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockRejectedValue(new Error('Database error'));
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
@@ -178,8 +181,8 @@ describe(ExplainPlanTool, () => {
   });
 
   it('rejects a QUERY PLAN that is not a list', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue(cell({ 'QUERY PLAN': 'invalid' }));
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockResolvedValue(cell({ 'QUERY PLAN': 'invalid' }));
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
@@ -188,8 +191,8 @@ describe(ExplainPlanTool, () => {
   });
 
   it('reports no results when EXPLAIN returns no rows', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue([]);
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockResolvedValue({ columns: [], rows: [] });
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
@@ -198,8 +201,8 @@ describe(ExplainPlanTool, () => {
   });
 
   it('reports no results when QUERY PLAN is an empty list', async () => {
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue(cell({ 'QUERY PLAN': [] }));
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockResolvedValue(cell({ 'QUERY PLAN': [] }));
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
@@ -209,21 +212,21 @@ describe(ExplainPlanTool, () => {
 
   it('replaces bind variables for LIKE queries even on PostgreSQL 16', async () => {
     bindParams.replacement = "SELECT * FROM users WHERE name LIKE '%John%'";
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockImplementation((query) => {
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockImplementation((query) => {
       if (query === 'SHOW server_version') {
         return Promise.resolve(cell({ server_version: '16.0' }));
       }
       if (query.includes('EXPLAIN') && query.includes("LIKE '%John%'")) {
         return Promise.resolve(cell({ 'QUERY PLAN': [seqScanPlan] }));
       }
-      return Promise.resolve([]);
+      return Promise.resolve(noResultSet);
     });
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users WHERE name LIKE $1');
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
-    const sent = queries(executeQuery);
+    const sent = queries(executeResultSet);
     expect(sent.some((q) => q.includes('server_version'))).toBe(true);
     const explainCall = sent.find((q) => q.includes('EXPLAIN'));
     expect(explainCall).toBeDefined();
@@ -243,9 +246,11 @@ describe(ExplainPlanTool, () => {
         'Plan Width': 20,
       },
     };
-    const { driver, executeQuery } = createDriver();
-    executeQuery.mockImplementation((query) =>
-      Promise.resolve(query.includes('hypopg_') || query.includes('EXPLAIN') ? cell({ 'QUERY PLAN': [indexPlan] }) : [])
+    const { driver, executeResultSet } = createDriver();
+    executeResultSet.mockImplementation((query) =>
+      Promise.resolve(
+        query.includes('hypopg_') || query.includes('EXPLAIN') ? cell({ 'QUERY PLAN': [indexPlan] }) : noResultSet
+      )
     );
 
     const sqlQuery = `
@@ -262,7 +267,7 @@ describe(ExplainPlanTool, () => {
     ]);
 
     expect(result).toBeInstanceOf(ExplainPlanArtifact);
-    const explainCalls = queries(executeQuery).filter((q) => q.includes('EXPLAIN'));
+    const explainCalls = queries(executeResultSet).filter((q) => q.includes('EXPLAIN'));
     expect(explainCalls).toHaveLength(1);
     const [explainCall] = explainCalls;
     expect(explainCall).toContain('SELECT hypopg_reset();');

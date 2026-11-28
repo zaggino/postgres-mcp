@@ -1,6 +1,7 @@
-import { boolean, integer, nullableText, numeric, text } from '../sql/cells.ts';
-import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import * as cell from '../sql/cells.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface IndexInfo {
   columns: string[];
@@ -72,21 +73,22 @@ function bytesToMb(bytes: number): number {
 
 function toIndexInfo(row: Row): IndexInfo {
   // Unquote column names
-  const columns = text(row, 'columns')
+  const columns = cell
+    .text(row, 'columns')
     .replace(') WHERE (', ' WHERE ')
     .split(', ')
     .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
   return {
-    schema: text(row, 'schema'),
-    table: text(row, 'table'),
-    name: text(row, 'name'),
+    schema: cell.text(row, 'schema'),
+    table: cell.text(row, 'table'),
+    name: cell.text(row, 'name'),
     columns,
-    using: text(row, 'using'),
-    unique: boolean(row, 'unique'),
-    primary: boolean(row, 'primary'),
-    valid: boolean(row, 'valid'),
-    indexprs: nullableText(row, 'indexprs'),
-    indpred: nullableText(row, 'indpred'),
+    using: cell.text(row, 'using'),
+    unique: cell.boolean(row, 'unique'),
+    primary: cell.boolean(row, 'primary'),
+    valid: cell.boolean(row, 'valid'),
+    indexprs: cell.nullableText(row, 'indexprs'),
+    indpred: cell.nullableText(row, 'indpred'),
   };
 }
 
@@ -302,10 +304,10 @@ export class IndexHealthCalc {
 
     const result = ['Bloated indexes found:'];
     for (const row of bloatedIndexes) {
-      const bloatMb = bytesToMb(numeric(row, 'bloat_bytes'));
-      const totalMb = bytesToMb(numeric(row, 'index_bytes'));
+      const bloatMb = bytesToMb(cell.numeric(row, 'bloat_bytes'));
+      const totalMb = bytesToMb(cell.numeric(row, 'index_bytes'));
       result.push(
-        `Index '${text(row, 'index')}' on table '${text(row, 'table')}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
+        `Index '${cell.text(row, 'index')}' on table '${cell.text(row, 'table')}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
       );
     }
 
@@ -318,7 +320,9 @@ export class IndexHealthCalc {
     }
 
     // Get index information
-    const results = await this.sqlDriver.executeQuery(`
+    const results = await queryRows(
+      this.sqlDriver,
+      `
             SELECT
                 schemaname AS schema,
                 t.relname AS table,
@@ -343,7 +347,8 @@ export class IndexHealthCalc {
                 schemaname IS NOT NULL
             ORDER BY
                 1, 2
-        `);
+        `
+    );
 
     const indexes = results.map(toIndexInfo);
 
@@ -384,12 +389,12 @@ export class IndexHealthCalc {
 
     const result = ['Rarely used indexes found:'];
     for (const row of unused) {
-      if (boolean(row, 'primary')) {
+      if (cell.boolean(row, 'primary')) {
         continue;
       }
-      const sizeMb = bytesToMb(integer(row, 'size_bytes'));
+      const sizeMb = bytesToMb(cell.integer(row, 'size_bytes'));
       result.push(
-        `Index '${text(row, 'index')}' on table '${text(row, 'table')}' has only been scanned ${integer(row, 'index_scans')} times and uses ${sizeMb.toFixed(1)}MB of space`
+        `Index '${cell.text(row, 'index')}' on table '${cell.text(row, 'table')}' has only been scanned ${cell.integer(row, 'index_scans')} times and uses ${sizeMb.toFixed(1)}MB of space`
       );
     }
 

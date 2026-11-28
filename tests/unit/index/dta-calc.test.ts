@@ -6,7 +6,8 @@ import type { QueryWeight } from '../../../src/index/index-opt-base.ts';
 import { IndexRecommendation, IndexTuningBase } from '../../../src/index/index-opt-base.ts';
 import { ColumnCollector, PgFloat } from '../../../src/sql/bind-params.ts';
 import { AstNode, loadParser, parseSql } from '../../../src/sql/pg-ast.ts';
-import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const ID_FALLBACK_PATTERN = /id = (?:46|'46')/u;
@@ -216,7 +217,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
 
 test('analyze workload reports a failing database and tolerates invalid SQL', async () => {
   const driver = createDriver();
-  driver.executeQuery.mockRejectedValue(new Error('HypoPG not available'));
+  driver.executeResultSet.mockRejectedValue(new Error('HypoPG not available'));
   const dta = createAdvisor(driver);
 
   const session = await dta.analyzeWorkload({
@@ -225,7 +226,7 @@ test('analyze workload reports a failing database and tolerates invalid SQL', as
   });
   expect(session.error).toContain('HypoPG not available');
 
-  driver.executeQuery.mockResolvedValue([]);
+  driver.executeResultSet.mockResolvedValue({ columns: [], rows: [] });
   const columns = await dta.sqlBindParams.extractColumns('INVALID SQL');
   expect(toRecord(columns)).toEqual({});
 });
@@ -396,7 +397,7 @@ test('filterLongTextColumns quotes table and column names in the catalog lookup'
 
   await dta.filterLongTextColumns([new IndexRecommendation("o'brien", ["it's"])], 100);
 
-  const query = String(driver.executeQuery.mock.calls[0]?.[0]);
+  const query = String(driver.executeResultSet.mock.calls[0]?.[0]);
   expect(query).toContain("c.table_name IN ('o''brien')");
   expect(query).toContain("c.column_name IN ('it''s')");
 });

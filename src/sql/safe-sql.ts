@@ -12,7 +12,7 @@ import type { Identifier } from './literal.ts';
 import { paramSqlToQuery } from './literal.ts';
 import type { RawStmtJson } from './pg-ast.ts';
 import { asWrappedNode, parseSql, SqlParseError } from './pg-ast.ts';
-import type { DbConnPool } from './sql-driver.ts';
+import type { DbConnPool, ResultSet, Row } from './sql-driver.ts';
 import { QueryTimeoutError } from './sql-driver.ts';
 
 const PG_CATALOG_PATTERN = /^pg_catalog\.(?<name>.+)$/u;
@@ -29,23 +29,21 @@ export class RestrictedQueryTimeoutError extends QueryTimeoutError {
   }
 }
 
-/** One result row, keyed by column name, with values as pg's type parsers produce them. */
-export type Row = Record<string, unknown>;
-
-/** The last statement's result: column names, then rows. No columns means the statement returned no result set. */
-export interface ResultSet {
-  columns: readonly string[];
-  rows: Row[];
-}
-
 /** What SafeSqlDriver wraps; a SqlDriver satisfies it. */
 export interface SqlExecutor {
   /** The connection pool behind the executor, when it has one; keys per-connection caches. */
   readonly pool?: DbConnPool;
-  /** Rows of the last statement's result; empty when it returned no rows or no result set. */
-  executeQuery: (query: string, params?: readonly unknown[] | null, forceReadonly?: boolean) => Promise<Row[]>;
-  /** The last statement's columns and rows; only execute_sql needs to tell "no result set" from "no rows". */
+  /** The last statement's columns and rows; no columns means it returned no result set. */
   executeResultSet: (query: string, params?: readonly unknown[] | null, forceReadonly?: boolean) => Promise<ResultSet>;
+}
+
+/** The rows of the last statement's result; empty when it returned no rows or no result set. */
+export async function queryRows(
+  executor: SqlExecutor,
+  query: string,
+  params?: readonly unknown[] | null
+): Promise<Row[]> {
+  return (await executor.executeResultSet(query, params)).rows;
 }
 
 function functionName(funcname: unknown): string {
@@ -224,10 +222,6 @@ export class SafeSqlDriver implements SqlExecutor {
     }
   }
 
-  async executeQuery(query: string, params: readonly unknown[] | null = null, _forceReadonly = true): Promise<Row[]> {
-    return (await this.executeResultSet(query, params)).rows;
-  }
-
   static sqlToQuery(sql: string | Identifier): string {
     return typeof sql === 'string' ? sql : sql.toSql();
   }
@@ -238,8 +232,8 @@ export class SafeSqlDriver implements SqlExecutor {
 
   static executeParamQuery(sqlDriver: SqlExecutor, query: string, params?: readonly unknown[] | null): Promise<Row[]> {
     if (params && params.length > 0) {
-      return sqlDriver.executeQuery(SafeSqlDriver.paramSqlToQuery(query, params));
+      return queryRows(sqlDriver, SafeSqlDriver.paramSqlToQuery(query, params));
     }
-    return sqlDriver.executeQuery(query);
+    return queryRows(sqlDriver, query);
   }
 }

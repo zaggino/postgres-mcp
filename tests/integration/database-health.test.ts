@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { DatabaseHealthTool } from '../../src/database-health/database-health.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
@@ -98,15 +99,15 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
     'ANALYZE "UpperCaseOrders"',
   ];
   for (const statement of statements) {
-    await sqlDriver.executeQuery(statement);
+    await queryRows(sqlDriver, statement);
   }
 }
 
 async function cleanupTestTables(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS "UpperCaseOrders"');
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
-  await sqlDriver.executeQuery('DROP SEQUENCE IF EXISTS test_seq');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_orders');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS "UpperCaseOrders"');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_customers');
+  await queryRows(sqlDriver, 'DROP SEQUENCE IF EXISTS test_seq');
 }
 
 describeWithPostgres('database health with a real database', (postgres) => {
@@ -151,17 +152,17 @@ describeWithPostgres('database health with a real database', (postgres) => {
 
   test('reports a smallint sequence near its maximum next to a never-used sequence', async () => {
     try {
-      await sqlDriver.executeQuery('CREATE TABLE test_small_ids (id SMALLSERIAL PRIMARY KEY)');
-      await sqlDriver.executeQuery('CREATE TABLE test_unused_ids (id SERIAL PRIMARY KEY)');
-      await sqlDriver.executeQuery("SELECT setval('test_small_ids_id_seq', 32000)");
+      await queryRows(sqlDriver, 'CREATE TABLE test_small_ids (id SMALLSERIAL PRIMARY KEY)');
+      await queryRows(sqlDriver, 'CREATE TABLE test_unused_ids (id SERIAL PRIMARY KEY)');
+      await queryRows(sqlDriver, "SELECT setval('test_small_ids_id_seq', 32000)");
 
       const healthReport = await new DatabaseHealthTool(sqlDriver).health('sequence');
 
       expect(healthReport).toContain("Sequence 'public.test_small_ids_id_seq' used for test_small_ids.id");
       expect(healthReport).not.toContain('Error');
     } finally {
-      await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_small_ids');
-      await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_unused_ids');
+      await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_small_ids');
+      await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_unused_ids');
     }
   });
 });

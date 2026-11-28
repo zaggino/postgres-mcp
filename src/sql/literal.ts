@@ -1,7 +1,5 @@
 import pg from 'pg';
 
-import { cellText } from './cells.ts';
-
 /** Marker for a quoted SQL identifier, usable as a `{}` parameter. */
 export class Identifier {
   readonly parts: readonly string[];
@@ -17,6 +15,28 @@ export class Identifier {
 
 export function identifier(...parts: string[]): Identifier {
   return new Identifier(parts);
+}
+
+/**
+ * Text for a value pg produced, for writing it into SQL: JSON for objects and arrays (parsed json and jsonb), ISO 8601
+ * for dates, and the plain string form for anything else.
+ */
+function cellText(cell: unknown): string {
+  if (typeof cell === 'string') {
+    return cell;
+  }
+  if (typeof cell === 'number' || typeof cell === 'bigint' || typeof cell === 'boolean') {
+    return String(cell);
+  }
+  if (cell instanceof Date) {
+    return cell.toISOString();
+  }
+  // JSON.stringify gives undefined for undefined, functions and symbols, none of which pg produces.
+  const json: string | undefined = JSON.stringify(cell);
+  if (json === undefined) {
+    throw new TypeError(`Cannot write a value of type ${typeof cell} as text`);
+  }
+  return json;
 }
 
 function arrayElement(value: unknown): string {

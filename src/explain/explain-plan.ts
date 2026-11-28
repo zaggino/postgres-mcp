@@ -4,11 +4,11 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyTypeName } from '../py-format.ts';
 import { SqlBindParams } from '../sql/bind-params.ts';
-import { value as cellValue } from '../sql/cells.ts';
+import * as cell from '../sql/cells.ts';
 import { checkPostgresVersionRequirement } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 
 const BIND_VARIABLE_PATTERN = /\$\d+/u;
 const LIKE_PATTERN = /\bLIKE\b/iu;
@@ -188,12 +188,12 @@ export class ExplainPlanTool {
       }
 
       const explainQ = `EXPLAIN (${explainOptions.join(', ')}) ${query}`;
-      const rows = await this.sqlDriver.executeQuery(explainQ);
+      const rows = await queryRows(this.sqlDriver, explainQ);
       const [firstRow] = rows;
       if (!firstRow) {
         return new ErrorResult('No results returned from EXPLAIN');
       }
-      const queryPlanData = parsePlanColumn(cellValue(firstRow, 'QUERY PLAN'));
+      const queryPlanData = parsePlanColumn(cell.value(firstRow, 'QUERY PLAN'));
 
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
@@ -246,7 +246,7 @@ export class ExplainPlanTool {
       }
 
       const explainPlanQuery = `${createIndexesQuery}EXPLAIN (${explainOptions.join(', ')}) ${queryText}`;
-      const planResult = await this.sqlDriver.executeQuery(explainPlanQuery);
+      const planResult = await queryRows(this.sqlDriver, explainPlanQuery);
 
       // The tracer is mandatory on every path that reaches the trace calls
       const trace = (message: string): void => {

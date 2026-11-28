@@ -3,7 +3,7 @@ import { logLine } from '../log.ts';
 import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 
 export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
@@ -188,7 +188,7 @@ export class TopQueriesCalc {
                 ORDER BY total_exec_time DESC
             `;
 
-      const slowQueryRows = await this.sqlDriver.executeQuery(query);
+      const slowQueryRows = await queryRows(this.sqlDriver, query);
 
       return rowsToJson(slowQueryRows);
     } catch (error) {

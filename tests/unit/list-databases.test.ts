@@ -1,6 +1,7 @@
 import { expect, it as test } from 'vitest';
 
 import { createServer } from '../../src/server.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { noRowsResult, rowsResult } from '../support/fake-pool.ts';
 import { callToolText, connectClient } from '../support/mcp-client.ts';
 import { createTestRegistry } from '../support/registry.ts';
@@ -104,12 +105,25 @@ test('a connection error stays listed after its pool closes, through a call canc
       throw new Error('connection refused');
     },
   });
-  await expect(registry.use('a', (driver) => driver.executeQuery('SELECT 2'))).rejects.toThrow('connection refused');
+  await expect(registry.use('a', (driver) => queryRows(driver, 'SELECT 2'))).rejects.toThrow('connection refused');
   await registry.closeAll();
 
   await expect(
-    registry.use('a', (driver) => driver.executeQuery('SELECT 2'), { signal: AbortSignal.abort() })
+    registry.use('a', (driver) => queryRows(driver, 'SELECT 2'), { signal: AbortSignal.abort() })
   ).rejects.toThrow('Query cancelled');
 
   expect((await registry.list()).databases).toMatchObject([{ database: 'a', last_error: 'connection refused' }]);
+});
+
+test('execute_sql tells a statement with no result set from a SELECT that returns no rows', async () => {
+  const { registry } = createTestRegistry(['a'], {
+    handler: ({ text }) => [text.includes('SELECT') ? { rows: [], fields: [{ name: 'a' }] } : noRowsResult],
+  });
+  const client = await connectClient(createServer(registry));
+
+  const noResultSet = await callToolText(client, 'execute_sql', { database: 'a', sql: 'ANALYZE' });
+  const noRows = await callToolText(client, 'execute_sql', { database: 'a', sql: 'SELECT 1 AS a WHERE false' });
+
+  expect(noResultSet).toBe('No results');
+  expect(JSON.parse(noRows)).toEqual([]);
 });

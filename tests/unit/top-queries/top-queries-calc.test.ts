@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtensionStatus } from '../../../src/sql/extension-utils.ts';
-import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
 import { TopQueriesCalc } from '../../../src/top-queries/top-queries-calc.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
@@ -12,7 +13,7 @@ const extensionUtils = vi.hoisted(() => ({
 
 vi.mock('../../../src/sql/extension-utils.ts', () => extensionUtils);
 
-type ExecuteQuery = SqlExecutor['executeQuery'];
+type ExecuteResultSet = SqlExecutor['executeResultSet'];
 
 function row(cells: Row): Row {
   return cells;
@@ -31,7 +32,7 @@ function extensionStatus(isInstalled: boolean): ExtensionStatus {
 /** A driver that simulates the given PostgreSQL major version. */
 function createDriver(pgVersion: number): {
   driver: SqlExecutor;
-  executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>;
+  executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSet>>;
 } {
   extensionUtils.getPostgresVersion.mockResolvedValue(pgVersion);
   const [total, mean] = pgVersion >= 13 ? ['total_exec_time', 'mean_exec_time'] : ['total_time', 'mean_time'];
@@ -62,11 +63,11 @@ function createDriver(pgVersion: number): {
         ]
       : undefined
   );
-  return { driver, executeQuery: driver.executeQuery };
+  return { driver, executeResultSet: driver.executeResultSet };
 }
 
-function executedQuery(executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>): string {
-  return String(executeQuery.mock.lastCall?.[0]);
+function executedQuery(executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSet>>): string {
+  return String(executeResultSet.mock.lastCall?.[0]);
 }
 
 describe(TopQueriesCalc, () => {
@@ -76,63 +77,63 @@ describe(TopQueriesCalc, () => {
   });
 
   it('sorts by total_time on PostgreSQL 12 when sorting by total', async () => {
-    const { driver, executeQuery } = createDriver(12);
+    const { driver, executeResultSet } = createDriver(12);
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3, 'total');
 
     expect(result).toContain('Top 3 slowest queries by total execution time');
     expect(result).toContain('SELECT * FROM users');
-    expect(executedQuery(executeQuery)).toContain('total_time');
-    expect(executedQuery(executeQuery)).toContain('ORDER BY total_time DESC');
+    expect(executedQuery(executeResultSet)).toContain('total_time');
+    expect(executedQuery(executeResultSet)).toContain('ORDER BY total_time DESC');
   });
 
   it('sorts by mean_time on PostgreSQL 12 when sorting by mean', async () => {
-    const { driver, executeQuery } = createDriver(12);
+    const { driver, executeResultSet } = createDriver(12);
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3, 'mean');
 
     expect(result).toContain('Top 3 slowest queries by mean execution time per call');
     expect(result).toContain('SELECT * FROM orders');
-    expect(executedQuery(executeQuery)).toContain('mean_time');
-    expect(executedQuery(executeQuery)).toContain('ORDER BY mean_time DESC');
+    expect(executedQuery(executeResultSet)).toContain('mean_time');
+    expect(executedQuery(executeResultSet)).toContain('ORDER BY mean_time DESC');
   });
 
   it('sorts by total_exec_time on PostgreSQL 13 when sorting by total', async () => {
-    const { driver, executeQuery } = createDriver(13);
+    const { driver, executeResultSet } = createDriver(13);
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3, 'total');
 
     expect(result).toContain('Top 3 slowest queries by total execution time');
     expect(result).toContain('SELECT * FROM users');
-    expect(executedQuery(executeQuery)).toContain('total_exec_time');
-    expect(executedQuery(executeQuery)).toContain('ORDER BY total_exec_time DESC');
+    expect(executedQuery(executeResultSet)).toContain('total_exec_time');
+    expect(executedQuery(executeResultSet)).toContain('ORDER BY total_exec_time DESC');
   });
 
   it('sorts by mean_exec_time on PostgreSQL 13 when sorting by mean', async () => {
-    const { driver, executeQuery } = createDriver(13);
+    const { driver, executeResultSet } = createDriver(13);
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3, 'mean');
 
     expect(result).toContain('Top 3 slowest queries by mean execution time per call');
     expect(result).toContain('SELECT * FROM orders');
-    expect(executedQuery(executeQuery)).toContain('mean_exec_time');
-    expect(executedQuery(executeQuery)).toContain('ORDER BY mean_exec_time DESC');
+    expect(executedQuery(executeResultSet)).toContain('mean_exec_time');
+    expect(executedQuery(executeResultSet)).toContain('ORDER BY mean_exec_time DESC');
   });
 
   it('returns installation instructions when the extension is not installed', async () => {
-    const { driver, executeQuery } = createDriver(13);
+    const { driver, executeResultSet } = createDriver(13);
     extensionUtils.checkExtension.mockResolvedValue(extensionStatus(false));
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
 
     expect(result).toContain('extension is required to report');
     expect(result).toContain('CREATE EXTENSION');
-    expect(executeQuery).not.toHaveBeenCalled();
+    expect(executeResultSet).not.toHaveBeenCalled();
   });
 
   it('reports a database error instead of throwing', async () => {
-    const { driver, executeQuery } = createDriver(13);
-    executeQuery.mockRejectedValue(new Error('Database error'));
+    const { driver, executeResultSet } = createDriver(13);
+    executeResultSet.mockRejectedValue(new Error('Database error'));
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
 
@@ -140,11 +141,11 @@ describe(TopQueriesCalc, () => {
   });
 
   it('aliases the PostgreSQL 12 columns and zeroes wal_bytes in resource queries', async () => {
-    const { driver, executeQuery } = createDriver(12);
+    const { driver, executeResultSet } = createDriver(12);
 
     await new TopQueriesCalc(driver).getTopResourceQueries(0.05);
 
-    const query = executedQuery(executeQuery);
+    const query = executedQuery(executeResultSet);
     expect(query).toContain('stddev_time AS stddev_exec_time');
     expect(query).toContain('total_time AS total_exec_time');
     expect(query).toContain('mean_time AS mean_exec_time');
@@ -152,20 +153,20 @@ describe(TopQueriesCalc, () => {
   });
 
   it('applies the given threshold to every resource fraction', async () => {
-    const { driver, executeQuery } = createDriver(13);
+    const { driver, executeResultSet } = createDriver(13);
 
     await new TopQueriesCalc(driver).getTopResourceQueries(0.25);
 
-    const query = executedQuery(executeQuery);
+    const query = executedQuery(executeResultSet);
     expect(query.match(/_frac > 0\.25/gu)).toHaveLength(5);
   });
 
   it('uses the PostgreSQL 13 columns and wal_bytes in resource queries', async () => {
-    const { driver, executeQuery } = createDriver(13);
+    const { driver, executeResultSet } = createDriver(13);
 
     await new TopQueriesCalc(driver).getTopResourceQueries(0.05);
 
-    const query = executedQuery(executeQuery);
+    const query = executedQuery(executeResultSet);
     expect(query).toContain('stddev_exec_time');
     expect(query).toContain('total_exec_time');
     expect(query).toContain('mean_exec_time');

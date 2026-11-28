@@ -7,7 +7,6 @@ import { errorMessage } from '../errors.ts';
 import { logLine } from '../log.ts';
 import type { QueuedPool } from './connection-queue.ts';
 import { PoolClosedError, queuedPool } from './connection-queue.ts';
-import type { ResultSet, Row } from './safe-sql.ts';
 
 const INT8_OID = 20;
 const URL_PREFIX = /^(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?<netloc>[^/?#]*)/u;
@@ -15,6 +14,15 @@ const EMBEDDED_URL = /(?<head>postgres(?:ql)?:\/\/[^:]+:)(?<password>[^@]+)(?<ta
 const PASSWORD_PARAM = /(?<key>password=)(?<value>[^\s&;"']+)/giu;
 const DSN_SINGLE_QUOTE = /(?<key>password\s*=\s*')(?<value>[^']+)(?<end>')/giu;
 const DSN_DOUBLE_QUOTE = /(?<key>password\s*=\s*")(?<value>[^"]+)(?<end>")/giu;
+
+/** One result row, keyed by column name, with values as pg's type parsers produce them. */
+export type Row = Record<string, unknown>;
+
+/** The last statement's result: column names, then rows. No columns means the statement returned no result set. */
+export interface ResultSet {
+  columns: readonly string[];
+  rows: Row[];
+}
 
 export interface QueryResultLike {
   fields: readonly { name: string }[];
@@ -600,10 +608,6 @@ export class SqlDriver {
 
   get pool(): DbConnPool | undefined {
     return this.conn;
-  }
-
-  async executeQuery(query: string, params?: readonly unknown[] | null, forceReadonly = false): Promise<Row[]> {
-    return (await this.executeResultSet(query, params, forceReadonly)).rows;
   }
 
   async executeResultSet(query: string, params?: readonly unknown[] | null, forceReadonly = false): Promise<ResultSet> {

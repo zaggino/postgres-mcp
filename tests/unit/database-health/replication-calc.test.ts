@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ReplicationCalc } from '../../../src/database-health/replication-calc.ts';
-import type { Row } from '../../../src/sql/safe-sql.ts';
+import type { Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 function replicaExecutor(options: { lags?: Row[][]; slots?: Row[] }) {

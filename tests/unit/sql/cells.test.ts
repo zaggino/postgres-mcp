@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  bigint,
-  cellText,
-  int8,
-  integer,
-  nullableNumberArray,
-  nullableText,
-  numeric,
-  text,
-} from '../../../src/sql/cells.ts';
+import { bigint, int8, integer, nullableNumberArray, nullableText, numeric, text } from '../../../src/sql/cells.ts';
 
 describe('cell readers', () => {
   it('reject a column the row does not have, naming it', () => {
@@ -38,14 +29,5 @@ describe('cell readers', () => {
   it('accept only arrays of numbers as a number array', () => {
     expect(nullableNumberArray({ freqs: [0.5, 0.25] }, 'freqs')).toEqual([0.5, 0.25]);
     expect(() => nullableNumberArray({ freqs: '{0.5}' }, 'freqs')).toThrow('expected array of numbers, got string');
-  });
-});
-
-describe(cellText, () => {
-  it('writes objects and arrays as JSON and dates as ISO 8601', () => {
-    expect(cellText({ a: [1, 2] })).toBe('{"a":[1,2]}');
-    expect(cellText([1, 2])).toBe('[1,2]');
-    expect(cellText(new Date('2026-01-02T03:04:05Z'))).toBe('2026-01-02T03:04:05.000Z');
-    expect(cellText(12n)).toBe('12');
   });
 });

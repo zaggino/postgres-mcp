@@ -1,24 +1,27 @@
 import { vi } from 'vitest';
 
-import type { ResultSet, Row, SqlExecutor } from '../../src/sql/safe-sql.ts';
+import type { SqlExecutor } from '../../src/sql/safe-sql.ts';
+import type { ResultSet, Row } from '../../src/sql/sql-driver.ts';
 
-/** Answers a query with rows; return `undefined` for a statement with no result set. */
-export type RowHandler = (
-  query: string,
-  params?: readonly unknown[] | null
-) => Row[] | undefined | Promise<Row[] | undefined>;
+/** Rows, a full result set (to express columns with zero rows), or `undefined` for a statement with no result set. */
+export type FakeResult = Row[] | ResultSet | undefined;
+export type RowHandler = (query: string, params?: readonly unknown[] | null) => FakeResult | Promise<FakeResult>;
 
-/** An executor whose `executeQuery` and `executeResultSet` are spies answering through `handler`. */
+function toResultSet(result: FakeResult): ResultSet {
+  if (result === undefined) {
+    return { columns: [], rows: [] };
+  }
+  if (Array.isArray(result)) {
+    return { columns: Object.keys(result[0] ?? {}), rows: result };
+  }
+  return result;
+}
+
+/** An executor whose `executeResultSet` is a spy answering through `handler`. */
 export function fakeExecutor(handler: RowHandler) {
   const executeResultSet = vi.fn(
-    async (query: string, params?: readonly unknown[] | null, _forceReadonly?: boolean): Promise<ResultSet> => {
-      const rows = await handler(query, params);
-      return { columns: rows ? Object.keys(rows[0] ?? {}) : [], rows: rows ?? [] };
-    }
+    async (query: string, params?: readonly unknown[] | null, _forceReadonly?: boolean): Promise<ResultSet> =>
+      toResultSet(await handler(query, params))
   );
-  const executeQuery = vi.fn(
-    async (query: string, params?: readonly unknown[] | null, _forceReadonly?: boolean): Promise<Row[]> =>
-      (await handler(query, params)) ?? []
-  );
-  return { executeQuery, executeResultSet } satisfies SqlExecutor;
+  return { executeResultSet } satisfies SqlExecutor;
 }

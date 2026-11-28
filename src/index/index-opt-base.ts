@@ -8,12 +8,13 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
-import { int8, integer, nullableDate, nullableInt8, numeric, text as textCell } from '../sql/cells.ts';
+import * as cell from '../sql/cells.ts';
 import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
-import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
@@ -35,10 +36,10 @@ export interface WorkloadEntry {
 
 function toWorkloadEntry(row: Row): WorkloadEntry {
   return {
-    queryid: nullableInt8(row, 'queryid'),
-    query: textCell(row, 'query'),
-    calls: int8(row, 'calls'),
-    avg_exec_time: numeric(row, 'avg_exec_time'),
+    queryid: cell.nullableInt8(row, 'queryid'),
+    query: cell.text(row, 'query'),
+    calls: cell.int8(row, 'calls'),
+    avg_exec_time: cell.numeric(row, 'avg_exec_time'),
   };
 }
 
@@ -320,7 +321,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
 
         // Reset HypoPG only once at the end
-        await this.sqlDriver.executeQuery('SELECT hypopg_reset();');
+        await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
       }
     } catch (error) {
       logLine(`Error in workload analysis: ${errorMessage(error)}`);
@@ -342,10 +343,11 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
 
     // Pre-check 2: ANALYZE has been run at least once
-    const result = await this.sqlDriver.executeQuery(
+    const result = await queryRows(
+      this.sqlDriver,
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (!result.some((row) => nullableDate(row, 'last_analyze') !== null)) {
+    if (!result.some((row) => cell.nullableDate(row, 'last_analyze') !== null)) {
       const message =
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
@@ -545,8 +547,8 @@ export abstract class IndexTuningBase implements DtaTracer {
       const [first] = result;
       if (first) {
         const sizeEstimate = this.estimateIndexSizeInternal({
-          totalWidth: integer(first, 'total_width'),
-          totalDistinct: numeric(first, 'total_distinct'),
+          totalWidth: cell.integer(first, 'total_width'),
+          totalDistinct: cell.numeric(first, 'total_distinct'),
         });
         this.sizeEstimateCache.set(cacheKey, sizeEstimate);
         return sizeEstimate;
@@ -655,7 +657,7 @@ export abstract class IndexTuningBase implements DtaTracer {
 
       const [first] = result;
       if (first) {
-        size = integer(first, 'rel_size');
+        size = cell.integer(first, 'rel_size');
       } else {
         // If the query fails, use our estimation method
         size = await this.estimateTableSize(table);
@@ -678,7 +680,7 @@ export abstract class IndexTuningBase implements DtaTracer {
       ]);
       const [first] = result;
       if (first) {
-        const rowCount = integer(first, 'row_count');
+        const rowCount = cell.integer(first, 'row_count');
         // Rough estimate: assume 1KB per row
         return rowCount * 1024;
       }

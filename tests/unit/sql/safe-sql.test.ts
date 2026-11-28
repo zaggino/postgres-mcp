@@ -3,14 +3,14 @@ import { isDeepStrictEqual } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { paramSqlToQuery } from '../../../src/sql/literal.ts';
-import { SafeSqlDriver } from '../../../src/sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../../../src/sql/safe-sql.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const PREFIX = '/* postgres-mcp */ ';
 
 function setup() {
   const inner = fakeExecutor(() => []);
-  return { safeDriver: new SafeSqlDriver(inner), executeQuery: inner.executeResultSet };
+  return { safeDriver: new SafeSqlDriver(inner), executeResultSet: inner.executeResultSet };
 }
 
 /**
@@ -18,10 +18,10 @@ function setup() {
  * driver; otherwise a description of what happened instead.
  */
 async function blockedWith(message: string, ...queries: string[]): Promise<true | string> {
-  const { safeDriver, executeQuery } = setup();
+  const { safeDriver, executeResultSet } = setup();
   const outcomes = await Promise.all(
     queries.map((query) =>
-      safeDriver.executeQuery(query).then(
+      queryRows(safeDriver, query).then(
         () => `not rejected: ${query}`,
         (error: unknown) =>
           error instanceof Error && error.message.includes(message)
@@ -34,7 +34,7 @@ async function blockedWith(message: string, ...queries: string[]): Promise<true 
   if (failure !== undefined) {
     return failure;
   }
-  return executeQuery.mock.calls.length === 0 || 'driver was called';
+  return executeResultSet.mock.calls.length === 0 || 'driver was called';
 }
 
 function isBlocked(...queries: string[]): Promise<true | string> {
@@ -46,25 +46,25 @@ function isBlocked(...queries: string[]): Promise<true | string> {
  * otherwise a description of what happened instead.
  */
 async function runsReadOnly(...queries: string[]): Promise<true | string> {
-  const { safeDriver, executeQuery } = setup();
+  const { safeDriver, executeResultSet } = setup();
   for (const query of queries) {
     try {
-      await safeDriver.executeQuery(query);
+      await queryRows(safeDriver, query);
     } catch (error) {
       return `rejected ${query}: ${String(error)}`;
     }
   }
   const expected = queries.map((query) => [PREFIX + query, null, true]);
   return (
-    isDeepStrictEqual(executeQuery.mock.calls, expected) ||
-    `unexpected calls: ${JSON.stringify(executeQuery.mock.calls)}`
+    isDeepStrictEqual(executeResultSet.mock.calls, expected) ||
+    `unexpected calls: ${JSON.stringify(executeResultSet.mock.calls)}`
   );
 }
 
 /** The wrapper and underlying messages of a rejected query. */
 async function rejection(query: string): Promise<{ message: string; cause: string }> {
   const { safeDriver } = setup();
-  const error = await safeDriver.executeQuery(query).catch((error_: unknown) => error_);
+  const error = await queryRows(safeDriver, query).catch((error_: unknown) => error_);
   if (!(error instanceof Error)) {
     throw new Error('expected the query to be rejected');
   }
@@ -292,9 +292,12 @@ describe(SafeSqlDriver, () => {
   it('allows newly added functions', async () => {
     const { safeDriver } = setup();
     await expect(
-      safeDriver.executeQuery(`
+      queryRows(
+        safeDriver,
+        `
     SELECT pg_relation_filenode('foo');
-    `)
+    `
+      )
     ).resolves.toEqual([]);
   });
 

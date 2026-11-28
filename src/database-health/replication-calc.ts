@@ -1,5 +1,7 @@
-import { boolean, nullableNumeric, nullableText, text } from '../sql/cells.ts';
-import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
+import * as cell from '../sql/cells.ts';
+import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface ReplicationSlot {
   active: boolean;
@@ -23,9 +25,9 @@ function describeSlot(slot: ReplicationSlot): string {
 
 function toReplicationSlot(row: Row): ReplicationSlot {
   return {
-    slotName: text(row, 'slot_name'),
-    database: nullableText(row, 'database'),
-    active: boolean(row, 'active'),
+    slotName: cell.text(row, 'slot_name'),
+    database: cell.nullableText(row, 'database'),
+    active: cell.boolean(row, 'active'),
   };
 }
 
@@ -98,9 +100,9 @@ export class ReplicationCalc {
   }
 
   private async isReplica(): Promise<boolean> {
-    const result = await this.sqlDriver.executeQuery('SELECT pg_is_in_recovery()');
+    const result = await queryRows(this.sqlDriver, 'SELECT pg_is_in_recovery()');
     const [row] = result;
-    return row ? boolean(row, 'pg_is_in_recovery') : false;
+    return row ? cell.boolean(row, 'pg_is_in_recovery') : false;
   }
 
   private async getReplicationLag(): Promise<number | null> {
@@ -116,14 +118,17 @@ export class ReplicationCalc {
 
     let result: Row[];
     try {
-      result = await this.sqlDriver.executeQuery(`
+      result = await queryRows(
+        this.sqlDriver,
+        `
                 SELECT
                     CASE
                         WHEN NOT pg_is_in_recovery() OR ${lagCondition} THEN 0
                         ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
                     END
                 AS replication_lag
-            `);
+            `
+      );
     } catch {
       // Only a failing query marks the feature unsupported.
       this.featureSupport.set('replication_lag', false);
@@ -131,7 +136,7 @@ export class ReplicationCalc {
     }
     const [first] = result;
     // A NULL lag (nothing replayed yet) is unknown for this call only; a later call may have a lag.
-    return first ? nullableNumeric(first, 'replication_lag') : null;
+    return first ? cell.nullableNumeric(first, 'replication_lag') : null;
   }
 
   private async getReplicationSlots(): Promise<ReplicationSlot[]> {
@@ -141,13 +146,16 @@ export class ReplicationCalc {
 
     let result: Row[];
     try {
-      result = await this.sqlDriver.executeQuery(`
+      result = await queryRows(
+        this.sqlDriver,
+        `
                 SELECT
                     slot_name,
                     database,
                     active
                 FROM pg_replication_slots
-            `);
+            `
+      );
     } catch {
       this.featureSupport.set('replication_slots', false);
       return [];
@@ -161,7 +169,7 @@ export class ReplicationCalc {
     }
 
     try {
-      const result = await this.sqlDriver.executeQuery('SELECT state FROM pg_stat_replication');
+      const result = await queryRows(this.sqlDriver, 'SELECT state FROM pg_stat_replication');
       return result.length > 0;
     } catch {
       this.featureSupport.set('replicating', false);
@@ -172,9 +180,9 @@ export class ReplicationCalc {
   /** PostgreSQL server version as a number (e.g. 100000 for version 10.0). */
   private async getServerVersion(): Promise<number> {
     if (this.serverVersion === null) {
-      const result = await this.sqlDriver.executeQuery('SHOW server_version_num');
+      const result = await queryRows(this.sqlDriver, 'SHOW server_version_num');
       const [first] = result;
-      this.serverVersion = first ? Number.parseInt(text(first, 'server_version_num'), 10) : 0;
+      this.serverVersion = first ? Number.parseInt(cell.text(first, 'server_version_num'), 10) : 0;
     }
     return this.serverVersion;
   }

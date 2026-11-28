@@ -31,7 +31,7 @@ function useExplainDriver(planData: unknown) {
     query.includes('pg_extension') ? [{ extversion: '1.4.1' }] : [{ 'QUERY PLAN': [planData] }]
   );
   getSqlDriver = () => driver;
-  return driver.executeQuery;
+  return driver.executeResultSet;
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
@@ -53,28 +53,28 @@ test('registers the explain_query tool', async () => {
 });
 
 test('explain_query runs a plain EXPLAIN and returns the plan', async () => {
-  const executeQuery = useExplainDriver(plan());
+  const executeResultSet = useExplainDriver(plan());
 
   const text = await explainQuery({ sql: 'SELECT * FROM users' });
 
   expect(text).toContain('Seq Scan');
-  expect(executeQuery).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users', undefined);
 });
 
 test('explain_query with analyze=true runs EXPLAIN ANALYZE and reports execution time', async () => {
-  const executeQuery = useExplainDriver(plan({ 'Execution Time': 1.3 }, { 'Actual Rows': 100 }));
+  const executeResultSet = useExplainDriver(plan({ 'Execution Time': 1.3 }, { 'Actual Rows': 100 }));
 
   const text = await explainQuery({
     sql: 'SELECT * FROM users',
     analyze: true,
   });
 
-  expect(executeQuery).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON, ANALYZE) SELECT * FROM users', undefined);
   expect(text).toContain('Execution Time: 1.300 ms');
 });
 
 test('explain_query with hypothetical indexes creates them before explaining', async () => {
-  const executeQuery = useExplainDriver(plan({}, { 'Node Type': 'Index Scan' }));
+  const executeResultSet = useExplainDriver(plan({}, { 'Node Type': 'Index Scan' }));
 
   const text = await explainQuery({
     sql: "SELECT * FROM users WHERE email = 'test@example.com'",
@@ -82,7 +82,7 @@ test('explain_query with hypothetical indexes creates them before explaining', a
   });
 
   expect(text).toContain('Index Scan');
-  expect(executeQuery.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
+  expect(executeResultSet.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
 });
 
 test('explain_query rejects analyze combined with hypothetical indexes', async () => {

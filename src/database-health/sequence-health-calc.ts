@@ -1,7 +1,7 @@
-import { bigint, boolean, text } from '../sql/cells.ts';
+import * as cell from '../sql/cells.ts';
 import { identifier } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { SafeSqlDriver } from '../sql/safe-sql.ts';
+import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 
 interface SequenceMetrics {
   column: string;
@@ -105,7 +105,9 @@ export class SequenceHealthCalc {
 
   private async getSequenceMetrics(): Promise<SequenceMetrics[]> {
     // First get all sequences used as default values
-    const sequences = await this.sqlDriver.executeQuery(`
+    const sequences = await queryRows(
+      this.sqlDriver,
+      `
             SELECT
                 n.nspname AS table_schema,
                 c.relname AS table,
@@ -125,18 +127,19 @@ export class SequenceHealthCalc {
                 AND a.attnum > 0
                 AND pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval%'
                 AND n.nspname NOT LIKE 'pg\\_temp\\_%'
-        `);
+        `
+    );
 
     const sequenceMetrics: SequenceMetrics[] = [];
     for (const seq of sequences) {
       // Parse the sequence name from default value
-      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(text(seq, 'default_value'));
+      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(cell.text(seq, 'default_value'));
       if (!sequence) {
         continue;
       }
 
       // Determine max value based on column type
-      const columnType = text(seq, 'column_type');
+      const columnType = cell.text(seq, 'column_type');
       const maxValue = maxValueFor(columnType);
 
       // Get sequence attributes
@@ -156,16 +159,16 @@ export class SequenceHealthCalc {
         continue;
       }
 
-      const lastValue = bigint(attr, 'last_value');
+      const lastValue = cell.bigint(attr, 'last_value');
       sequenceMetrics.push({
         schema,
-        table: text(seq, 'table'),
-        column: text(seq, 'column'),
+        table: cell.text(seq, 'table'),
+        column: cell.text(seq, 'column'),
         sequence,
         columnType,
         lastValue,
         maxValue,
-        readable: boolean(attr, 'readable'),
+        readable: cell.boolean(attr, 'readable'),
         isHealthy: Number(lastValue) / Number(maxValue) <= this.threshold,
       });
     }

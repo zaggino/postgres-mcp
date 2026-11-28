@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 
 import { DatabaseRegistry } from '../../src/database-registry.ts';
 import { AccessMode, defaultStatementTimeoutSeconds } from '../../src/sql/driver-factory.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { defaultPoolFactory } from '../../src/sql/sql-driver.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
@@ -50,7 +51,7 @@ describeWithPostgres('DatabaseRegistry discovery', ({ connectionString }) => {
     const { databases } = await registry.list();
     expect(databases.map((entry) => entry.database)).toEqual(['x-mcp_disc_a', 'x-mcp_disc_b']);
 
-    const rows = await registry.use('x-mcp_disc_a', (driver) => driver.executeQuery('SELECT current_database() AS db'));
+    const rows = await registry.use('x-mcp_disc_a', (driver) => queryRows(driver, 'SELECT current_database() AS db'));
     expect(rows[0]?.db).toBe('mcp_disc_a');
   });
 });

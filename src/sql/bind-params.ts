@@ -1,11 +1,12 @@
 import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { pyFloatStr } from '../py-format.ts';
-import { nullableNumberArray, nullableText, text as textCell } from './cells.ts';
+import * as cell from './cells.ts';
 import { literal } from './literal.ts';
 import { AstNode, parseSql, Visitor } from './pg-ast.ts';
-import type { Row, SqlExecutor } from './safe-sql.ts';
+import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver } from './safe-sql.ts';
+import type { Row } from './sql-driver.ts';
 
 // --- Visitor classes ---
 
@@ -323,10 +324,10 @@ function parsePgArray(raw: string | null): StatValue[] | undefined {
 
 function toColumnStats(row: Row): ColumnStats {
   return {
-    dataType: textCell(row, 'data_type').toLowerCase(),
-    commonVals: parsePgArray(nullableText(row, 'common_vals')),
-    commonFreqs: nullableNumberArray(row, 'common_freqs') ?? undefined,
-    histogramBounds: parsePgArray(nullableText(row, 'histogram_bounds')),
+    dataType: cell.text(row, 'data_type').toLowerCase(),
+    commonVals: parsePgArray(cell.nullableText(row, 'common_vals')),
+    commonFreqs: cell.nullableNumberArray(row, 'common_freqs') ?? undefined,
+    histogramBounds: parsePgArray(cell.nullableText(row, 'histogram_bounds')),
   };
 }
 

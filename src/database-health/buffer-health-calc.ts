@@ -1,10 +1,11 @@
-import { nullableNumeric } from '../sql/cells.ts';
+import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
+import { queryRows } from '../sql/safe-sql.ts';
 
 async function hitRateReport(sqlDriver: SqlExecutor, query: string, label: string, threshold: number): Promise<string> {
-  const [row] = await sqlDriver.executeQuery(query);
+  const [row] = await queryRows(sqlDriver, query);
   // NULL when there are no statistics yet; the aggregate always returns one row.
-  const rate = row ? nullableNumeric(row, 'rate') : null;
+  const rate = row ? cell.nullableNumeric(row, 'rate') : null;
 
   if (rate === null) {
     return `No ${label.toLowerCase()} cache statistics available.`;

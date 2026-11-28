@@ -1,7 +1,7 @@
 import { logLine } from '../log.ts';
-import { nullableText, text } from './cells.ts';
+import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
-import { SafeSqlDriver } from './safe-sql.ts';
+import { SafeSqlDriver, queryRows } from './safe-sql.ts';
 import type { DbConnPool } from './sql-driver.ts';
 
 export type MessageType = 'plain' | 'markdown';
@@ -40,14 +40,14 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
   }
 
   try {
-    const rows = await sqlDriver.executeQuery('SHOW server_version');
+    const rows = await queryRows(sqlDriver, 'SHOW server_version');
     const [first] = rows;
     if (!first) {
       logLine('Could not determine PostgreSQL version');
       return 0;
     }
 
-    const versionString = text(first, 'server_version');
+    const versionString = cell.text(first, 'server_version');
     // Extract the major version (before the first dot)
     const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {
@@ -129,7 +129,7 @@ export async function checkExtension(
 
   const [installed] = installedResult;
   if (installed) {
-    const version = text(installed, 'extversion');
+    const version = cell.text(installed, 'extversion');
     result.isInstalled = true;
     result.isAvailable = true;
 
@@ -148,7 +148,7 @@ export async function checkExtension(
   const [available] = availableResult;
   if (available) {
     result.isAvailable = true;
-    result.defaultVersion = nullableText(available, 'default_version');
+    result.defaultVersion = cell.nullableText(available, 'default_version');
 
     if (includeMessages) {
       result.message = availableMessage(extensionName, messageType);

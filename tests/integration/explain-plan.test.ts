@@ -2,16 +2,18 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { ErrorResult, ExplainPlanArtifact } from '../../src/artifacts.ts';
 import { ExplainPlanTool } from '../../src/explain/explain-plan.ts';
+import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
 async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   // Drop existing tables if they exist
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_orders');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_customers');
 
   // Create tables with various features for testing explain plan
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             CREATE TABLE test_customers (
                 id SERIAL PRIMARY KEY,
@@ -22,7 +24,8 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         `
   );
 
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             CREATE TABLE test_orders (
                 id SERIAL PRIMARY KEY,
@@ -35,19 +38,22 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   );
 
   // Create some indexes to test explain plans
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             CREATE INDEX idx_orders_customer ON test_orders(customer_id)
             `
   );
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             CREATE INDEX idx_orders_status ON test_orders(status)
             `
   );
 
   // Insert some test data
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             INSERT INTO test_customers (name, email)
             SELECT
@@ -57,7 +63,8 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
         `
   );
 
-  await sqlDriver.executeQuery(
+  await queryRows(
+    sqlDriver,
     `
             INSERT INTO test_orders (customer_id, total, status)
             SELECT
@@ -73,13 +80,13 @@ async function setupTestTables(sqlDriver: SqlDriver): Promise<void> {
   );
 
   // Run ANALYZE to update statistics
-  await sqlDriver.executeQuery('ANALYZE test_customers');
-  await sqlDriver.executeQuery('ANALYZE test_orders');
+  await queryRows(sqlDriver, 'ANALYZE test_customers');
+  await queryRows(sqlDriver, 'ANALYZE test_orders');
 }
 
 async function cleanupTestTables(sqlDriver: SqlDriver): Promise<void> {
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_orders');
-  await sqlDriver.executeQuery('DROP TABLE IF EXISTS test_customers');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_orders');
+  await queryRows(sqlDriver, 'DROP TABLE IF EXISTS test_customers');
 }
 
 const RELATION_NOT_EXIST = /relation.*not exist/u;

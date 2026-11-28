@@ -9,6 +9,7 @@ import { checkPostgresVersionRequirement } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 const BIND_VARIABLE_PATTERN = /\$\d+/u;
 const LIKE_PATTERN = /\bLIKE\b/iu;
@@ -28,6 +29,12 @@ function parsePlanColumn(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+/** The parsed `QUERY PLAN` of an EXPLAIN result, or undefined when it returned no row. */
+function queryPlan(rows: readonly Row[]): unknown {
+  const [row] = rows;
+  return row ? parsePlanColumn(cell.value(row, 'QUERY PLAN')) : undefined;
 }
 
 function isTruthy(value: unknown): boolean {
@@ -189,11 +196,10 @@ export class ExplainPlanTool {
 
       const explainQ = `EXPLAIN (${explainOptions.join(', ')}) ${query}`;
       const rows = await queryRows(this.sqlDriver, explainQ);
-      const [firstRow] = rows;
-      if (!firstRow) {
+      if (rows.length === 0) {
         return new ErrorResult('No results returned from EXPLAIN');
       }
-      const queryPlanData = parsePlanColumn(cell.value(firstRow, 'QUERY PLAN'));
+      const queryPlanData = queryPlan(rows);
 
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
@@ -257,7 +263,7 @@ export class ExplainPlanTool {
       };
 
       // Extract the plan
-      const planData = parsePlanColumn(planResult[0]?.['QUERY PLAN']);
+      const planData = queryPlan(planResult);
       if (isTruthy(planData)) {
         if (Array.isArray(planData)) {
           return planData[0];

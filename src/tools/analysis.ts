@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ErrorResult } from '../artifacts.ts';
 import { ExplainPlanArtifact } from '../artifacts.ts';
 import { DatabaseHealthTool } from '../database-health/database-health.ts';
+import type { HypotheticalIndex } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
 import { DatabaseTuningAdvisor } from '../index/dta-calc.ts';
 import { MAX_NUM_INDEX_TUNING_QUERIES } from '../index/index-opt-base.ts';
@@ -17,7 +18,7 @@ export async function explainQuery(
   sqlDriver: SqlExecutor,
   sql: string,
   analyze: boolean,
-  hypotheticalIndexes: Record<string, unknown>[]
+  hypotheticalIndexes: readonly HypotheticalIndex[]
 ): Promise<CallToolResult> {
   const explainTool = new ExplainPlanTool(sqlDriver);
   let result: ExplainPlanArtifact | ErrorResult;

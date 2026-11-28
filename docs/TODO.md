@@ -22,12 +22,6 @@ Its agent instructions require the file itself to be updated in the same change 
 
 The `A_Expr` visitor in `src/sql/bind-params.ts` ends with a branch for `kind === "AEXPR_OP"` with a `SelectStmt` right-hand side, ported from upstream's `kind == 0` whose comment meant `IN`. The block just above already visits any `SelectStmt` right-hand side in its own scope, so the branch only repeats that visit. `libpg-query` parses `x IN (SELECT ...)` as a `SubLink` (`ANY_SUBLINK`), not an `A_Expr`, and `x IN (1, 2)` as `AEXPR_IN` with a `List`, so neither form reaches the branch. Delete it, and check whether the columns of an `IN (SELECT ...)` subquery are collected in the subquery's scope.
 
-## 2026-11-26 · Minor · Bug · `execute_sql`'s `sql` parameter defaults to `"all"`
-
-_BREAKING CHANGE REQUIRED_
-
-The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so a call without it sends `all` to the database and returns a syntax error. The parameter should be required; that is a breaking surface change (`feat!`).
-
 ## 2026-11-26 · Minor · Bug · Workload SQL is lowercased wholesale
 
 `src/index/index-opt-base.ts` (workload loop in the query analysis, `rawQuery.trim().toLowerCase()`) lowercases the whole query before binding parameters, including string literals and quoted identifiers. This can change the meaning of the query being analysed.
@@ -120,17 +114,9 @@ The fallback plan built in `src/explain/explain-plan.ts` has no `Node Type`, so 
 
 `analysisStartTime` in `src/index/dta-calc.ts` defaults to 0 and is compared with `performance.now()`. Calling `enumerateGreedy` without `analyzeWorkload` therefore does not stop at the time limit at once, as it should.
 
-## 2026-11-26 · Minor · Bug · `explain_query` rejects `hypothetical_indexes: null`
-
-The zod schema in `src/server.ts` accepts only an array, so clients that send `null` get a validation error. Accept `null` as no hypothetical indexes.
-
 ## 2026-11-26 · Minor · Bug · `getPostgresVersion` rejects pre-release versions
 
 `getPostgresVersion` in `src/sql/extension-utils.ts` cannot parse server versions such as `17beta1`, so the version lookup fails on a pre-release server.
-
-## 2026-11-26 · Minor · Bug · `explain_query` splits a string `columns` value into characters
-
-`toColumnList` in `src/explain/explain-plan.ts` treats a string `columns` value as an iterable and splits it into characters. The zod schema in `src/server.ts` also leaves hypothetical index entries untyped, so nothing rejects the bad shape.
 
 ## 2026-11-26 · Minor · Security · Publishing has no approval gate
 
@@ -310,12 +296,6 @@ No tool declares an `outputSchema` or returns `structuredContent`, so a client c
 Do this after "Health, top-queries and index tools report failures without `isError`". The MCP SDK rejects a result of a tool with an `outputSchema` when it has neither `isError` nor matching `structuredContent`, and today the advisor returns its failures as ordinary `{ "error": ... }` output. Keep the schema with the tool definition; "Each tool is split between `src/server.ts` and `src/tools/`" decides where that is.
 
 Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
-
-## 2026-11-28 · Minor · Performance · Index advisor output includes its trace by default
-
-_BREAKING CHANGE REQUIRED_
-
-`executeAnalysis` in `src/index/presentation.ts` adds `_langfuse_trace`, the advisor's trace lines, to every result of `analyze_query_indexes` and `analyze_workload_indexes` unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` is set to something other than `true`. The trace is debugging output and costs an agent tokens on every call. Leave it out unless the variable is `true`, and update the README, which documents the default.
 
 ## 2026-11-28 · Minor · Refactor · Tuples and forwarding classes in the advisor and explain code
 

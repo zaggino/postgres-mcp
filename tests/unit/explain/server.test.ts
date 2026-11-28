@@ -85,6 +85,27 @@ test('explain_query with hypothetical indexes creates them before explaining', a
   expect(executeResultSet.mock.calls.map(([query]) => query).join('\n')).toContain('hypopg_create_index');
 });
 
+test('explain_query treats null hypothetical indexes as none and runs a plain EXPLAIN', async () => {
+  const executeResultSet = useExplainDriver(plan());
+
+  const text = await explainQuery({ sql: 'SELECT * FROM users', hypothetical_indexes: null });
+
+  expect(text).toContain('Seq Scan');
+  expect(executeResultSet).toHaveBeenCalledWith('EXPLAIN (FORMAT JSON) SELECT * FROM users');
+});
+
+test('explain_query rejects a hypothetical index whose columns is a string, without querying', async () => {
+  const executeResultSet = useExplainDriver(plan());
+
+  const text = await explainQuery({
+    sql: 'SELECT * FROM users',
+    hypothetical_indexes: [{ table: 'users', columns: 'email' }],
+  });
+
+  expect(text).toContain('hypothetical_indexes');
+  expect(executeResultSet).not.toHaveBeenCalled();
+});
+
 test('explain_query rejects analyze combined with hypothetical indexes', async () => {
   useExplainDriver(plan());
 

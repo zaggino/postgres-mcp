@@ -84,7 +84,8 @@ export class TextPresentation {
       });
 
       // Prepare the response to send back to the caller
-      const includeLangfuseTrace = (process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE ?? 'true').toLowerCase() === 'true';
+      // Debugging output that costs an agent tokens on every call, so only on request
+      const includeLangfuseTrace = process.env.POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE?.toLowerCase() === 'true';
       const langfuseTrace: JsonRecord = includeLangfuseTrace ? { _langfuse_trace: session.dtaTraces } : {};
 
       if (session.error) {

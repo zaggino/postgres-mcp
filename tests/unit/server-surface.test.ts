@@ -79,8 +79,8 @@ const EXPECTED_TOOLS: ExpectedTool[] = [
   {
     name: 'execute_sql',
     params: ['database', 'sql'],
-    required: ['database'],
-    defaults: { sql: 'all' },
+    required: ['database', 'sql'],
+    defaults: {},
     annotations: { title: 'Execute SQL', destructiveHint: true },
   },
   {
@@ -123,6 +123,16 @@ test('unrestricted mode lists the eleven tools in upstream order with their para
       annotations: tool.annotations,
     }))
   ).toEqual(EXPECTED_TOOLS);
+});
+
+test('execute_sql without sql is rejected without querying the database', async () => {
+  const { registry, fakes } = createTestRegistry(['app']);
+  const client = await connectClient(createServer(registry));
+
+  const result = await client.callTool({ name: 'execute_sql', arguments: { database: 'app' } });
+
+  expect(result.isError).toBe(true);
+  expect(fakes.get('app')?.queries ?? []).toEqual([]);
 });
 
 test('restricted mode rejects a DROP TABLE through execute_sql without sending it to the database', async () => {

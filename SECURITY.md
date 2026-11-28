@@ -18,12 +18,12 @@ In scope, for example:
 
 - SQL that restricted mode accepts and that modifies data or schema, leaves the read-only transaction, or runs a function or statement type outside its allowlists, including on a connection whose database user can write.
 - SQL injection through tool parameters or the queries the server builds internally.
-- A bypass of the `Host` header check on HTTP transports bound to a loopback address (see the README's Transports section).
+- A bypass of the HTTP transport's `Host` or `Origin` check as configured (see the README's Transports section).
 - Credentials leaking into tool results or logs, in either access mode.
 
 Out of scope:
 
 - Running arbitrary SQL in unrestricted mode, which gives full read/write access by design.
-- The absence of authentication and `Host` or `Origin` checks on HTTP transports bound to a non-loopback address, which the README documents.
+- The absence of authentication on the HTTP transport, and the absence of `Host` or `Origin` checks that `--allowed-hosts='*'` or `--allowed-origins='*'` turns off, which the README documents.
 
 Known weaknesses are tracked in [docs/TODO.md](docs/TODO.md); a report that adds a working exploit for one of them is still welcome through the private channel.

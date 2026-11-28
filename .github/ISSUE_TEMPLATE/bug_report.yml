@@ -46,7 +46,6 @@ body:
       label: Transport
       options:
         - stdio
-        - sse
         - streamable-http
     validations:
       required: true

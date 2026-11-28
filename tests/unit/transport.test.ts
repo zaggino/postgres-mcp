@@ -21,17 +21,6 @@ describe('transport selection', () => {
     await main([DATABASE_ARG, '--transport=stdio'], transports);
 
     expect(transports.stdio).toHaveBeenCalledOnce();
-    expect(transports.sse).not.toHaveBeenCalled();
-    expect(transports['streamable-http']).not.toHaveBeenCalled();
-  });
-
-  it('--transport=sse runs only the SSE transport', async () => {
-    const transports = stubTransports();
-
-    await main([DATABASE_ARG, '--transport=sse'], transports);
-
-    expect(transports.stdio).not.toHaveBeenCalled();
-    expect(transports.sse).toHaveBeenCalledOnce();
     expect(transports['streamable-http']).not.toHaveBeenCalled();
   });
 
@@ -41,7 +30,6 @@ describe('transport selection', () => {
     await main([DATABASE_ARG, '--transport=streamable-http'], transports);
 
     expect(transports.stdio).not.toHaveBeenCalled();
-    expect(transports.sse).not.toHaveBeenCalled();
     expect(transports['streamable-http']).toHaveBeenCalledOnce();
   });
 
@@ -51,16 +39,15 @@ describe('transport selection', () => {
     await main([DATABASE_ARG], transports);
 
     expect(transports.stdio).toHaveBeenCalledOnce();
-    expect(transports.sse).not.toHaveBeenCalled();
     expect(transports['streamable-http']).not.toHaveBeenCalled();
   });
 
   it('accepts a separate value for --transport', async () => {
     const transports = stubTransports();
 
-    await main([DATABASE_ARG, '--transport', 'sse'], transports);
+    await main([DATABASE_ARG, '--transport', 'streamable-http'], transports);
 
-    expect(transports.sse).toHaveBeenCalledOnce();
+    expect(transports['streamable-http']).toHaveBeenCalledOnce();
   });
 });
 
@@ -85,24 +72,6 @@ describe('transport host and port', () => {
       port: 9000,
       allowedHosts: ['mcp.example', 'other.example:9000'],
       allowedOrigins: ['https://app.example'],
-      maxSessions: undefined,
-      sessionIdleMinutes: undefined,
-    });
-  });
-
-  it('passes the SSE host and port to the transport', async () => {
-    const transports = stubTransports();
-
-    await main(
-      [DATABASE_ARG, '--transport=sse', '--sse-host=0.0.0.0', '--sse-port=8080', '--allowed-hosts=*'],
-      transports
-    );
-
-    expect(transports.sse).toHaveBeenCalledWith(expect.any(Function), {
-      host: '0.0.0.0',
-      port: 8080,
-      allowedHosts: 'any',
-      allowedOrigins: undefined,
       maxSessions: undefined,
       sessionIdleMinutes: undefined,
     });

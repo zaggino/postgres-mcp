@@ -6,6 +6,9 @@ import { log } from '../log.ts';
 export const DEFAULT_MAX_SESSIONS = 100;
 export const DEFAULT_SESSION_IDLE_MINUTES = 30;
 
+/** The part of a response the store needs: whether it has closed, and its close event. */
+export type HeldResponse = Pick<ServerResponse, 'closed' | 'once'>;
+
 interface SessionEntry<T> {
   /** Requests being served for the session; its idle timer does not run meanwhile. */
   inFlight: number;
@@ -40,49 +43,48 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
     return this.#entries.size >= this.#maxSessions;
   }
 
-  /** Starts tracking a session; it is closed if it stays idle. */
-  add(id: string, transport: T): void {
+  /** Starts tracking a session, held until `res` closes; after that it is closed if it stays idle. */
+  add(id: string, transport: T, res: HeldResponse): void {
     const entry: SessionEntry<T> = { transport, inFlight: 0, timer: undefined };
     this.#entries.set(id, entry);
-    this.#startTimer(id, entry);
+    this.#hold(id, entry, res);
   }
 
-  /** The session's transport; looking it up counts as activity and restarts its idle timer. */
-  get(id: string): T | undefined {
+  /** The session's transport, held until `res` closes; undefined for an unknown id. */
+  acquire(id: string, res: HeldResponse): T | undefined {
     const entry = this.#entries.get(id);
-    if (entry && entry.inFlight === 0) {
-      this.#startTimer(id, entry);
+    if (entry) {
+      this.#hold(id, entry, res);
     }
     return entry?.transport;
   }
 
-  /** A request for the session is being served. */
-  #begin(id: string): void {
-    const entry = this.#entries.get(id);
-    if (entry) {
-      entry.inFlight += 1;
-      clearTimeout(entry.timer);
-      entry.timer = undefined;
+  /**
+   * Keeps the session's idle timer stopped until the response closes. A response that closed already (the client
+   * left while its body was read) ends the hold at once, or its session would never become idle.
+   */
+  #hold(id: string, entry: SessionEntry<T>, res: HeldResponse): void {
+    entry.inFlight += 1;
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+    if (res.closed) {
+      this.#end(id);
+      return;
     }
+    res.once('close', () => {
+      this.#end(id);
+    });
   }
 
   /** A request for the session finished; with none left, the idle timer starts afresh. */
   #end(id: string): void {
     const entry = this.#entries.get(id);
     if (entry) {
-      entry.inFlight = Math.max(0, entry.inFlight - 1);
+      entry.inFlight -= 1;
       if (entry.inFlight === 0) {
         this.#startTimer(id, entry);
       }
     }
-  }
-
-  /** Keeps the session's idle timer stopped until the response closes. */
-  hold(id: string, res: ServerResponse): void {
-    this.#begin(id);
-    res.once('close', () => {
-      this.#end(id);
-    });
   }
 
   remove(id: string): void {
@@ -108,8 +110,6 @@ export class SessionStore<T extends { close: () => Promise<void> }> {
   }
 
   #startTimer(id: string, entry: SessionEntry<T>): void {
-    clearTimeout(entry.timer);
-    entry.timer = undefined;
     const idleMs = this.#idleMinutes * 60_000;
     if (idleMs <= 0) {
       return;

@@ -151,12 +151,6 @@ Replacing a truthiness check on a nullable string or boolean changes which value
 
 Go through the findings, keep the current behaviour unless a change is intended, and switch the rules back on.
 
-## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
-
-_BREAKING CHANGE REQUIRED_
-
-`SSEServerTransport` (used in `src/transports/sse.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. `src/transports/sse.ts` carries a file-level `typescript/no-deprecated` disable and the test an inline one, because `--transport=sse` is part of the CLI surface. When the SDK removes the transport, drop `--transport=sse` and its flags in a breaking-change (`feat!`) commit.
-
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
 
 `.github/workflows/release-please.yml` publishes through npm trusted publishing, which is configured on an existing package, and `@zaggino/postgres-mcp` has never been published. The workflow's publish of the first release, 1.0.0, will fail; publish 1.0.0 by hand from the `v1.0.0` tag, then configure the trusted publisher (repository `zaggino/postgres-mcp`, workflow `release-please.yml`, environment `main`) so later releases publish themselves.
@@ -188,10 +182,6 @@ Discovery of the databases on a config `servers` entry builds each database URI 
 ## 2026-11-26 · Minor · Tests · Gaps in the multi-database tests
 
 Untested so far: `--idle-minutes` and config `idleMinutes` above 35791 are rejected; `list_databases` shows `open` with a counting-down `idle_seconds_left` after a successful call; a server whose `${VAR}` is unset shows the error in `servers[].error` and its databases are unknown; an invalid `--database` name, a duplicate name, an unreadable config file. Add one case each to `tests/unit/config.test.ts` and `tests/unit/database-registry.test.ts`.
-
-## 2026-11-26 · Minor · Bug · An SSE session can be closed during a tool call longer than the idle time
-
-On SSE, `POST /messages` returns 202 before the tool runs and the result travels over the `GET /sse` stream, so `SessionStore` (`src/transports/sessions.ts`) sees no request in flight while a tool call runs. A call longer than `--session-idle-minutes` with no other message from the client closes the session and the result is lost. Streamable HTTP is unaffected: its response carries the result and keeps the session held. Fix by tracking pending tool calls per SSE session (for example through the McpServer request handlers).
 
 ## 2026-11-26 · Minor · Refactor · Session and pool idle timers are two implementations
 

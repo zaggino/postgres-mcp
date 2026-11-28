@@ -86,13 +86,15 @@ describe(parseCli, () => {
   });
 
   it('refuses a non-loopback HTTP bind without --allowed-hosts and accepts it with one', () => {
-    const args = ['--database', 'a', '--transport=sse', '--sse-host=0.0.0.0'];
+    const args = ['--database', 'a', '--transport=streamable-http', '--streamable-http-host=0.0.0.0'];
 
     expect(() => parseCli(args)).toThrow(/--allowed-hosts/u);
-    expect(parseCli([...args, '--allowed-hosts=*'])?.allowedHosts).toBe('any');
+    expect(parseCli([...args, '--allowed-hosts=*'])?.http.allowedHosts).toBe('any');
   });
 
   it.each([
+    ['--transport=sse', /--transport: invalid choice: 'sse' \(choose from 'stdio', 'streamable-http'\)/u],
+    ['--sse-port=8000', /Unknown option '--sse-port'/u],
     ['--allowed-hosts=::1', /--allowed-hosts: an IPv6 address must be written in brackets/u],
     ['--allowed-origins=app.example', /--allowed-origins: expected scheme:\/\/host/u],
     ['--allowed-hosts=*,a.example', /--allowed-hosts: '\*' cannot be combined/u],

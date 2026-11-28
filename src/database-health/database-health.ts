@@ -1,4 +1,4 @@
-import { errorMessage } from '../errors.ts';
+import { errorMessage, UsageError } from '../errors.ts';
 import { log } from '../log.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { BufferHealthCalc } from './buffer-health-calc.ts';
@@ -100,7 +100,7 @@ export class DatabaseHealthTool {
     const healthTypes = new Set<HealthType>();
     for (const type of requested) {
       if (!isHealthType(type)) {
-        throw new Error(
+        throw new UsageError(
           `Invalid health types provided: '${healthType}'. ` +
             `Valid values are: ${HEALTH_TYPES.toSorted().join(', ')}. ` +
             'Please try again with a comma-separated list of valid health types.'

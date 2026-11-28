@@ -45,10 +45,6 @@ export class TextPresentation {
 
   /** Analyze a list of SQL queries and recommend indexes. */
   analyzeQueries(queries: string[], maxIndexSizeMb = 10_000): Promise<JsonRecord> {
-    if (queries.length === 0) {
-      return Promise.reject(new Error('No queries provided for analysis'));
-    }
-
     return this.executeAnalysis({
       queryList: queries,
       // Ignore min calls, min time and limit for an explicit query list

@@ -5,6 +5,7 @@ import { ConditionColumnCollector, DatabaseTuningAdvisor } from '../../../src/in
 import type { QueryWeight } from '../../../src/index/index-opt-base.ts';
 import { IndexRecommendation, IndexTuningBase } from '../../../src/index/index-opt-base.ts';
 import { ColumnCollector, PgFloat } from '../../../src/sql/bind-params.ts';
+import { CellError } from '../../../src/sql/cells.ts';
 import { AstNode, loadParser, parseSql } from '../../../src/sql/pg-ast.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import type { Row } from '../../../src/sql/sql-driver.ts';
@@ -291,12 +292,8 @@ test('index exists compares table, type and columns of existing definitions', ()
 
   // A definition the parser rejects raises, whether or not it would match
   const existing = new Set(['CREATE INDEX users_name_email_idx ON users USING btree (name, email)']);
-  expect(() => dta.indexExists(new IndexRecommendation('users', ['name', '(']), existing)).toThrow(
-    'Error in robust index comparison'
-  );
-  expect(() => dta.indexExists(new IndexRecommendation('users', ['address', '(']), existing)).toThrow(
-    'Error in robust index comparison'
-  );
+  expect(() => dta.indexExists(new IndexRecommendation('users', ['name', '(']), existing)).toThrow(/syntax error/u);
+  expect(() => dta.indexExists(new IndexRecommendation('users', ['address', '(']), existing)).toThrow(/syntax error/u);
 });
 
 test('index size estimation handles positive, negative and zero ndistinct', () => {
@@ -316,10 +313,8 @@ test('a string total cost in a plan is rejected instead of coerced to a number',
 test('index size estimation fails on NULL column statistics instead of assuming zero width', async () => {
   const dta = createAdvisor(createDriver(() => rows({ total_width: null, total_distinct: 5 })));
 
-  const error = await dta.estimateIndexSize('users', ['name']).catch((error_: unknown) => error_);
-
-  expect(error).toHaveProperty('message', expect.stringMatching(/^Error estimating index size: /u));
-  expect(error).toHaveProperty('cause.message', expect.stringContaining('total_width'));
+  await expect(dta.estimateIndexSize('users', ['name'])).rejects.toThrow(CellError);
+  await expect(dta.estimateIndexSize('users', ['name'])).rejects.toThrow('total_width');
 });
 
 test('query statistics skip a statement whose text is hidden and keep the statistics of the rest as numbers', async () => {

@@ -1,4 +1,3 @@
-import { errorMessage } from '../errors.ts';
 import * as cell from './cells.ts';
 import type { SqlExecutor } from './safe-sql.ts';
 import { SafeSqlDriver, queryRows } from './safe-sql.ts';
@@ -38,20 +37,16 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
     return cached;
   }
 
-  try {
-    const versionString = cell.text(cell.single(await queryRows(sqlDriver, 'SHOW server_version')), 'server_version');
-    // Extract the major version (before the first dot)
-    const majorVersion = versionString.split('.')[0] ?? '';
-    if (!INTEGER.test(majorVersion)) {
-      throw new Error(`Invalid PostgreSQL version: ${versionString}`);
-    }
-    const version = Number.parseInt(majorVersion, 10);
-
-    versions.set(cacheKey(sqlDriver), version);
-    return version;
-  } catch (error) {
-    throw new Error(`Error determining PostgreSQL version: ${errorMessage(error)}`, { cause: error });
+  const versionString = cell.text(cell.single(await queryRows(sqlDriver, 'SHOW server_version')), 'server_version');
+  // Extract the major version (before the first dot)
+  const majorVersion = versionString.split('.')[0] ?? '';
+  if (!INTEGER.test(majorVersion)) {
+    throw new Error(`Invalid PostgreSQL version: ${versionString}`);
   }
+  const version = Number.parseInt(majorVersion, 10);
+
+  versions.set(cacheKey(sqlDriver), version);
+  return version;
 }
 
 /** Returns `[meetsRequirement, message]`. */

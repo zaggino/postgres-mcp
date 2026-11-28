@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 
 import { calculateImprovementMultiple } from '../artifacts.ts';
-import { errorMessage } from '../errors.ts';
+import { errorMessage, UsageError } from '../errors.ts';
 import type { DtaTracer } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
 import { isJsonObject } from '../json.ts';
-import { logLine } from '../log.ts';
+import { log, logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
 import * as cell from '../sql/cells.ts';
@@ -15,6 +15,7 @@ import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 import type { Row } from '../sql/sql-driver.ts';
+import { PG_STAT_STATEMENTS } from '../top-queries/top-queries-calc.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
@@ -296,6 +297,8 @@ export abstract class IndexTuningBase implements DtaTracer {
       session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
     }
 
+    session.dtaTraces = this.dtaTraces;
+
     if (session.workload.length === 0) {
       logLine('No workload to analyze');
       return session;
@@ -307,20 +310,23 @@ export abstract class IndexTuningBase implements DtaTracer {
 
     if (queryWeights.length === 0) {
       this.dtaTrace('No query provided');
-      session.recommendations = [];
-    } else {
-      const workloadQueries = queryWeights.map(([query]) => query);
-
-      this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
-
-      const recommendations = await this.generateRecommendations(queryWeights);
-      session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
-
-      // Reset HypoPG only once at the end
-      await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
+      return session;
     }
 
-    session.dtaTraces = this.dtaTraces;
+    const workloadQueries = queryWeights.map(([query]) => query);
+    this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
+
+    try {
+      const recommendations = await this.generateRecommendations(queryWeights);
+      session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
+    } catch (error) {
+      // Leave no hypothetical index behind on a pooled connection; the original failure is the one to report
+      await queryRows(this.sqlDriver, 'SELECT hypopg_reset();').catch((resetError: unknown) => {
+        log('WARNING', `Error resetting hypothetical indexes: ${errorMessage(resetError)}`);
+      });
+      throw error;
+    }
+    await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
     return session;
   }
 
@@ -330,7 +336,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     const [isHypopgInstalled, hypopgMessage] = await checkHypopgInstallationStatus(this.sqlDriver);
 
     if (!isHypopgInstalled) {
-      throw new Error(hypopgMessage);
+      throw new UsageError(hypopgMessage);
     }
 
     // Pre-check 2: ANALYZE has been run at least once
@@ -339,19 +345,19 @@ export abstract class IndexTuningBase implements DtaTracer {
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
     if (!result.some((row) => cell.value(row, 'last_analyze') !== null)) {
-      const message =
+      throw new UsageError(
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
-        "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
-        'Without up-to-date statistics, the index recommendations may be inaccurate.';
-      throw new Error(message);
+          "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
+          'Without up-to-date statistics, the index recommendations may be inaccurate.'
+      );
     }
   }
 
   /** Throws when the workload cannot be read because pg_stat_statements is not installed. */
   async requirePgStatStatements(): Promise<void> {
-    const { isInstalled } = await checkExtension(this.sqlDriver, 'pg_stat_statements', false);
+    const { isInstalled } = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
     if (!isInstalled) {
-      throw new Error(
+      throw new UsageError(
         'The pg_stat_statements extension is required to read the workload, but it is not installed in this ' +
           "database. Run 'CREATE EXTENSION pg_stat_statements;' (it must also be in shared_preload_libraries), " +
           'or pass the queries to analyze_query_indexes instead.'
@@ -491,33 +497,22 @@ export abstract class IndexTuningBase implements DtaTracer {
     let totalCost = 0;
     let validQueries = 0;
 
-    try {
-      for (const [queryText, , weight] of weightedWorkload) {
-        try {
-          const planData = await this.getExplainPlanWithIndexes(queryText, unique);
-          const cost = IndexTuningBase.extractCostFromJsonPlan(planData);
-          totalCost += cost * weight;
-          validQueries += 1;
-        } catch (error) {
-          throw new Error('Error executing explain for a workload query', {
-            cause: error,
-          });
-        }
-      }
-
-      if (validQueries === 0) {
-        this.dtaTrace('    + no valid queries found for cost evaluation');
-        return Number.POSITIVE_INFINITY;
-      }
-
-      const avgCost = totalCost / validQueries;
-      this.costCache.set(cacheKey, avgCost);
-      this.dtaTrace(`    + config cost: ${formatFixed(avgCost, 2)} (from ${validQueries} queries)`);
-      return avgCost;
-    } catch (error) {
-      this.dtaTrace(`    + error evaluating configuration: ${errorMessage(error)}`);
-      throw new Error(`Error evaluating configuration: ${errorMessage(error)}`, { cause: error });
+    for (const [queryText, , weight] of weightedWorkload) {
+      const planData = await this.getExplainPlanWithIndexes(queryText, unique);
+      const cost = IndexTuningBase.extractCostFromJsonPlan(planData);
+      totalCost += cost * weight;
+      validQueries += 1;
     }
+
+    if (validQueries === 0) {
+      this.dtaTrace('    + no valid queries found for cost evaluation');
+      return Number.POSITIVE_INFINITY;
+    }
+
+    const avgCost = totalCost / validQueries;
+    this.costCache.set(cacheKey, avgCost);
+    this.dtaTrace(`    + config cost: ${formatFixed(avgCost, 2)} (from ${validQueries} queries)`);
+    return avgCost;
   }
 
   async estimateIndexSize(table: string, columns: readonly string[]): Promise<number> {
@@ -528,25 +523,21 @@ export abstract class IndexTuningBase implements DtaTracer {
       return cached;
     }
 
-    try {
-      const statsQuery = `
-            SELECT COALESCE(SUM(avg_width), 0) AS total_width,
-                   COALESCE(SUM(n_distinct), 0) AS total_distinct
-            FROM pg_stats
-            WHERE tablename = {} AND attname = ANY({})
-            `;
-      const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
-      // An aggregate without GROUP BY always returns one row
-      const first = cell.single(result);
-      const sizeEstimate = this.estimateIndexSizeInternal({
-        totalWidth: cell.integer(first, 'total_width'),
-        totalDistinct: cell.numeric(first, 'total_distinct'),
-      });
-      this.sizeEstimateCache.set(cacheKey, sizeEstimate);
-      return sizeEstimate;
-    } catch (error) {
-      throw new Error(`Error estimating index size: ${errorMessage(error)}`, { cause: error });
-    }
+    const statsQuery = `
+          SELECT COALESCE(SUM(avg_width), 0) AS total_width,
+                 COALESCE(SUM(n_distinct), 0) AS total_distinct
+          FROM pg_stats
+          WHERE tablename = {} AND attname = ANY({})
+          `;
+    const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
+    // An aggregate without GROUP BY always returns one row
+    const first = cell.single(result);
+    const sizeEstimate = this.estimateIndexSizeInternal({
+      totalWidth: cell.integer(first, 'total_width'),
+      totalDistinct: cell.numeric(first, 'total_distinct'),
+    });
+    this.sizeEstimateCache.set(cacheKey, sizeEstimate);
+    return sizeEstimate;
   }
 
   estimateIndexSizeInternal(stats: { totalWidth: number; totalDistinct: number }): number {

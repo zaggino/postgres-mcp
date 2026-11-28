@@ -121,15 +121,19 @@ test.each([
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: socket hang up' }], isError: true });
 });
 
-test('a get_top_queries statement Postgres rejects is reported without isError', async () => {
-  const { result } = await callFailingTool('get_top_queries', {}, () => databaseError('permission denied', '42501'));
+test.each([
+  ['get_top_queries', {}],
+  ['analyze_query_indexes', { queries: ['SELECT 1'] }],
+])('a %s statement Postgres rejects is reported without isError', async (name, args) => {
+  const { result } = await callFailingTool(name, args, () => databaseError('permission denied', '42501'));
 
   expect(result).toEqual({ content: [{ type: 'text', text: 'Error: permission denied' }] });
 });
 
-test('an invalid analyze_db_health type is reported with isError', async () => {
-  const { result } = await callFailingTool('analyze_db_health', { health_type: 'disk' });
+test('an invalid analyze_db_health type is reported with isError and not logged as a server error', async () => {
+  const { result, logged } = await callFailingTool('analyze_db_health', { health_type: 'disk' });
 
   expect(result.isError).toBe(true);
   expect(JSON.stringify(result.content)).toContain("Invalid health types provided: 'disk'");
+  expect(logged.filter((line) => line.startsWith('ERROR'))).toEqual([]);
 });

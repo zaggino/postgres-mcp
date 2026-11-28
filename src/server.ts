@@ -6,7 +6,7 @@ import packageJson from '../package.json' with { type: 'json' };
 import { HEALTH_TYPES } from './database-health/database-health.ts';
 import type { DatabaseRegistry } from './database-registry.ts';
 import { DatabaseAccessError } from './database-registry.ts';
-import { errorMessage } from './errors.ts';
+import { errorMessage, UsageError } from './errors.ts';
 import { toJson } from './json.ts';
 import { log } from './log.ts';
 import { RunningCalls } from './running-calls.ts';
@@ -74,7 +74,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
 
   /**
    * Register a tool that runs against a named database: adds the required `database` argument, tracks the call for
-   * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except database access failures).
+   * cancel_query, and turns a failure into an `Error:` result (logged under `errorLog`, except access and usage failures).
    */
   const registerDatabaseTool = <Shape extends z.ZodRawShape>(
     name: string,
@@ -96,7 +96,7 @@ export function createServer(registry: DatabaseRegistry): McpServer {
             registry.use(args.database, (sqlDriver) => body(sqlDriver, args), { signal: callSignal })
           );
         } catch (error) {
-          if (!(error instanceof DatabaseAccessError)) {
+          if (!(error instanceof DatabaseAccessError || error instanceof UsageError)) {
             log('ERROR', `${errorLog}: ${errorMessage(error)}`);
           }
           return formatError(error);

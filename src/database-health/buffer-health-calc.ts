@@ -3,9 +3,8 @@ import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { queryRows } from '../sql/safe-sql.ts';
 
 async function hitRateReport(sqlDriver: SqlExecutor, query: string, label: string, threshold: number): Promise<string> {
-  const [row] = await queryRows(sqlDriver, query);
   // NULL when there are no statistics yet; the aggregate always returns one row.
-  const rate = row ? cell.nullableNumeric(row, 'rate') : null;
+  const rate = cell.nullableNumeric(cell.single(await queryRows(sqlDriver, query)), 'rate');
 
   if (rate === null) {
     return `No ${label.toLowerCase()} cache statistics available.`;

@@ -2,6 +2,7 @@ import * as cell from '../sql/cells.ts';
 import { identifier } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
+import type { Row } from '../sql/sql-driver.ts';
 
 interface SequenceMetrics {
   column: string;
@@ -13,6 +14,31 @@ interface SequenceMetrics {
   schema: string;
   sequence: string;
   table: string;
+}
+
+interface SequenceColumn {
+  column: string;
+  columnType: string;
+  defaultValue: string;
+  table: string;
+}
+
+function toSequenceColumn(row: Row): SequenceColumn {
+  return {
+    table: cell.text(row, 'table'),
+    column: cell.text(row, 'column'),
+    columnType: cell.text(row, 'column_type'),
+    defaultValue: cell.text(row, 'default_value'),
+  };
+}
+
+interface SequenceAttributes {
+  lastValue: bigint;
+  readable: boolean;
+}
+
+function toSequenceAttributes(row: Row): SequenceAttributes {
+  return { readable: cell.boolean(row, 'readable'), lastValue: cell.bigint(row, 'last_value') };
 }
 
 const SMALLINT_MAX = 32_767n;
@@ -105,7 +131,7 @@ export class SequenceHealthCalc {
 
   private async getSequenceMetrics(): Promise<SequenceMetrics[]> {
     // First get all sequences used as default values
-    const sequences = await queryRows(
+    const sequenceRows = await queryRows(
       this.sqlDriver,
       `
             SELECT
@@ -130,17 +156,18 @@ export class SequenceHealthCalc {
         `
     );
 
+    const sequences = sequenceRows.map(toSequenceColumn);
+
     const sequenceMetrics: SequenceMetrics[] = [];
     for (const seq of sequences) {
       // Parse the sequence name from default value
-      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(cell.text(seq, 'default_value'));
+      const [schema, sequence] = SequenceHealthCalc.parseSequenceName(seq.defaultValue);
       if (!sequence) {
         continue;
       }
 
       // Determine max value based on column type
-      const columnType = cell.text(seq, 'column_type');
-      const maxValue = maxValueFor(columnType);
+      const maxValue = maxValueFor(seq.columnType);
 
       // Get sequence attributes
       const attrs = await SafeSqlDriver.executeParamQuery(
@@ -154,21 +181,21 @@ export class SequenceHealthCalc {
         [identifier(schema, sequence), identifier(schema, sequence)]
       );
 
-      const [attr] = attrs;
-      if (!attr) {
+      const [attrRow] = attrs;
+      if (!attrRow) {
         continue;
       }
 
-      const lastValue = cell.bigint(attr, 'last_value');
+      const { lastValue, readable } = toSequenceAttributes(attrRow);
       sequenceMetrics.push({
         schema,
-        table: cell.text(seq, 'table'),
-        column: cell.text(seq, 'column'),
+        table: seq.table,
+        column: seq.column,
         sequence,
-        columnType,
+        columnType: seq.columnType,
         lastValue,
         maxValue,
-        readable: cell.boolean(attr, 'readable'),
+        readable,
         isHealthy: Number(lastValue) / Number(maxValue) <= this.threshold,
       });
     }

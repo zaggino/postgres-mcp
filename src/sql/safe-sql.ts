@@ -171,6 +171,14 @@ function validateStatement(raw: RawStmtJson): void {
   validateNode('RawStmt', raw);
 }
 
+/** Raised when restricted mode refuses a statement. */
+export class QueryValidationError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'QueryValidationError';
+  }
+}
+
 async function validateQuery(query: string): Promise<void> {
   let stmts: readonly RawStmtJson[];
   try {
@@ -186,7 +194,7 @@ async function validateQuery(query: string): Promise<void> {
       validateStatement(stmt);
     }
   } catch (error) {
-    throw new Error(`Error validating query: ${errorMessage(error)}`, {
+    throw new QueryValidationError(`Error validating query: ${errorMessage(error)}`, {
       cause: error,
     });
   }

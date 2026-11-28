@@ -1,8 +1,8 @@
 import { errorMessage } from '../errors.ts';
 import { log, logLine } from '../log.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
-import { QueryCancelledError } from '../sql/sql-driver.ts';
 import { BufferHealthCalc } from './buffer-health-calc.ts';
+import { isCheckLocalFailure } from './check-failure.ts';
 import { ConnectionHealthCalc } from './connection-health-calc.ts';
 import { ConstraintHealthCalc } from './constraint-health-calc.ts';
 import { IndexHealthCalc } from './index-health-calc.ts';
@@ -27,21 +27,57 @@ function isHealthType(value: string): value is HealthType {
   return (HEALTH_TYPES as readonly string[]).includes(value);
 }
 
+interface HealthCheck {
+  label: string;
+  run: () => Promise<string>;
+  type: Exclude<HealthType, 'all'>;
+}
+
 /**
- * One line of the report. A failing check reports its error on its own line so the other checks still run; a
- * cancelled call stops the whole report.
+ * One line of the report. A check-local failure is reported on the check's own line so the other checks still
+ * run; any other failure (connection, cancellation) stops the whole report.
  */
 async function section(label: string, run: () => Promise<string>): Promise<string> {
   try {
     return `${label}: ${await run()}\n`;
   } catch (error) {
-    if (error instanceof QueryCancelledError) {
+    if (!isCheckLocalFailure(error)) {
       throw error;
     }
     const message = errorMessage(error);
     log('ERROR', `Health check "${label}" failed: ${message}`);
     return `${label}: Error: ${message}\n`;
   }
+}
+
+/** The checks in report order. The index checks share one calc because it caches the index listing. */
+function healthChecks(sqlDriver: SqlExecutor): HealthCheck[] {
+  const indexHealth = new IndexHealthCalc(sqlDriver);
+  return [
+    { type: 'index', label: 'Invalid index check', run: () => indexHealth.invalidIndexCheck() },
+    { type: 'index', label: 'Duplicate index check', run: () => indexHealth.duplicateIndexCheck() },
+    { type: 'index', label: 'Index bloat', run: () => indexHealth.indexBloat() },
+    { type: 'index', label: 'Unused index check', run: () => indexHealth.unusedIndexes() },
+    {
+      type: 'connection',
+      label: 'Connection health',
+      run: () => new ConnectionHealthCalc(sqlDriver).connectionHealthCheck(),
+    },
+    { type: 'vacuum', label: 'Vacuum health', run: () => new VacuumHealthCalc(sqlDriver).transactionIdDangerCheck() },
+    { type: 'sequence', label: 'Sequence health', run: () => new SequenceHealthCalc(sqlDriver).sequenceDangerCheck() },
+    {
+      type: 'replication',
+      label: 'Replication health',
+      run: () => new ReplicationCalc(sqlDriver).replicationHealthCheck(),
+    },
+    { type: 'buffer', label: 'Buffer health for indexes', run: () => new BufferHealthCalc(sqlDriver).indexHitRate() },
+    { type: 'buffer', label: 'Buffer health for tables', run: () => new BufferHealthCalc(sqlDriver).tableHitRate() },
+    {
+      type: 'constraint',
+      label: 'Constraint health',
+      run: () => new ConstraintHealthCalc(sqlDriver).invalidConstraintsCheck(),
+    },
+  ];
 }
 
 export class DatabaseHealthTool {
@@ -72,57 +108,17 @@ export class DatabaseHealthTool {
         healthTypes.add(type);
       }
 
-      if (healthTypes.has('all')) {
-        for (const type of HEALTH_TYPES) {
-          if (type !== 'all') {
-            healthTypes.add(type);
-          }
-        }
-      }
-
+      const all = healthTypes.has('all');
       let result = '';
-
-      if (healthTypes.has('index')) {
-        const indexHealth = new IndexHealthCalc(this.sqlDriver);
-        result += await section('Invalid index check', () => indexHealth.invalidIndexCheck());
-        result += await section('Duplicate index check', () => indexHealth.duplicateIndexCheck());
-        result += await section('Index bloat', () => indexHealth.indexBloat());
-        result += await section('Unused index check', () => indexHealth.unusedIndexes());
-      }
-
-      if (healthTypes.has('connection')) {
-        const connectionHealth = new ConnectionHealthCalc(this.sqlDriver);
-        result += await section('Connection health', () => connectionHealth.connectionHealthCheck());
-      }
-
-      if (healthTypes.has('vacuum')) {
-        const vacuumHealth = new VacuumHealthCalc(this.sqlDriver);
-        result += await section('Vacuum health', () => vacuumHealth.transactionIdDangerCheck());
-      }
-
-      if (healthTypes.has('sequence')) {
-        const sequenceHealth = new SequenceHealthCalc(this.sqlDriver);
-        result += await section('Sequence health', () => sequenceHealth.sequenceDangerCheck());
-      }
-
-      if (healthTypes.has('replication')) {
-        const replicationHealth = new ReplicationCalc(this.sqlDriver);
-        result += await section('Replication health', () => replicationHealth.replicationHealthCheck());
-      }
-
-      if (healthTypes.has('buffer')) {
-        const bufferHealth = new BufferHealthCalc(this.sqlDriver);
-        result += await section('Buffer health for indexes', () => bufferHealth.indexHitRate());
-        result += await section('Buffer health for tables', () => bufferHealth.tableHitRate());
-      }
-
-      if (healthTypes.has('constraint')) {
-        const constraintHealth = new ConstraintHealthCalc(this.sqlDriver);
-        result += await section('Constraint health', () => constraintHealth.invalidConstraintsCheck());
+      for (const check of healthChecks(this.sqlDriver)) {
+        if (all || healthTypes.has(check.type)) {
+          result += await section(check.label, check.run);
+        }
       }
 
       return result || 'No health checks were performed.';
     } catch (error) {
+      // Failures that are not local to one check (connection, cancellation) abort the whole report.
       const message = errorMessage(error);
       logLine(`Error calculating database health: ${message}`);
       return `Error calculating database health: ${message}`;

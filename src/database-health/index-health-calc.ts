@@ -92,6 +92,40 @@ function toIndexInfo(row: Row): IndexInfo {
   };
 }
 
+interface BloatedIndex {
+  bloatBytes: number;
+  index: string;
+  indexBytes: number;
+  table: string;
+}
+
+function toBloatedIndex(row: Row): BloatedIndex {
+  return {
+    index: cell.text(row, 'index'),
+    table: cell.text(row, 'table'),
+    bloatBytes: cell.numeric(row, 'bloat_bytes'),
+    indexBytes: cell.numeric(row, 'index_bytes'),
+  };
+}
+
+interface UnusedIndex {
+  index: string;
+  indexScans: number;
+  primary: boolean;
+  sizeBytes: number;
+  table: string;
+}
+
+function toUnusedIndex(row: Row): UnusedIndex {
+  return {
+    index: cell.text(row, 'index'),
+    table: cell.text(row, 'table'),
+    sizeBytes: cell.integer(row, 'size_bytes'),
+    indexScans: cell.integer(row, 'index_scans'),
+    primary: cell.boolean(row, 'primary'),
+  };
+}
+
 export class IndexHealthCalc {
   private cachedIndexes: IndexInfo[] | null = null;
   private readonly sqlDriver: SqlExecutor;
@@ -162,7 +196,7 @@ export class IndexHealthCalc {
 
   /** Check for bloated indexes that are larger than `minSize` bytes (default 100MB). */
   async indexBloat(minSize = 104_857_600): Promise<string> {
-    const bloatedIndexes = await SafeSqlDriver.executeParamQuery(
+    const rows = await SafeSqlDriver.executeParamQuery(
       this.sqlDriver,
       `
             WITH btree_index_atts AS (
@@ -298,16 +332,17 @@ export class IndexHealthCalc {
       [minSize]
     );
 
+    const bloatedIndexes = rows.map(toBloatedIndex);
     if (bloatedIndexes.length === 0) {
       return 'No bloated indexes found.';
     }
 
     const result = ['Bloated indexes found:'];
-    for (const row of bloatedIndexes) {
-      const bloatMb = bytesToMb(cell.numeric(row, 'bloat_bytes'));
-      const totalMb = bytesToMb(cell.numeric(row, 'index_bytes'));
+    for (const bloated of bloatedIndexes) {
+      const bloatMb = bytesToMb(bloated.bloatBytes);
+      const totalMb = bytesToMb(bloated.indexBytes);
       result.push(
-        `Index '${cell.text(row, 'index')}' on table '${cell.text(row, 'table')}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
+        `Index '${bloated.index}' on table '${bloated.table}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
       );
     }
 
@@ -358,7 +393,7 @@ export class IndexHealthCalc {
 
   /** Check for unused or rarely used indexes (at most `maxScans` scans, default 50). */
   async unusedIndexes(maxScans = 50): Promise<string> {
-    const unused = await SafeSqlDriver.executeParamQuery(
+    const rows = await SafeSqlDriver.executeParamQuery(
       this.sqlDriver,
       `
             SELECT
@@ -383,18 +418,19 @@ export class IndexHealthCalc {
       [maxScans]
     );
 
+    const unused = rows.map(toUnusedIndex);
     if (unused.length === 0) {
       return 'No unused indexes found.';
     }
 
     const result = ['Rarely used indexes found:'];
     for (const row of unused) {
-      if (cell.boolean(row, 'primary')) {
+      if (row.primary) {
         continue;
       }
-      const sizeMb = bytesToMb(cell.integer(row, 'size_bytes'));
+      const sizeMb = bytesToMb(row.sizeBytes);
       result.push(
-        `Index '${cell.text(row, 'index')}' on table '${cell.text(row, 'table')}' has only been scanned ${cell.integer(row, 'index_scans')} times and uses ${sizeMb.toFixed(1)}MB of space`
+        `Index '${row.index}' on table '${row.table}' has only been scanned ${row.indexScans} times and uses ${sizeMb.toFixed(1)}MB of space`
       );
     }
 

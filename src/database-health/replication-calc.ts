@@ -2,6 +2,7 @@ import * as cell from '../sql/cells.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { queryRows } from '../sql/safe-sql.ts';
 import type { Row } from '../sql/sql-driver.ts';
+import { isCheckLocalFailure } from './check-failure.ts';
 
 interface ReplicationSlot {
   active: boolean;
@@ -15,8 +16,6 @@ interface ReplicationMetrics {
   replicationLagSeconds: number | null;
   replicationSlots: ReplicationSlot[];
 }
-
-type Feature = 'replication_lag' | 'replication_slots' | 'replicating';
 
 function describeSlot(slot: ReplicationSlot): string {
   // Physical slots have no database, so only a logical slot names one.
@@ -32,7 +31,6 @@ function toReplicationSlot(row: Row): ReplicationSlot {
 }
 
 export class ReplicationCalc {
-  private readonly featureSupport = new Map<Feature, boolean>();
   private serverVersion: number | null = null;
   private readonly sqlDriver: SqlExecutor;
 
@@ -101,26 +99,18 @@ export class ReplicationCalc {
 
   private async isReplica(): Promise<boolean> {
     const result = await queryRows(this.sqlDriver, 'SELECT pg_is_in_recovery()');
-    const [row] = result;
-    return row ? cell.boolean(row, 'pg_is_in_recovery') : false;
+    return cell.boolean(cell.single(result), 'pg_is_in_recovery');
   }
 
   private async getReplicationLag(): Promise<number | null> {
-    if (!this.featureSupported('replication_lag')) {
-      return null;
-    }
-
     // Use appropriate functions based on PostgreSQL version
     const lagCondition =
       (await this.getServerVersion()) >= 100_000
         ? 'pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()'
         : 'pg_last_xlog_receive_location() = pg_last_xlog_replay_location()';
 
-    let result: Row[];
-    try {
-      result = await queryRows(
-        this.sqlDriver,
-        `
+    const result = await this.#tryQuery(
+      `
                 SELECT
                     CASE
                         WHEN NOT pg_is_in_recovery() OR ${lagCondition} THEN 0
@@ -128,66 +118,57 @@ export class ReplicationCalc {
                     END
                 AS replication_lag
             `
-      );
-    } catch {
-      // Only a failing query marks the feature unsupported.
-      this.featureSupport.set('replication_lag', false);
+    );
+    if (result === null) {
       return null;
     }
-    const [first] = result;
-    // A NULL lag (nothing replayed yet) is unknown for this call only; a later call may have a lag.
-    return first ? cell.nullableNumeric(first, 'replication_lag') : null;
+    // The query has no FROM, so it returns one row. A NULL lag (nothing replayed yet) is unknown.
+    return cell.nullableNumeric(cell.single(result), 'replication_lag');
   }
 
   private async getReplicationSlots(): Promise<ReplicationSlot[]> {
-    if ((await this.getServerVersion()) < 90_400 || !this.featureSupported('replication_slots')) {
+    if ((await this.getServerVersion()) < 90_400) {
       return [];
     }
 
-    let result: Row[];
-    try {
-      result = await queryRows(
-        this.sqlDriver,
-        `
+    const result = await this.#tryQuery(
+      `
                 SELECT
                     slot_name,
                     database,
                     active
                 FROM pg_replication_slots
             `
-      );
-    } catch {
-      this.featureSupport.set('replication_slots', false);
-      return [];
-    }
-    return result.map(toReplicationSlot);
+    );
+    return result === null ? [] : result.map(toReplicationSlot);
   }
 
   private async isReplicating(): Promise<boolean> {
-    if (!this.featureSupported('replicating')) {
-      return false;
-    }
-
-    try {
-      const result = await queryRows(this.sqlDriver, 'SELECT state FROM pg_stat_replication');
-      return result.length > 0;
-    } catch {
-      this.featureSupport.set('replicating', false);
-      return false;
-    }
+    const result = await this.#tryQuery('SELECT state FROM pg_stat_replication');
+    return result !== null && result.length > 0;
   }
 
   /** PostgreSQL server version as a number (e.g. 100000 for version 10.0). */
   private async getServerVersion(): Promise<number> {
     if (this.serverVersion === null) {
       const result = await queryRows(this.sqlDriver, 'SHOW server_version_num');
-      const [first] = result;
-      this.serverVersion = first ? Number.parseInt(cell.text(first, 'server_version_num'), 10) : 0;
+      this.serverVersion = Number.parseInt(cell.text(cell.single(result), 'server_version_num'), 10);
     }
     return this.serverVersion;
   }
 
-  private featureSupported(feature: Feature): boolean {
-    return this.featureSupport.get(feature) ?? true;
+  /**
+   * Run an optional probe. Returns null when the server rejects it (a missing view or privilege, an older
+   * server), so the feature counts as unsupported; any other failure, such as a cancellation, propagates.
+   */
+  async #tryQuery(sql: string): Promise<Row[] | null> {
+    try {
+      return await queryRows(this.sqlDriver, sql);
+    } catch (error) {
+      if (isCheckLocalFailure(error)) {
+        return null;
+      }
+      throw error;
+    }
   }
 }

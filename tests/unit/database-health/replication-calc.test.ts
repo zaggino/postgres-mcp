@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { ReplicationCalc } from '../../../src/database-health/replication-calc.ts';
+import { QueryCancelledError } from '../../../src/sql/sql-driver.ts';
 import type { Row } from '../../../src/sql/sql-driver.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
+import { databaseError } from '../../support/fake-pool.ts';
 
-function replicaExecutor(options: { lags?: Row[][]; slots?: Row[] }) {
-  const lags = [...(options.lags ?? [])];
+function replicaExecutor(options: { lag?: Row[]; lagError?: Error; slots?: Row[] }) {
   return fakeExecutor((query) => {
     if (query.includes('pg_is_in_recovery()') && !query.includes('replication_lag')) {
       return [{ pg_is_in_recovery: true }];
@@ -14,7 +15,10 @@ function replicaExecutor(options: { lags?: Row[][]; slots?: Row[] }) {
       return [{ server_version_num: '160000' }];
     }
     if (query.includes('replication_lag')) {
-      return lags.shift();
+      if (options.lagError) {
+        throw options.lagError;
+      }
+      return options.lag ?? [{ replication_lag: '0' }];
     }
     if (query.includes('pg_replication_slots')) {
       return options.slots ?? [];
@@ -27,15 +31,14 @@ function replicaExecutor(options: { lags?: Row[][]; slots?: Row[] }) {
 }
 
 describe('replicationHealthCheck', () => {
-  it('reports the lag of a later check after an earlier one found it NULL', async () => {
-    const calc = new ReplicationCalc(
-      replicaExecutor({ lags: [[{ replication_lag: null }], [{ replication_lag: '2.5' }]] })
+  it('reports a NULL lag without an error and still reports the rest', async () => {
+    const calc = new ReplicationCalc(replicaExecutor({ lag: [{ replication_lag: null }] }));
+
+    const report = await calc.replicationHealthCheck();
+
+    expect(report).toBe(
+      'This is a replica database.\nWARNING: Replica is not actively replicating from primary!\n\nNo replication slots found.'
     );
-
-    await calc.replicationHealthCheck();
-    const second = await calc.replicationHealthCheck();
-
-    expect(second).toContain('Replication lag: 2.5 seconds');
   });
 
   it('names the database only for a logical replication slot', async () => {
@@ -52,5 +55,23 @@ describe('replicationHealthCheck', () => {
 
     expect(report).toContain('- slot_a\n');
     expect(report).toContain('- slot_b (database: app)');
+  });
+});
+
+describe('replicationHealthCheck when the lag query fails', () => {
+  it('still reports when Postgres rejects the query', async () => {
+    const calc = new ReplicationCalc(
+      replicaExecutor({ lagError: databaseError('function pg_last_xact_replay_timestamp() does not exist', '42883') })
+    );
+
+    const report = await calc.replicationHealthCheck();
+
+    expect(report).toContain('This is a replica database.');
+  });
+
+  it('rejects when the call was cancelled', async () => {
+    const calc = new ReplicationCalc(replicaExecutor({ lagError: new QueryCancelledError() }));
+
+    await expect(calc.replicationHealthCheck()).rejects.toThrow('Query cancelled');
   });
 });

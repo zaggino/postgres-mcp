@@ -55,8 +55,7 @@ export class ConnectionHealthCalc {
             FROM pg_stat_activity
         `
     );
-    const [row] = result;
-    return row ? cell.integer(row, 'count') : 0;
+    return cell.integer(cell.single(result), 'count');
   }
 
   /** Number of connections that are idle in transaction. */
@@ -69,7 +68,6 @@ export class ConnectionHealthCalc {
             WHERE state = 'idle in transaction'
         `
     );
-    const [row] = result;
-    return row ? cell.integer(row, 'count') : 0;
+    return cell.integer(cell.single(result), 'count');
   }
 }

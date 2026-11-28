@@ -20,13 +20,17 @@ export interface DtaTracer {
 }
 
 /**
- * The plan as plain JSON values. The pool parses json losslessly, so a cost or row count a double cannot write back
- * exactly (EXPLAIN prints `%.2f`, e.g. `98765432109876.54`) arrives as a raw JSON value; plan readers do arithmetic
- * and need doubles, so the plan is re-parsed with plain JSON.parse. A driver that hands over text is parsed the same.
+ * The plan as plain JSON values. The pool parses json losslessly, so every cost and row count arrives as a raw JSON
+ * value; plan readers do arithmetic and need doubles, so the plan is re-parsed with plain JSON.parse. Text a driver
+ * hands over is parsed directly and kept as it is when it is not JSON.
  */
 function parsePlanColumn(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    // oxlint-disable-next-line unicorn/prefer-structured-clone -- not a clone: the round trip turns raw JSON numbers into doubles, structuredClone would copy them as they are
+    return JSON.parse(JSON.stringify(value)) as unknown;
+  }
   try {
-    return JSON.parse(typeof value === 'string' ? value : JSON.stringify(value)) as unknown;
+    return JSON.parse(value) as unknown;
   } catch {
     return value;
   }

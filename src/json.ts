@@ -23,42 +23,16 @@ declare global {
   }
 }
 
-const NUMBER_TEXT = /^(?<sign>-?)(?<int>\d*)(?:\.(?<frac>\d*))?(?:[eE](?<exp>[+-]?\d+))?$/u;
-
-/** A decimal number's sign, significant digits (no leading or trailing zeros) and exponent, so equal values compare equal. */
-function normalizeDecimal(text: string): string {
-  const groups = NUMBER_TEXT.exec(text)?.groups;
-  if (!groups) {
-    return text;
-  }
-  const frac = groups.frac ?? '';
-  const digits = `${groups.int ?? ''}${frac}`;
-  const stripped = digits.replace(/^0+/u, '');
-  const significant = stripped.replace(/0+$/u, '');
-  if (significant === '') {
-    return '0';
-  }
-  const exponent = Number(groups.exp ?? '0') - frac.length + (stripped.length - significant.length);
-  return `${groups.sign ?? ''}${significant}e${exponent}`;
-}
-
 /**
- * JSON.parse that keeps the source digits of a number a double cannot write back. pg's own parse rounds those
- * (integers beyond 2^53, 1e400, long decimals). A number stays a JS number when the double's shortest round-trip
- * decimal equals the source's value, so `toJson` writes the same value; otherwise it is kept as a raw JSON value
- * (an object, not a number) that `toJson` writes back with its source digits. Code that does arithmetic on the result
- * must convert raw values first (see `parsePlanColumn` in `src/explain/explain-plan.ts`). Value-equal numbers are
- * written in their shortest form: `12.50` comes back as `12.5` and `-0` as `0`.
+ * JSON.parse that keeps every number as a raw JSON value holding its source text, so `toJson` writes it back exactly
+ * as Postgres sent it; pg's own parse rounds what a double cannot hold (integers beyond 2^53, 1e400, long decimals).
+ * A number in the result is therefore never a JS number: code that does arithmetic on it re-parses with plain
+ * JSON.parse first (see `parsePlanColumn` in `src/explain/explain-plan.ts`).
  */
 export function parseJsonLossless(text: string): unknown {
-  return JSON.parse(text, (_key, value, context) => {
-    const { source } = context;
-    if (typeof value === 'number' && source !== undefined) {
-      const exact = Number.isFinite(value) && normalizeDecimal(source) === normalizeDecimal(String(value));
-      return exact ? value : JSON.rawJSON(source);
-    }
-    return value;
-  });
+  return JSON.parse(text, (_key, value, { source }) =>
+    typeof value === 'number' && source !== undefined ? JSON.rawJSON(source) : value
+  );
 }
 
 /**

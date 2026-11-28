@@ -1,18 +1,11 @@
-import { expect, it as test } from 'vitest';
+import { expect, test } from 'vitest';
 
 import { isJsonObject, parseJsonLossless, toJson } from '../../src/json.ts';
 
-test('parseJsonLossless keeps a number a double cannot hold with its source digits', () => {
-  const parsed = parseJsonLossless('{"a":9007199254740993,"b":1e400,"c":3.14159265358979323846}');
-  expect(toJson(parsed)).toBe('{"a":9007199254740993,"b":1e400,"c":3.14159265358979323846}');
-});
-
-test('parseJsonLossless keeps the digits of an integer a double holds exactly but writes back differently', () => {
-  expect(toJson(parseJsonLossless('{"n":1000003000003000064}'))).toBe('{"n":1000003000003000064}');
-});
-
-test('parseJsonLossless writes value-equal numbers in their shortest form', () => {
-  expect(toJson(parseJsonLossless('{"d":12.50,"e":[1,0.1,1e2,-0]}'))).toBe('{"d":12.5,"e":[1,0.1,100,0]}');
+test('parseJsonLossless and toJson write every json number back exactly as sent', () => {
+  const text =
+    '{"a":9007199254740993,"b":1e400,"c":3.14159265358979323846,"n":1000003000003000064,"d":12.50,"e":[1,0.1,1E+2,-0]}';
+  expect(toJson(parseJsonLossless(text))).toBe(text);
 });
 
 test('toJson writes a bigint as an exact number and non-finite floats as strings', () => {

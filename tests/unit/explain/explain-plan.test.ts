@@ -110,7 +110,10 @@ describe(ExplainPlanTool, () => {
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM a, b, c');
 
-    expect(result).toBeInstanceOf(ExplainPlanArtifact);
+    if (!(result instanceof ExplainPlanArtifact)) {
+      throw new TypeError('expected an ExplainPlanArtifact');
+    }
+    expect(result.value).toContain('"Total Cost": 98765432109876.55');
   });
 
   it('uses GENERIC_PLAN for bind variables on PostgreSQL 16', async () => {

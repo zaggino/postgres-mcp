@@ -1,6 +1,6 @@
 # TODO
 
-Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. The file is append-only, oldest entries first; delete an entry once it is resolved.
+Follow-ups for this repository. Each entry is a heading of the form `## YYYY-MM-DD · <Critical|Major|Minor> · <Type> · <title>` followed by a short body: what happens, where in `src/`, and why it matters. An entry whose fix requires a breaking change starts its body with `_BREAKING CHANGE REQUIRED_`. The file is append-only, oldest entries first; delete an entry once it is resolved.
 
 ## 2026-11-26 · Minor · Bug · Shutdown does not cover SIGHUP or a closed stdout
 
@@ -23,6 +23,8 @@ Its agent instructions require the file itself to be updated in the same change 
 The `A_Expr` visitor in `src/sql/bind-params.ts` ends with a branch for `kind === "AEXPR_OP"` with a `SelectStmt` right-hand side, ported from upstream's `kind == 0` whose comment meant `IN`. The block just above already visits any `SelectStmt` right-hand side in its own scope, so the branch only repeats that visit. `libpg-query` parses `x IN (SELECT ...)` as a `SubLink` (`ANY_SUBLINK`), not an `A_Expr`, and `x IN (1, 2)` as `AEXPR_IN` with a `List`, so neither form reaches the branch. Delete it, and check whether the columns of an `IN (SELECT ...)` subquery are collected in the subquery's scope.
 
 ## 2026-11-26 · Minor · Bug · `execute_sql`'s `sql` parameter defaults to `"all"`
+
+_BREAKING CHANGE REQUIRED_
 
 The `execute_sql` registration in `src/server.ts` defaults `sql` to `"all"`, so a call without it sends `all` to the database and returns a syntax error. The parameter should be required; that is a breaking surface change (`feat!`).
 
@@ -217,6 +219,8 @@ That is fine for strings and numbers, but not for the parsed `json`/`jsonb` obje
 
 ## 2026-11-26 · Minor · Dependencies · The MCP SDK deprecates the SSE server transport
 
+_BREAKING CHANGE REQUIRED_
+
 `SSEServerTransport` (used in `src/transports/sse.ts`) and `SSEClientTransport` (used in `tests/unit/http-transports.test.ts`) are deprecated in `@modelcontextprotocol/sdk`. `src/transports/sse.ts` carries a file-level `typescript/no-deprecated` disable and the test an inline one, because `--transport=sse` is part of the CLI surface. When the SDK removes the transport, drop `--transport=sse` and its flags in a breaking-change (`feat!`) commit.
 
 ## 2026-11-26 · Major · Infra · The first npm publish has to be done by hand
@@ -269,6 +273,8 @@ The port is covered: `tests/unit/list-databases.test.ts` labels a `:5433` server
 
 ## 2026-11-27 · Minor · Performance · `list_databases` output repeats the same fields for every database
 
+_BREAKING CHANGE REQUIRED_
+
 Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/database-registry.ts`) carries `source`, `state` and `idle_seconds_left`, mostly as `"server"`, `"closed"` and `null`. With 30 discovered databases one call costs about 1.5k tokens of an agent's context, most of it repetition. Group the databases under their source and leave out null and default fields (for example list closed databases by name only), which should cut the output by more than half. The tests in `tests/unit/list-databases.test.ts` and the `list()` tests in `tests/unit/database-registry.test.ts` need updating.
 
 ## 2026-11-27 · Major · Bug · Object listings read `information_schema`, which hides objects the role cannot access
@@ -280,6 +286,8 @@ Each entry in the `list_databases` result (`DatabaseRegistry.list()` in `src/dat
 `shutdown()` in `src/main.ts` awaits `registry.closeAll()`, which ends every pool with `pool.end()`. node-postgres resolves `pool.end()` only once every client is released, including clients still running a statement, so shutdown lasts as long as the longest running call: up to the statement timeout (30 s by default in restricted mode, none by default in unrestricted mode). On stdio this starts when the client closes stdin. A client that does not kill the server leaves it running until the statement finishes. A client that does kill it after a short grace period leaves the statement running in postgres, because postgres does not notice the closed socket while a statement executes. Some clients wait only about half a second between closing stdin and SIGKILL. Bound `closeAll` (a few seconds), then cancel the statements still running and destroy their clients. The cancel path exists: aborting the `signal` a `SqlDriver` was built with (`src/sql/sql-driver.ts`) sends a CancelRequest for its running statement, so shutdown can abort the signals of the calls in flight.
 
 ## 2026-11-27 · Minor · Feature · Health, top-queries and index tools report failures without `isError`
+
+_BREAKING CHANGE REQUIRED_
 
 `formatError` in `src/tools/result.ts` sets `isError` on an `Error:` result whose SQL got no answer from Postgres, but `analyze_db_health`, `get_top_queries`, `analyze_query_indexes` and `analyze_workload_indexes` catch their failures deep inside and return them as ordinary output: health text (`src/database-health/database-health.ts`), `Error getting slow queries: ...` text (`src/top-queries/top-queries-calc.ts`) and `{"error": ...}` JSON (`src/index/presentation.ts`). A connection failure or restricted-mode timeout on these tools is therefore not flagged, and the server instructions only tell agents that these tools report failures in their output. Let those paths return the error (or a result carrying it) to the tool handler so it can go through `formatError`, then drop the clause from `serverInstructions` (`src/server-instructions.ts`) and the note from README's "Differences from upstream".
 
@@ -341,6 +349,8 @@ About 34 lines in `src/` and 6 in `tests/` that mention upstream or Python, and 
 
 ## 2026-11-28 · Minor · Feature · Index advisor output is untyped and formats numbers as text
 
+_BREAKING CHANGE REQUIRED_
+
 `analyze_query_indexes` and `analyze_workload_indexes` build their result in `src/index/presentation.ts` as `Record<string, unknown>`, in the shape the Python server printed:
 
 - `recommendations` is an array, or the sentence `No index recommendations found.` when there are none.
@@ -354,6 +364,8 @@ Do this after "Health, top-queries and index tools report failures without `isEr
 Changing a field's type breaks callers that read the current shape, so commit it as `feat!`, preferably before 1.0.0, and update `tests/unit/server-surface.test.ts` and README's "Differences from upstream". It removes the last uses of `naturalSize`, which settles "`naturalSize` uses decimal units". The other tools cannot simply follow: `structuredContent` must be an object, and `execute_sql` and the listing tools return an array or plain text.
 
 ## 2026-11-28 · Minor · Performance · Index advisor output includes its trace by default
+
+_BREAKING CHANGE REQUIRED_
 
 `executeAnalysis` in `src/index/presentation.ts` adds `_langfuse_trace`, the advisor's trace lines, to every result of `analyze_query_indexes` and `analyze_workload_indexes` unless `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE` is set to something other than `true`. The trace is debugging output and costs an agent tokens on every call. Leave it out unless the variable is `true`, and update the README, which documents the default.
 
@@ -374,6 +386,8 @@ Replace the tuples with `{ query, stmt, weight }`, `{ indexes, cost }` and `{ qu
 
 ## 2026-11-28 · Major · Bug · `date` and `timestamp` values are shifted by the host's time zone
 
+_BREAKING CHANGE REQUIRED_
+
 `pg` parses `date`, `timestamp` and `timestamptz` into JavaScript `Date` objects, and `toJson` (`src/tools/result.ts`) prints a `Date` as a UTC instant. `customTypes` in `src/sql/sql-driver.ts` replaces only the `int8` parser. On a host at UTC+1 with the session time zone UTC, `execute_sql` returns:
 
 - `date '2024-03-10'` as `"2024-03-09T23:00:00.000Z"`, the day before.
@@ -386,9 +400,13 @@ Arrays of these types behave the same. An agent reading a `date` column therefor
 
 ## 2026-11-28 · Minor · Bug · Float `NaN` and `Infinity` are returned as `null`
 
+_BREAKING CHANGE REQUIRED_
+
 `pg` parses `float4` and `float8` into JavaScript numbers, and `JSON.stringify` writes `NaN`, `Infinity` and `-Infinity` as `null`. `toJson` (`src/tools/result.ts`) and `rowsToJson` (`src/top-queries/top-queries-calc.ts`) therefore return `'NaN'::float8` and `'Infinity'::float8` as `null`, alone or in an array, and an agent cannot tell them from NULL. `'NaN'::numeric` is not affected, because `numeric` stays a string. Write the three values as the strings `"NaN"`, `"Infinity"` and `"-Infinity"`.
 
 ## 2026-11-28 · Minor · Bug · Numbers beyond a double are returned inconsistently or rounded
+
+_BREAKING CHANGE REQUIRED_
 
 `customTypes` in `src/sql/sql-driver.ts` parses a scalar `int8` to a `number` when it is safe and a `bigint` otherwise, and `toJson` (`src/tools/result.ts`) writes a `bigint` as a string. Everything else uses the `pg` defaults. `execute_sql` then returns:
 
@@ -401,9 +419,13 @@ Decide one rule for `int8` (always a string, or a number when safe) and apply it
 
 ## 2026-11-28 · Minor · Bug · `bytea` values are returned as a `Buffer` object
 
+_BREAKING CHANGE REQUIRED_
+
 `pg` parses `bytea` into a `Buffer`, which `toJson` (`src/tools/result.ts`) writes through `Buffer.toJSON`: `'\xdeadbeef'::bytea` comes back as `{"type":"Buffer","data":[222,173,190,239]}`, one array element per byte, also inside a `bytea[]`. A column of small binary values fills an agent's context, and the output is not something Postgres accepts back. Return the hex text Postgres sends (`\xdeadbeef`).
 
 ## 2026-11-28 · Minor · Feature · `interval`, `point` and `circle` are returned as driver objects
+
+_BREAKING CHANGE REQUIRED_
 
 `pg` parses three types into its own objects, which `toJson` (`src/tools/result.ts`) writes as they are: `interval '1 year 2 mons 3 days 04:05:06.789'` as `{"years":1,"months":2,"days":3,"hours":4,"minutes":5,"seconds":6,"milliseconds":789}`, `point '(1,2)'` as `{"x":1,"y":2}` and `circle '<(1,2),3>'` as `{"x":1,"y":2,"radius":3}`. Every other geometric type, and every range, comes back as Postgres text (`box` as `"(1,1),(0,0)"`), and none of the three objects can be pasted back into SQL. Return the text Postgres sends for these three and their arrays. It changes tool output (`feat!`).
 

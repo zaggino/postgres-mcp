@@ -108,7 +108,7 @@ test('a pg_stats integer beyond 2^53 is bound with every digit', async () => {
     statsDriver({
       data_type: 'bigint',
       common_vals: '{1234567890123456789}',
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );
@@ -122,7 +122,7 @@ test("a small pg_stats float is bound in Python's exponent notation", async () =
     statsDriver({
       data_type: 'double',
       common_vals: '{0.00002}',
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );
@@ -136,7 +136,7 @@ test('a quote in a pg_stats text value cannot end the bound string literal', asy
     statsDriver({
       data_type: 'text',
       common_vals: "{x'; DROP TABLE t; --}",
-      common_freqs: '{0.5}',
+      common_freqs: [0.5],
       histogram_bounds: null,
     })
   );

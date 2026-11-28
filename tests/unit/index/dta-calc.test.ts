@@ -3,7 +3,7 @@ import { beforeAll, expect, test, vi } from 'vitest';
 import { ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import { ConditionColumnCollector, DatabaseTuningAdvisor } from '../../../src/index/dta-calc.ts';
 import type { QueryWeight } from '../../../src/index/index-opt-base.ts';
-import { IndexRecommendation } from '../../../src/index/index-opt-base.ts';
+import { IndexRecommendation, IndexTuningBase } from '../../../src/index/index-opt-base.ts';
 import { ColumnCollector, PgFloat } from '../../../src/sql/bind-params.ts';
 import { AstNode, loadParser, parseSql } from '../../../src/sql/pg-ast.ts';
 import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
@@ -191,7 +191,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       return rows({ total_width: 10, total_distinct: 100 });
     }
     if (query.includes('pg_extension')) {
-      return rows({ exists: 1 });
+      return rows({ extversion: '1.4.0' });
     }
     if (query.includes('hypopg_disable_index') || query.includes('hypopg_enable_index')) {
       return [];
@@ -200,7 +200,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       return rows({ rel_size: 100_000 });
     }
     if (query.includes('pg_stat_user_tables')) {
-      return rows({ last_analyze: '2023-01-01' });
+      return rows({ last_analyze: new Date('2023-01-01') });
     }
     return [];
   });
@@ -303,9 +303,34 @@ test('index exists compares table, type and columns of existing definitions', ()
 test('index size estimation handles positive, negative and zero ndistinct', () => {
   const dta = createAdvisor();
 
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 5 })).toBe(180); // 18.0 * 5.0 * 2.0
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: -0.5 })).toBe(36); // 18.0 * 1.0 * 2.0
-  expect(dta.estimateIndexSizeInternal({ total_width: 10, total_distinct: 0 })).toBe(36); // 18.0 * 1.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: 5 })).toBe(180); // 18.0 * 5.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: -0.5 })).toBe(36); // 18.0 * 1.0 * 2.0
+  expect(dta.estimateIndexSizeInternal({ totalWidth: 10, totalDistinct: 0 })).toBe(36); // 18.0 * 1.0 * 2.0
+});
+
+test('a string total cost in a plan is rejected instead of coerced to a number', () => {
+  expect(() => IndexTuningBase.extractCostFromJsonPlan({ Plan: { 'Total Cost': '12.5' } })).toThrow(
+    'Error extracting cost from plan'
+  );
+});
+
+test('index size estimation fails on NULL column statistics instead of assuming zero width', async () => {
+  const dta = createAdvisor(createDriver(() => rows({ total_width: null, total_distinct: 5 })));
+
+  const error = await dta.estimateIndexSize('users', ['name']).catch((error_: unknown) => error_);
+
+  expect(error).toMatchObject({ message: 'Error estimating index size' });
+  expect(error).toHaveProperty('cause.message', expect.stringContaining('total_width'));
+});
+
+test('query statistics keep a queryid beyond 2^53 as a bigint and a safe call count as a number', async () => {
+  const dta = createAdvisor(
+    createDriver(() => rows({ queryid: 9_007_199_254_740_993n, query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 }))
+  );
+
+  await expect(dta.getQueryStatsDirect()).resolves.toEqual([
+    { queryid: 9_007_199_254_740_993n, query: 'SELECT 1', calls: 120, avg_exec_time: 7.5 },
+  ]);
 });
 
 test('filter long text columns drops candidates containing long text columns', async () => {
@@ -381,9 +406,9 @@ test('basic workload analysis recommends indexes for the queried columns', async
     createDriver(
       sequential([
         // check if hypopg is enabled
-        rows({ hypopg_enabled_result: 1 }),
+        rows({ extversion: '1.4.0' }),
         // check last analyze
-        rows({ last_analyze: '2024-01-01 00:00:00' }),
+        rows({ last_analyze: new Date('2024-01-01 00:00:00') }),
         // pg_stat_statements
         rows(
           {
@@ -473,9 +498,9 @@ test('replace parameters binds a string column to its most common value', async 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['users', new Set(['name', 'id', 'status'])]]));
   const identify = vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['users', 'name']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'character varying',
-    common_vals: ['John', 'Alice'],
-    histogram_bounds: null,
+    dataType: 'character varying',
+    commonVals: ['John', 'Alice'],
+    histogramBounds: undefined,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name = $1'.toLowerCase());
@@ -489,9 +514,9 @@ test('replace parameters binds a numeric column by range or equality', async () 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['orders', new Set(['id', 'amount', 'user_id'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['orders', 'amount']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'numeric',
-    common_vals: [99.99, 49.99],
-    histogram_bounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100), new PgFloat(500)],
+    dataType: 'numeric',
+    commonVals: [99.99, 49.99],
+    histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100), new PgFloat(500)],
   });
 
   const range = await bind.replaceParameters('SELECT * FROM orders WHERE amount > $1'.toLowerCase());
@@ -506,9 +531,9 @@ test('replace parameters binds a date column to a date literal', async () => {
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['orders', new Set(['id', 'order_date', 'user_id'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['orders', 'order_date']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'timestamp without time zone',
-    common_vals: null,
-    histogram_bounds: null,
+    dataType: 'timestamp without time zone',
+    commonVals: undefined,
+    histogramBounds: undefined,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM orders WHERE order_date > $1'.toLowerCase());
@@ -521,9 +546,9 @@ test('replace parameters binds a LIKE parameter to a LIKE pattern', async () => 
   vi.spyOn(bind, 'extractColumns').mockResolvedValue(new Map([['users', new Set(['name', 'email'])]]));
   vi.spyOn(bind, 'identifyParameterColumn').mockReturnValue(['users', 'name']);
   vi.spyOn(bind, 'getColumnStatistics').mockResolvedValue({
-    data_type: 'character varying',
-    common_vals: ['John', 'Alice'],
-    histogram_bounds: null,
+    dataType: 'character varying',
+    commonVals: ['John', 'Alice'],
+    histogramBounds: undefined,
   });
 
   const result = await bind.replaceParameters('SELECT * FROM users WHERE name LIKE $1'.toLowerCase());
@@ -550,19 +575,19 @@ test('replace parameters binds several parameters of a complex query by column',
   vi.spyOn(bind, 'getColumnStatistics').mockImplementation((table, column) => {
     if (table === 'users' && column === 'status') {
       return Promise.resolve({
-        data_type: 'character varying',
-        common_vals: ['active', 'inactive'],
+        dataType: 'character varying',
+        commonVals: ['active', 'inactive'],
       });
     }
     if (table === 'orders' && column === 'amount') {
       return Promise.resolve({
-        data_type: 'numeric',
-        common_vals: [99.99],
-        histogram_bounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100)],
+        dataType: 'numeric',
+        commonVals: [99.99],
+        histogramBounds: [new PgFloat(10), new PgFloat(50), new PgFloat(100)],
       });
     }
     if (table === 'orders' && column === 'order_date') {
-      return Promise.resolve({ data_type: 'timestamp without time zone' });
+      return Promise.resolve({ dataType: 'timestamp without time zone' });
     }
     return Promise.resolve(null);
   });
@@ -635,9 +660,9 @@ test('get replacement value depends on the column type and operator', () => {
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'character varying',
-        common_vals: ['active', 'pending', 'completed'],
-        histogram_bounds: null,
+        dataType: 'character varying',
+        commonVals: ['active', 'pending', 'completed'],
+        histogramBounds: undefined,
       },
       'status = $1'
     )
@@ -645,22 +670,22 @@ test('get replacement value depends on the column type and operator', () => {
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'numeric',
-        common_vals: [new PgFloat(10), new PgFloat(20)],
-        histogram_bounds: [new PgFloat(5), new PgFloat(15), new PgFloat(25), new PgFloat(50), new PgFloat(100)],
+        dataType: 'numeric',
+        commonVals: [new PgFloat(10), new PgFloat(20)],
+        histogramBounds: [new PgFloat(5), new PgFloat(15), new PgFloat(25), new PgFloat(50), new PgFloat(100)],
       },
       'amount > $1'
     )
   ).toBe('25.0');
   expect(
-    bind.getReplacementValue({ data_type: 'date', common_vals: null, histogram_bounds: null }, 'created_at < $1')
+    bind.getReplacementValue({ dataType: 'date', commonVals: undefined, histogramBounds: undefined }, 'created_at < $1')
   ).toBe("'2023-01-15'");
   expect(
     bind.getReplacementValue(
       {
-        data_type: 'boolean',
-        common_vals: [true, false],
-        histogram_bounds: null,
+        dataType: 'boolean',
+        commonVals: ['true', 'false'],
+        histogramBounds: undefined,
       },
       'is_active = $1'
     )

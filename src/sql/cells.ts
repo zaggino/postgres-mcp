@@ -78,6 +78,10 @@ export function int8(row: Row, column: string): number | bigint {
   throw new CellError(column, 'int8', cell);
 }
 
+export function nullableInt8(row: Row, column: string): number | bigint | null {
+  return value(row, column) === null ? null : int8(row, column);
+}
+
 /** Any integer column as a bigint, for values that may exceed a safe integer. */
 export function bigint(row: Row, column: string): bigint {
   const cell = int8(row, column);
@@ -141,5 +145,10 @@ export function cellText(cell: unknown): string {
   if (cell instanceof Date) {
     return cell.toISOString();
   }
-  return JSON.stringify(cell);
+  // JSON.stringify gives undefined for undefined, functions and symbols, none of which pg produces.
+  const json: string | undefined = JSON.stringify(cell);
+  if (json === undefined) {
+    throw new TypeError(`Cannot write a value of type ${typeof cell} as text`);
+  }
+  return json;
 }

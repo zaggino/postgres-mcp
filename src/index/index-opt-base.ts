@@ -8,10 +8,11 @@ import { isJsonObject } from '../json.ts';
 import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
+import { int8, integer, nullableDate, nullableInt8, numeric, text as textCell } from '../sql/cells.ts';
 import { checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
-import type { SqlExecutor } from '../sql/safe-sql.ts';
+import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
@@ -19,8 +20,27 @@ export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 const MEGABYTE = 1024 * 1024;
 const DEFAULT_TABLE_SIZE_BYTES = 10 * MEGABYTE;
 
-/** An entry of the analysed workload; a pg_stat_statements row or a synthetic entry. */
-export type WorkloadEntry = Record<string, unknown>;
+/**
+ * An entry of the analysed workload: a pg_stat_statements row or a synthetic entry. The statistics are absent on
+ * entries that do not come from pg_stat_statements, and `stmt` is set once the query has been parsed.
+ */
+export interface WorkloadEntry {
+  // NULL for another role's statement unless this role may read all statistics.
+  queryid?: number | bigint | string | null;
+  query: string;
+  calls?: number | bigint;
+  avg_exec_time?: number;
+  stmt?: AstNode;
+}
+
+function toWorkloadEntry(row: Row): WorkloadEntry {
+  return {
+    queryid: nullableInt8(row, 'queryid'),
+    query: textCell(row, 'query'),
+    calls: int8(row, 'calls'),
+    avg_exec_time: numeric(row, 'avg_exec_time'),
+  };
+}
 
 /** A validated workload query: its (lowercased) text, parsed statement and weight. */
 export type QueryWeight = readonly [query: string, stmt: AstNode, weight: number];
@@ -47,19 +67,6 @@ function isEmptyPlan(plan: unknown): boolean {
     return Object.keys(plan).length === 0;
   }
   return !plan;
-}
-
-/** Python's `int(value)` for a database cell. */
-function toInt(value: unknown): number {
-  if (value === null || value === undefined) {
-    throw new TypeError('Expected a number');
-  }
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
-    throw new TypeError(`Invalid number: ${String(value)}`);
-  }
-  return Math.trunc(parsed);
 }
 
 /** Represents a database index with size estimation and definition. */
@@ -338,7 +345,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     const result = await this.sqlDriver.executeQuery(
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (!result.some((row) => row.last_analyze !== null && row.last_analyze !== undefined)) {
+    if (!result.some((row) => nullableDate(row, 'last_analyze') !== null)) {
       const message =
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
@@ -355,12 +362,11 @@ export abstract class IndexTuningBase implements DtaTracer {
   async validateAndParseWorkload(workload: readonly WorkloadEntry[]): Promise<WorkloadEntry[]> {
     const validated: WorkloadEntry[] = [];
     for (const entry of workload) {
-      const rawQuery = entry.query;
-      if (typeof rawQuery !== 'string' || rawQuery === '') {
+      if (entry.query === '') {
         continue;
       }
       // The whole workload SQL is lowercased
-      const loweredQuery = rawQuery.trim().toLowerCase();
+      const loweredQuery = entry.query.trim().toLowerCase();
 
       // Replace parameter placeholders with dummy values
       const queryText = await this.sqlBindParams.replaceParameters(loweredQuery);
@@ -380,7 +386,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     const weights: QueryWeight[] = [];
     for (const entry of workload) {
       const { query, stmt } = entry;
-      if (typeof query === 'string' && stmt instanceof AstNode) {
+      if (stmt) {
         weights.push([query, stmt, this.convertQueryInfoToWeight(entry)]);
       }
     }
@@ -389,7 +395,8 @@ export abstract class IndexTuningBase implements DtaTracer {
 
   /** Convert query info to weight based on query frequency. */
   convertQueryInfoToWeight(queryInfo: WorkloadEntry): number {
-    return Number(queryInfo.calls ?? 1) * Number(queryInfo.avg_exec_time ?? 1);
+    // An entry without statistics weighs 1; calls may be a bigint, which only matters as a weight
+    return Number(queryInfo.calls ?? 1) * (queryInfo.avg_exec_time ?? 1);
   }
 
   /**
@@ -451,7 +458,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         LIMIT {}
         `;
     const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [minCalls, minAvgTimeMs, limit]);
-    return result.map((row) => ({ ...row }));
+    return result.map(toWorkloadEntry);
   }
 
   /** Check if a statement can be analyzed for index recommendations. */
@@ -536,8 +543,11 @@ export abstract class IndexTuningBase implements DtaTracer {
             `;
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
       const [first] = result;
-      if (first && Object.keys(first).length > 0) {
-        const sizeEstimate = this.estimateIndexSizeInternal(first);
+      if (first) {
+        const sizeEstimate = this.estimateIndexSizeInternal({
+          totalWidth: integer(first, 'total_width'),
+          totalDistinct: numeric(first, 'total_distinct'),
+        });
         this.sizeEstimateCache.set(cacheKey, sizeEstimate);
         return sizeEstimate;
       }
@@ -547,11 +557,10 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
   }
 
-  estimateIndexSizeInternal(stats: Readonly<Record<string, unknown>>): number {
+  estimateIndexSizeInternal(stats: { totalWidth: number; totalDistinct: number }): number {
     // 8 bytes for the heap TID
-    const width = (Number(stats.total_width ?? 0) || 0) + 8;
-    let ndistinct = Number(stats.total_distinct ?? 0) || 1;
-    ndistinct = ndistinct > 0 ? ndistinct : 1;
+    const width = stats.totalWidth + 8;
+    const ndistinct = stats.totalDistinct > 0 ? stats.totalDistinct : 1;
     // simplistic formula
     return Math.trunc(width * ndistinct * 2);
   }
@@ -623,11 +632,10 @@ export abstract class IndexTuningBase implements DtaTracer {
       return Number.POSITIVE_INFINITY;
     }
 
-    const cost = Number(totalCost);
-    if (Number.isNaN(cost)) {
+    if (typeof totalCost !== 'number' || Number.isNaN(totalCost)) {
       throw new Error('Error extracting cost from plan');
     }
-    return cost;
+    return totalCost;
   }
 
   /**
@@ -646,8 +654,8 @@ export abstract class IndexTuningBase implements DtaTracer {
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [table]);
 
       const [first] = result;
-      if (first && Object.keys(first).length > 0) {
-        size = toInt(first.rel_size);
+      if (first) {
+        size = integer(first, 'rel_size');
       } else {
         // If the query fails, use our estimation method
         size = await this.estimateTableSize(table);
@@ -669,8 +677,8 @@ export abstract class IndexTuningBase implements DtaTracer {
         table,
       ]);
       const [first] = result;
-      if (first && Object.keys(first).length > 0) {
-        const rowCount = toInt(first.row_count);
+      if (first) {
+        const rowCount = integer(first, 'row_count');
         // Rough estimate: assume 1KB per row
         return rowCount * 1024;
       }

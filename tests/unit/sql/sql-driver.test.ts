@@ -39,8 +39,8 @@ test('executeQuery with forceReadonly wraps the query in a read-only transaction
 
   expect(issued(fake)).toEqual(['BEGIN TRANSACTION READ ONLY', 'SELECT * FROM test', 'ROLLBACK']);
   expect(result).toHaveLength(2);
-  expect(result?.[0]?.cells.id).toBe(1);
-  expect(result?.[1]?.cells.name).toBe('test2');
+  expect(result[0]?.id).toBe(1);
+  expect(result[1]?.name).toBe('test2');
 });
 
 test('executeQuery without forceReadonly commits the transaction', async () => {
@@ -51,7 +51,7 @@ test('executeQuery without forceReadonly commits the transaction', async () => {
   const result = await driver.executeQuery("UPDATE test SET name = 'updated'");
 
   expect(issued(fake)).toEqual(['BEGIN', "UPDATE test SET name = 'updated'", 'COMMIT']);
-  expect(result).not.toBeNull();
+  expect(result).toEqual(TWO_ROWS);
 });
 
 test('a statement Postgres rejects is rolled back and keeps the pool and its connection in use', async () => {
@@ -243,12 +243,12 @@ test('connecting to a server that never answers fails after the connect timeout'
   }
 });
 
-test('executeQuery returns null for statements that produce no result set', async () => {
+test('executeResultSet reports no columns for statements that produce no result set', async () => {
   const { fake, driver } = driverFor();
 
-  const result = await driver.executeQuery('DELETE FROM test');
+  const result = await driver.executeResultSet('DELETE FROM test');
 
-  expect(result).toBeNull();
+  expect(result).toEqual({ columns: [], rows: [] });
   expect(issued(fake)).toEqual(['BEGIN', 'DELETE FROM test', 'COMMIT']);
 });
 
@@ -259,17 +259,17 @@ test('executeQuery returns the rows of the last statement of a multi-statement q
 
   const result = await driver.executeQuery('SELECT 1 AS first; SELECT * FROM test');
 
-  expect(result?.map((row) => row.cells.id)).toEqual([1, 2]);
+  expect(result.map((row) => row.id)).toEqual([1, 2]);
 });
 
-test('executeQuery returns null when the last statement of a multi-statement query has no result set', async () => {
+test('executeResultSet reports no columns when the last statement of a multi-statement query has no result set', async () => {
   const { driver } = driverFor(({ text }) =>
     text.includes(';') ? [rowsResult(TWO_ROWS), noRowsResult] : [noRowsResult]
   );
 
-  const result = await driver.executeQuery('SELECT * FROM test; DELETE FROM test');
+  const result = await driver.executeResultSet('SELECT * FROM test; DELETE FROM test');
 
-  expect(result).toBeNull();
+  expect(result).toEqual({ columns: [], rows: [] });
 });
 
 test('executeQuery passes params to the query', async () => {
@@ -288,7 +288,7 @@ test('executeQuery returns rows from the pool connection', async () => {
 
   const result = await driver.executeQuery('SELECT * FROM test');
 
-  expect(result).toEqual([{ cells: TWO_ROWS[0] }, { cells: TWO_ROWS[1] }]);
+  expect(result).toEqual(TWO_ROWS);
 });
 
 test('a connection failure rejects executeQuery and marks the pool invalid', async () => {

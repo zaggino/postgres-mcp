@@ -91,7 +91,7 @@ describeWithPostgres('database tuning advisor', (postgres) => {
 
     // Verify connection
     const result = await sqlDriver.executeQuery('SELECT 1');
-    if (result === null) {
+    if (result.length === 0) {
       throw new Error('SELECT 1 returned no rows');
     }
 

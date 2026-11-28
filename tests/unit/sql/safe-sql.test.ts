@@ -1,16 +1,16 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { paramSqlToQuery } from '../../../src/sql/literal.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { SafeSqlDriver } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const PREFIX = '/* postgres-mcp */ ';
 
 function setup() {
-  const executeQuery = vi.fn<SqlExecutor['executeQuery']>(() => Promise.resolve([]));
-  return { safeDriver: new SafeSqlDriver({ executeQuery }), executeQuery };
+  const inner = fakeExecutor(() => []);
+  return { safeDriver: new SafeSqlDriver(inner), executeQuery: inner.executeResultSet };
 }
 
 /**

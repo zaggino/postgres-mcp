@@ -6,37 +6,34 @@ import type { QueryWeight } from '../../../src/index/index-opt-base.ts';
 import { IndexRecommendation } from '../../../src/index/index-opt-base.ts';
 import { ColumnCollector, PgFloat } from '../../../src/sql/bind-params.ts';
 import { AstNode, loadParser, parseSql } from '../../../src/sql/pg-ast.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
-import type { RowResult } from '../../../src/sql/sql-driver.ts';
+import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const ID_FALLBACK_PATTERN = /id = (?:46|'46')/u;
 const STATUS_FALLBACK_PATTERN = /status = (?:'active'|'sample_value')/u;
 const BETWEEN_FALLBACK_PATTERN = /between (?:10 and 100|42 and 42)/u;
 const PLAN_CHANGE_PATTERN = /sequential scans replaced|new index scans/u;
 
-type Cells = Record<string, unknown>;
-type ExecuteQuery = SqlExecutor['executeQuery'];
-type QueryHandler = (query: string) => RowResult[] | null;
+type QueryHandler = (query: string) => Row[] | undefined;
 
 beforeAll(async () => {
   await loadParser();
 });
 
-function rows(...items: Cells[]): RowResult[] {
-  return items.map((cells) => ({ cells }));
+function rows(...items: Row[]): Row[] {
+  return items;
 }
 
 /** A driver answering every query through `handler` (an empty result by default). */
 function createDriver(handler: QueryHandler = () => []) {
-  const executeQuery = vi.fn<ExecuteQuery>((query) => Promise.resolve(handler(query)));
-  return { executeQuery };
+  return fakeExecutor((query) => handler(query));
 }
 
-/** Answers the n-th query with the n-th response, and later queries with null. */
-function sequential(responses: RowResult[][]): QueryHandler {
+/** Answers the n-th query with the n-th response, and later queries with no result set. */
+function sequential(responses: Row[][]): QueryHandler {
   let next = 0;
   return () => {
-    const response = responses[next] ?? null;
+    const response = responses[next];
     next += 1;
     return response;
   };
@@ -178,7 +175,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       });
     }
     if (query.includes('hypopg_reset')) {
-      return null;
+      return [];
     }
     if (query.includes('FROM information_schema.columns c')) {
       return rows({
@@ -197,7 +194,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
       return rows({ exists: 1 });
     }
     if (query.includes('hypopg_disable_index') || query.includes('hypopg_enable_index')) {
-      return null;
+      return [];
     }
     if (query.includes('pg_total_relation_size')) {
       return rows({ rel_size: 100_000 });
@@ -205,7 +202,7 @@ test('analyze workload recommends indexes for the workload tables', async () => 
     if (query.includes('pg_stat_user_tables')) {
       return rows({ last_analyze: '2023-01-01' });
     }
-    return null;
+    return [];
   });
   const dta = createAdvisor(driver);
 
@@ -228,7 +225,7 @@ test('analyze workload reports a failing database and tolerates invalid SQL', as
   });
   expect(session.error).toContain('HypoPG not available');
 
-  driver.executeQuery.mockResolvedValue(null);
+  driver.executeQuery.mockResolvedValue([]);
   const columns = await dta.sqlBindParams.extractColumns('INVALID SQL');
   expect(toRecord(columns)).toEqual({});
 });
@@ -346,7 +343,7 @@ test('filter long text columns drops candidates containing long text columns', a
       potential_long_text: true,
     }
   );
-  const driver = createDriver((query) => (query.includes('information_schema.columns') ? typeQueryResults : null));
+  const driver = createDriver((query) => (query.includes('information_schema.columns') ? typeQueryResults : undefined));
   const dta = createAdvisor(driver);
 
   const candidates = [

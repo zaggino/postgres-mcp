@@ -68,15 +68,11 @@ export class VacuumHealthCalc {
       [this.maxValue, this.maxValue, this.threshold]
     );
 
-    if (!results) {
-      return [];
-    }
-
-    return results.map(({ cells }) => {
-      const transactionsLeft = Number(cells.transactions_left);
+    return results.map((row) => {
+      const transactionsLeft = Number(row.transactions_left);
       return {
-        schema: String(cells.schema),
-        table: String(cells.table),
+        schema: String(row.schema),
+        table: String(row.table),
         transactionsLeft,
         isHealthy: transactionsLeft >= this.threshold,
       };

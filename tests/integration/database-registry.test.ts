@@ -51,6 +51,6 @@ describeWithPostgres('DatabaseRegistry discovery', ({ connectionString }) => {
     expect(databases.map((entry) => entry.database)).toEqual(['x-mcp_disc_a', 'x-mcp_disc_b']);
 
     const rows = await registry.use('x-mcp_disc_a', (driver) => driver.executeQuery('SELECT current_database() AS db'));
-    expect(rows?.[0]?.cells.db).toBe('mcp_disc_a');
+    expect(rows[0]?.db).toBe('mcp_disc_a');
   });
 });

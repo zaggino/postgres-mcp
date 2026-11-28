@@ -2,11 +2,10 @@ import { expect, test } from 'vitest';
 
 import { SqlBindParams, TableAliasVisitor } from '../../../src/sql/bind-params.ts';
 import { AstNode, parseSql } from '../../../src/sql/pg-ast.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
-const noDatabase: SqlExecutor = {
-  executeQuery: () => Promise.resolve(null),
-};
+const noDatabase: SqlExecutor = fakeExecutor(() => []);
 
 interface Analysis {
   aliases: Record<string, string>;
@@ -92,8 +91,8 @@ test('$n placeholders are ignored and the compared columns are collected', async
   });
 });
 
-function statsDriver(cells: Record<string, unknown>): SqlExecutor {
-  return { executeQuery: () => Promise.resolve([{ cells }]) };
+function statsDriver(row: Row): SqlExecutor {
+  return fakeExecutor(() => [row]);
 }
 
 test('columns inside bare SQL/JSON structs are collected', async () => {

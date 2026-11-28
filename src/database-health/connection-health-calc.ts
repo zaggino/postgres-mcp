@@ -50,7 +50,7 @@ export class ConnectionHealthCalc {
             SELECT COUNT(*) as count
             FROM pg_stat_activity
         `);
-    return Number(result?.[0]?.cells.count ?? 0);
+    return Number(result[0]?.count ?? 0);
   }
 
   /** Number of connections that are idle in transaction. */
@@ -60,6 +60,6 @@ export class ConnectionHealthCalc {
             FROM pg_stat_activity
             WHERE state = 'idle in transaction'
         `);
-    return Number(result?.[0]?.cells.count ?? 0);
+    return Number(result[0]?.count ?? 0);
   }
 }

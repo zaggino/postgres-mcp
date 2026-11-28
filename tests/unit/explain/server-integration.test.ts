@@ -4,6 +4,7 @@ import { ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import type { RegistryOptions } from '../../../src/database-registry.ts';
 import { createServer } from '../../../src/server.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
 import { createTestRegistry } from '../../support/registry.ts';
 
@@ -21,8 +22,6 @@ vi.mock('../../../src/explain/explain-plan.ts', () => ({
   },
 }));
 
-type ExecuteQuery = SqlExecutor['executeQuery'];
-
 /** The driver factory the next server's registry uses; the real one when unset. */
 let getSqlDriver: RegistryOptions['getSqlDriver'];
 
@@ -39,8 +38,8 @@ function artifact(extra: Record<string, unknown> = {}): ExplainPlanArtifact {
   });
 }
 
-function useDriver(executeQuery: ExecuteQuery = vi.fn<ExecuteQuery>()) {
-  getSqlDriver = () => ({ executeQuery });
+function useDriver(driver: SqlExecutor = fakeExecutor(() => [])) {
+  getSqlDriver = () => driver;
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
@@ -81,7 +80,7 @@ test('explain_query with analyze=true returns the plan with execution time', asy
 });
 
 test('explain_query with hypothetical indexes explains with them when hypopg is installed', async () => {
-  useDriver(vi.fn<ExecuteQuery>().mockResolvedValue([{ cells: { exists: 1 } }]));
+  useDriver(fakeExecutor(() => [{ exists: 1 }]));
   explainTool.explainWithHypotheticalIndexes.mockResolvedValue(artifact());
   const indexes = [{ table: 'users', columns: ['email'] }];
 
@@ -98,7 +97,7 @@ test('explain_query with hypothetical indexes explains with them when hypopg is 
 });
 
 test('explain_query with hypothetical indexes reports a missing hypopg extension', async () => {
-  useDriver(vi.fn<ExecuteQuery>().mockResolvedValue([]));
+  useDriver(fakeExecutor(() => []));
 
   const text = await explainQuery({
     sql: "SELECT * FROM users WHERE email = 'test@example.com'",

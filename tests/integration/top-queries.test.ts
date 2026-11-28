@@ -24,7 +24,7 @@ vi.mock('../../src/sql/extension-utils.ts', async (importOriginal) => {
 async function setupTestData(sqlDriver: SqlDriver): Promise<void> {
   // Check if extension exists
   const rows = await sqlDriver.executeQuery("SELECT 1 FROM pg_available_extensions WHERE name = 'pg_stat_statements'");
-  if (!rows || rows.length === 0) {
+  if (rows.length === 0) {
     throw new Error('pg_stat_statements extension not available');
   }
   await sqlDriver.executeQuery('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
@@ -105,7 +105,7 @@ describeWithPostgres('top queries with a real database', (postgres) => {
       const pgStats = await sqlDriver.executeQuery(
         "SELECT query FROM pg_stat_statements WHERE query LIKE '%CROSS JOIN%' LIMIT 1"
       );
-      if (!pgStats || pgStats.length === 0) {
+      if (pgStats.length === 0) {
         skip('pg_stat_statements did not capture the CROSS JOIN query');
       }
 

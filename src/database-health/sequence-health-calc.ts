@@ -127,12 +127,8 @@ export class SequenceHealthCalc {
                 AND n.nspname NOT LIKE 'pg\\_temp\\_%'
         `);
 
-    if (!sequences) {
-      return [];
-    }
-
     const sequenceMetrics: SequenceMetrics[] = [];
-    for (const { cells: seq } of sequences) {
+    for (const seq of sequences) {
       // Parse the sequence name from default value
       const [schema, sequence] = SequenceHealthCalc.parseSequenceName(String(seq.default_value));
       if (!sequence) {
@@ -155,7 +151,7 @@ export class SequenceHealthCalc {
         [identifier(schema, sequence), identifier(schema, sequence)]
       );
 
-      const attr = attrs?.[0]?.cells;
+      const [attr] = attrs;
       if (!attr) {
         continue;
       }

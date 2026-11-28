@@ -188,18 +188,14 @@ export class ExplainPlanTool {
 
       const explainQ = `EXPLAIN (${explainOptions.join(', ')}) ${query}`;
       const rows = await this.sqlDriver.executeQuery(explainQ);
-      if (rows === null) {
-        return new ErrorResult('No results returned from EXPLAIN');
-      }
-
       const [firstRow] = rows;
       if (!firstRow) {
-        throw new Error('list index out of range');
+        return new ErrorResult('No results returned from EXPLAIN');
       }
-      if (!('QUERY PLAN' in firstRow.cells)) {
+      if (!('QUERY PLAN' in firstRow)) {
         throw new Error("'QUERY PLAN'");
       }
-      const queryPlanData = parsePlanColumn(firstRow.cells['QUERY PLAN']);
+      const queryPlanData = parsePlanColumn(firstRow['QUERY PLAN']);
 
       if (!Array.isArray(queryPlanData)) {
         return new ErrorResult(`Expected list from EXPLAIN, got ${pyTypeName(queryPlanData)}`);
@@ -263,7 +259,7 @@ export class ExplainPlanTool {
       };
 
       // Extract the plan
-      const planData = parsePlanColumn(planResult?.[0]?.cells['QUERY PLAN']);
+      const planData = parsePlanColumn(planResult[0]?.['QUERY PLAN']);
       if (isTruthy(planData)) {
         if (Array.isArray(planData)) {
           return planData[0];

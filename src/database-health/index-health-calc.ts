@@ -280,16 +280,16 @@ export class IndexHealthCalc {
       [minSize]
     );
 
-    if (!bloatedIndexes || bloatedIndexes.length === 0) {
+    if (bloatedIndexes.length === 0) {
       return 'No bloated indexes found.';
     }
 
     const result = ['Bloated indexes found:'];
-    for (const { cells } of bloatedIndexes) {
-      const bloatMb = toMb(cells.bloat_bytes);
-      const totalMb = toMb(cells.index_bytes);
+    for (const row of bloatedIndexes) {
+      const bloatMb = toMb(row.bloat_bytes);
+      const totalMb = toMb(row.index_bytes);
       result.push(
-        `Index '${String(cells.index)}' on table '${String(cells.table)}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
+        `Index '${String(row.index)}' on table '${String(row.table)}' has ${bloatMb.toFixed(1)}MB bloat out of ${totalMb.toFixed(1)}MB total size`
       );
     }
 
@@ -329,27 +329,23 @@ export class IndexHealthCalc {
                 1, 2
         `);
 
-    if (results === null) {
-      return [];
-    }
-
-    const indexes = results.map(({ cells }): IndexInfo => {
+    const indexes = results.map((row): IndexInfo => {
       // Unquote column names
-      const columns = String(cells.columns)
+      const columns = String(row.columns)
         .replace(') WHERE (', ' WHERE ')
         .split(', ')
         .map((col) => col.replaceAll(QUOTES_AT_ENDS, ''));
       return {
-        schema: String(cells.schema),
-        table: String(cells.table),
-        name: String(cells.name),
+        schema: String(row.schema),
+        table: String(row.table),
+        name: String(row.name),
         columns,
-        using: String(cells.using),
-        unique: Boolean(cells.unique),
-        primary: Boolean(cells.primary),
-        valid: Boolean(cells.valid),
-        indexprs: nullableText(cells.indexprs),
-        indpred: nullableText(cells.indpred),
+        using: String(row.using),
+        unique: Boolean(row.unique),
+        primary: Boolean(row.primary),
+        valid: Boolean(row.valid),
+        indexprs: nullableText(row.indexprs),
+        indpred: nullableText(row.indpred),
       };
     });
 
@@ -384,18 +380,18 @@ export class IndexHealthCalc {
       [maxScans]
     );
 
-    if (!unused || unused.length === 0) {
+    if (unused.length === 0) {
       return 'No unused indexes found.';
     }
 
     const result = ['Rarely used indexes found:'];
-    for (const { cells } of unused) {
-      if (cells.primary) {
+    for (const row of unused) {
+      if (row.primary) {
         continue;
       }
-      const sizeMb = toMb(cells.size_bytes);
+      const sizeMb = toMb(row.size_bytes);
       result.push(
-        `Index '${String(cells.index)}' on table '${String(cells.table)}' has only been scanned ${String(cells.index_scans)} times and uses ${sizeMb.toFixed(1)}MB of space`
+        `Index '${String(row.index)}' on table '${String(row.table)}' has only been scanned ${String(row.index_scans)} times and uses ${sizeMb.toFixed(1)}MB of space`
       );
     }
 

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtensionStatus } from '../../../src/sql/extension-utils.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
-import type { RowResult } from '../../../src/sql/sql-driver.ts';
+import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import { TopQueriesCalc } from '../../../src/top-queries/top-queries-calc.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const extensionUtils = vi.hoisted(() => ({
   checkExtension: vi.fn(),
@@ -14,8 +14,8 @@ vi.mock('../../../src/sql/extension-utils.ts', () => extensionUtils);
 
 type ExecuteQuery = SqlExecutor['executeQuery'];
 
-function row(cells: Record<string, unknown>): RowResult {
-  return { cells };
+function row(cells: Row): Row {
+  return cells;
 }
 
 function extensionStatus(isInstalled: boolean): ExtensionStatus {
@@ -35,36 +35,34 @@ function createDriver(pgVersion: number): {
 } {
   extensionUtils.getPostgresVersion.mockResolvedValue(pgVersion);
   const [total, mean] = pgVersion >= 13 ? ['total_exec_time', 'mean_exec_time'] : ['total_time', 'mean_time'];
-  const executeQuery = vi.fn<ExecuteQuery>((query) =>
-    Promise.resolve(
-      query.includes('pg_stat_statements')
-        ? [
-            row({
-              query: 'SELECT * FROM users',
-              calls: 100,
-              [total]: 1000,
-              [mean]: 10,
-              rows: 1000,
-            }),
-            row({
-              query: 'SELECT * FROM orders',
-              calls: 50,
-              [total]: 750,
-              [mean]: 15,
-              rows: 500,
-            }),
-            row({
-              query: 'SELECT * FROM products',
-              calls: 200,
-              [total]: 500,
-              [mean]: 2.5,
-              rows: 2000,
-            }),
-          ]
-        : null
-    )
+  const driver = fakeExecutor((query) =>
+    query.includes('pg_stat_statements')
+      ? [
+          row({
+            query: 'SELECT * FROM users',
+            calls: 100,
+            [total]: 1000,
+            [mean]: 10,
+            rows: 1000,
+          }),
+          row({
+            query: 'SELECT * FROM orders',
+            calls: 50,
+            [total]: 750,
+            [mean]: 15,
+            rows: 500,
+          }),
+          row({
+            query: 'SELECT * FROM products',
+            calls: 200,
+            [total]: 500,
+            [mean]: 2.5,
+            rows: 2000,
+          }),
+        ]
+      : undefined
   );
-  return { driver: { executeQuery }, executeQuery };
+  return { driver, executeQuery: driver.executeQuery };
 }
 
 function executedQuery(executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>): string {

@@ -4,7 +4,7 @@ import { formatFixed, formatPercent, naturalSize, pyFloatStr } from '../py-forma
 import { ColumnCollector, TableAliasVisitor } from '../sql/bind-params.ts';
 import { literal } from '../sql/literal.ts';
 import { AstNode, loadParser, parseSqlSync } from '../sql/pg-ast.ts';
-import type { SqlExecutor } from '../sql/safe-sql.ts';
+import type { Row, SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver } from '../sql/safe-sql.ts';
 import type { IndexConfiguration, QueryWeight } from './index-opt-base.ts';
 import { candidateStr, IndexRecommendation, IndexTuningBase } from './index-opt-base.ts';
@@ -75,14 +75,11 @@ function* combinations<T>(items: readonly T[], size: number): Generator<T[]> {
  * Classifies a catalog row of a column. avg_width from pg_stats is a
  * heuristic: a high value means the column likely contains long text.
  */
-function classifyLongText(
-  cells: Readonly<Record<string, unknown>>,
-  maxTextLength: number
-): 'problematic' | 'potential' | undefined {
-  if (!cells.potential_long_text) {
+function classifyLongText(row: Readonly<Row>, maxTextLength: number): 'problematic' | 'potential' | undefined {
+  if (!row.potential_long_text) {
     return undefined;
   }
-  const { avg_width: avgWidth } = cells;
+  const { avg_width: avgWidth } = row;
   const unknownWidth = avgWidth === null || avgWidth === undefined;
   return unknownWidth || Number(avgWidth) > maxTextLength * 0.4 ? 'problematic' : 'potential';
 }
@@ -256,8 +253,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const result = await this.sqlDriver.executeQuery(
       'SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;'
     );
-    if (result !== null) {
-      const indexMap = new Map(result.map((r) => [r.cells.index_name, r.cells.index_size]));
+    if (result.length > 0) {
+      const indexMap = new Map(result.map((r) => [r.index_name, r.index_size]));
       for (const idx of candidates) {
         const size = indexMap.get(idx.name);
         if (size !== undefined) {
@@ -556,7 +553,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
 
     const result = await this.sqlDriver.executeQuery(typeQuery);
 
-    if (!result || result.length === 0) {
+    if (result.length === 0) {
       return [];
     }
 
@@ -565,8 +562,8 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
     const potentialProblematicColumns = new Set<string>();
 
     for (const row of result) {
-      const key = pairKey(stringValue(row.cells.table_name), stringValue(row.cells.column_name));
-      const kind = classifyLongText(row.cells, maxTextLength);
+      const key = pairKey(stringValue(row.table_name), stringValue(row.column_name));
+      const kind = classifyLongText(row, maxTextLength);
       if (kind === 'problematic') {
         problematicColumns.add(key);
       } else if (kind === 'potential') {
@@ -600,7 +597,7 @@ export class DatabaseTuningAdvisor extends IndexTuningBase {
         ORDER BY schemaname, tablename, indexname
         `;
     const result = await this.sqlDriver.executeQuery(query);
-    return result ? result.map((row) => ({ ...row.cells })) : [];
+    return result.map((row) => ({ ...row }));
   }
 
   /**

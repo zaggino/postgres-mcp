@@ -469,8 +469,8 @@ export class DatabaseRegistry {
       const rows = await state.pool.use((conn) => this.#createDriver(conn, serverUri).executeQuery(DISCOVERY_QUERY));
 
       const found = new Map<string, UriSpec>();
-      for (const row of rows ?? []) {
-        const datname = String(row.cells.datname);
+      for (const row of rows) {
+        const datname = String(row.datname);
         if (!state.matches(datname)) {
           continue;
         }

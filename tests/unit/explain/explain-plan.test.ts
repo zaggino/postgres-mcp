@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorResult, ExplainPlanArtifact } from '../../../src/artifacts.ts';
 import { ExplainPlanTool } from '../../../src/explain/explain-plan.ts';
 import { resetPostgresVersionCache } from '../../../src/sql/extension-utils.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
-import type { RowResult } from '../../../src/sql/sql-driver.ts';
+import type { Row, SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const bindParams = vi.hoisted(() => ({ replacement: '' }));
 
@@ -19,16 +19,16 @@ vi.mock('../../../src/sql/bind-params.ts', () => ({
 
 type ExecuteQuery = SqlExecutor['executeQuery'];
 
-function cell(data: Record<string, unknown>): RowResult[] {
-  return [{ cells: data }];
+function cell(data: Row): Row[] {
+  return [data];
 }
 
 function createDriver(): {
   driver: SqlExecutor;
   executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>;
 } {
-  const executeQuery = vi.fn<ExecuteQuery>();
-  return { driver: { executeQuery }, executeQuery };
+  const driver = fakeExecutor(() => []);
+  return { driver, executeQuery: driver.executeQuery };
 }
 
 function queries(executeQuery: ReturnType<typeof vi.fn<ExecuteQuery>>) {
@@ -122,7 +122,7 @@ describe(ExplainPlanTool, () => {
       if (query.includes('EXPLAIN') && query.includes('id = 42')) {
         return Promise.resolve(cell({ 'QUERY PLAN': [seqScanPlan] }));
       }
-      return Promise.resolve(null);
+      return Promise.resolve([]);
     });
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users WHERE id = $1');
@@ -141,7 +141,7 @@ describe(ExplainPlanTool, () => {
     const { driver, executeQuery } = createDriver();
     executeQuery.mockImplementation((query) =>
       Promise.resolve(
-        query.includes('EXPLAIN') && query.includes('id = 42') ? cell({ 'QUERY PLAN': [analyzedPlan] }) : null
+        query.includes('EXPLAIN') && query.includes('id = 42') ? cell({ 'QUERY PLAN': [analyzedPlan] }) : []
       )
     );
 
@@ -187,14 +187,14 @@ describe(ExplainPlanTool, () => {
     expect(result).toHaveProperty('value', expect.stringContaining('Expected list'));
   });
 
-  it('reports no results when the driver returns null', async () => {
+  it('reports no results when EXPLAIN returns no rows', async () => {
     const { driver, executeQuery } = createDriver();
-    executeQuery.mockResolvedValue(null);
+    executeQuery.mockResolvedValue([]);
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users');
 
     expect(result).toBeInstanceOf(ErrorResult);
-    expect(result).toHaveProperty('value', expect.stringContaining('No results'));
+    expect(result).toHaveProperty('value', 'No results returned from EXPLAIN');
   });
 
   it('reports no results when QUERY PLAN is an empty list', async () => {
@@ -217,7 +217,7 @@ describe(ExplainPlanTool, () => {
       if (query.includes('EXPLAIN') && query.includes("LIKE '%John%'")) {
         return Promise.resolve(cell({ 'QUERY PLAN': [seqScanPlan] }));
       }
-      return Promise.resolve(null);
+      return Promise.resolve([]);
     });
 
     const result = await new ExplainPlanTool(driver).explain('SELECT * FROM users WHERE name LIKE $1');
@@ -245,9 +245,7 @@ describe(ExplainPlanTool, () => {
     };
     const { driver, executeQuery } = createDriver();
     executeQuery.mockImplementation((query) =>
-      Promise.resolve(
-        query.includes('hypopg_') || query.includes('EXPLAIN') ? cell({ 'QUERY PLAN': [indexPlan] }) : null
-      )
+      Promise.resolve(query.includes('hypopg_') || query.includes('EXPLAIN') ? cell({ 'QUERY PLAN': [indexPlan] }) : [])
     );
 
     const sqlQuery = `

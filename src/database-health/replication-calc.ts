@@ -92,7 +92,7 @@ export class ReplicationCalc {
 
   private async isReplica(): Promise<boolean> {
     const result = await this.sqlDriver.executeQuery('SELECT pg_is_in_recovery()');
-    return Boolean(result?.[0]?.cells.pg_is_in_recovery);
+    return Boolean(result[0]?.pg_is_in_recovery);
   }
 
   private async getReplicationLag(): Promise<number | null> {
@@ -115,11 +115,11 @@ export class ReplicationCalc {
                     END
                 AS replication_lag
             `);
-      const first = result?.[0];
+      const [first] = result;
       if (!first) {
         return null;
       }
-      const lag = first.cells.replication_lag;
+      const lag = first.replication_lag;
       if (lag === null || lag === undefined) {
         // A NULL lag (nothing replayed yet) disables the feature, as a failed query does.
         throw new TypeError('replication_lag is NULL');
@@ -144,13 +144,10 @@ export class ReplicationCalc {
                     active
                 FROM pg_replication_slots
             `);
-      if (result === null) {
-        return [];
-      }
-      return result.map(({ cells }) => ({
-        slotName: String(cells.slot_name),
-        database: cells.database,
-        active: Boolean(cells.active),
+      return result.map((row) => ({
+        slotName: String(row.slot_name),
+        database: row.database,
+        active: Boolean(row.active),
       }));
     } catch {
       this.featureSupport.set('replication_slots', false);
@@ -165,7 +162,7 @@ export class ReplicationCalc {
 
     try {
       const result = await this.sqlDriver.executeQuery('SELECT state FROM pg_stat_replication');
-      return result !== null && result.length > 0;
+      return result.length > 0;
     } catch {
       this.featureSupport.set('replicating', false);
       return false;
@@ -176,8 +173,8 @@ export class ReplicationCalc {
   private async getServerVersion(): Promise<number> {
     if (this.serverVersion === null) {
       const result = await this.sqlDriver.executeQuery('SHOW server_version_num');
-      const first = result?.[0];
-      this.serverVersion = first ? Number.parseInt(String(first.cells.server_version_num), 10) : 0;
+      const [first] = result;
+      this.serverVersion = first ? Number.parseInt(String(first.server_version_num), 10) : 0;
     }
     return this.serverVersion;
   }

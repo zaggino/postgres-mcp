@@ -338,7 +338,7 @@ export abstract class IndexTuningBase implements DtaTracer {
     const result = await this.sqlDriver.executeQuery(
       'SELECT s.last_analyze FROM pg_stat_user_tables s ORDER BY s.last_analyze LIMIT 1;'
     );
-    if (!result?.some((row) => row.cells.last_analyze !== null && row.cells.last_analyze !== undefined)) {
+    if (!result.some((row) => row.last_analyze !== null && row.last_analyze !== undefined)) {
       const message =
         'Statistics are not up-to-date. The database needs to be analyzed first. ' +
         "Please run 'ANALYZE;' on your database before using the tuning advisor. " +
@@ -451,7 +451,7 @@ export abstract class IndexTuningBase implements DtaTracer {
         LIMIT {}
         `;
     const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [minCalls, minAvgTimeMs, limit]);
-    return result ? result.map((row) => ({ ...row.cells })) : [];
+    return result.map((row) => ({ ...row }));
   }
 
   /** Check if a statement can be analyzed for index recommendations. */
@@ -535,9 +535,9 @@ export abstract class IndexTuningBase implements DtaTracer {
             WHERE tablename = {} AND attname = ANY({})
             `;
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, statsQuery, [table, columns]);
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        const sizeEstimate = this.estimateIndexSizeInternal(first.cells);
+      const [first] = result;
+      if (first && Object.keys(first).length > 0) {
+        const sizeEstimate = this.estimateIndexSizeInternal(first);
         this.sizeEstimateCache.set(cacheKey, sizeEstimate);
         return sizeEstimate;
       }
@@ -645,9 +645,9 @@ export abstract class IndexTuningBase implements DtaTracer {
       const query = 'SELECT pg_total_relation_size(quote_ident({})) as rel_size';
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, query, [table]);
 
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        size = toInt(first.cells.rel_size);
+      const [first] = result;
+      if (first && Object.keys(first).length > 0) {
+        size = toInt(first.rel_size);
       } else {
         // If the query fails, use our estimation method
         size = await this.estimateTableSize(table);
@@ -668,9 +668,9 @@ export abstract class IndexTuningBase implements DtaTracer {
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, 'SELECT count(*) as row_count FROM {}', [
         table,
       ]);
-      const first = result?.[0];
-      if (first && Object.keys(first.cells).length > 0) {
-        const rowCount = toInt(first.cells.row_count);
+      const [first] = result;
+      if (first && Object.keys(first).length > 0) {
+        const rowCount = toInt(first.row_count);
         // Rough estimate: assume 1KB per row
         return rowCount * 1024;
       }

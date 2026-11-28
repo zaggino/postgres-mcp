@@ -40,13 +40,13 @@ export async function getPostgresVersion(sqlDriver: SqlExecutor): Promise<number
 
   try {
     const rows = await sqlDriver.executeQuery('SHOW server_version');
-    const first = rows?.[0];
+    const [first] = rows;
     if (!first) {
       logLine('Could not determine PostgreSQL version');
       return 0;
     }
 
-    const versionString = String(first.cells.server_version);
+    const versionString = String(first.server_version);
     // Extract the major version (before the first dot)
     const majorVersion = versionString.split('.')[0] ?? '';
     if (!INTEGER.test(majorVersion)) {
@@ -126,9 +126,9 @@ export async function checkExtension(
     defaultVersion: null,
   };
 
-  const installed = installedResult?.[0];
+  const [installed] = installedResult;
   if (installed) {
-    const version = 'extversion' in installed.cells ? installed.cells.extversion : 'unknown';
+    const version = 'extversion' in installed ? installed.extversion : 'unknown';
     result.isInstalled = true;
     result.isAvailable = true;
 
@@ -144,10 +144,10 @@ export async function checkExtension(
     [extensionName]
   );
 
-  const available = availableResult?.[0];
+  const [available] = availableResult;
   if (available) {
     result.isAvailable = true;
-    const defaultVersion = available.cells.default_version;
+    const defaultVersion = available.default_version;
     // oxlint-disable-next-line typescript/no-base-to-string -- stringified like upstream's str(); objects and arrays diverge, see docs/TODO.md
     result.defaultVersion = defaultVersion === undefined || defaultVersion === null ? null : String(defaultVersion);
 

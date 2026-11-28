@@ -758,13 +758,13 @@ export class SqlBindParams {
 
     try {
       const result = await SafeSqlDriver.executeParamQuery(this.sqlDriver, STATS_QUERY, [tableName, columnName]);
-      const row = result?.[0];
+      const [row] = result;
       if (!row) {
         this.columnStatsCache.set(cacheKey, null);
         return null;
       }
 
-      const stats: ColumnStats = { ...row.cells };
+      const stats: ColumnStats = { ...row };
 
       // Convert PostgreSQL array literals like '{val1,val2}' to lists
       for (const key of ['common_vals', 'common_freqs', 'histogram_bounds']) {

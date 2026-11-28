@@ -64,16 +64,12 @@ export class ConstraintHealthCalc {
                 con.convalidated = 'f'
         `);
 
-    if (!results) {
-      return [];
-    }
-
-    return results.map(({ cells }) => ({
-      schema: String(cells.schema),
-      table: String(cells.table),
-      name: String(cells.name),
-      referencedSchema: nullableText(cells.referenced_schema),
-      referencedTable: nullableText(cells.referenced_table),
+    return results.map((row) => ({
+      schema: String(row.schema),
+      table: String(row.table),
+      name: String(row.name),
+      referencedSchema: nullableText(row.referenced_schema),
+      referencedTable: nullableText(row.referenced_table),
     }));
   }
 }

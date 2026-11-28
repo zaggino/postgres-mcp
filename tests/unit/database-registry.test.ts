@@ -6,6 +6,7 @@ import { AccessMode, getSqlDriver } from '../../src/sql/driver-factory.ts';
 import { getPostgresVersion, resetPostgresVersionCache } from '../../src/sql/extension-utils.ts';
 import type { SqlExecutor } from '../../src/sql/safe-sql.ts';
 import { DbConnPool } from '../../src/sql/sql-driver.ts';
+import { fakeExecutor } from '../support/fake-executor.ts';
 import type { QueryHandler } from '../support/fake-pool.ts';
 import { createFakePool, noRowsResult, rowsResult } from '../support/fake-pool.ts';
 
@@ -229,7 +230,7 @@ test('rejects a name discovered on two servers unless a prefix separates them', 
   );
 
   const distinct = registry({ poolFactory, servers: [source(), source({ uri: { uri: other }, prefix: 'b-' })] });
-  await expect(distinct.use('b-shared', query)).resolves.toBeNull();
+  await expect(distinct.use('b-shared', query)).resolves.toEqual([]);
 });
 
 test('list shows a name found on two servers as an error entry', async () => {
@@ -443,8 +444,8 @@ test('keeps the version cache separate for each connection pool', async () => {
 
 test('caches the version per executor when the executor has no pool', async () => {
   const executor = (version: string) => {
-    const executeQuery = vi.fn(() => Promise.resolve([{ cells: { server_version: version } }]));
-    return { executeQuery, driver: { executeQuery } satisfies SqlExecutor };
+    const driver: SqlExecutor = fakeExecutor(() => [{ server_version: version }]);
+    return { executeQuery: driver.executeQuery, driver };
   };
   const a = executor('15.4');
   const b = executor('16.2');

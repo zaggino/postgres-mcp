@@ -2,13 +2,11 @@ import { afterEach, expect, it as test, vi } from 'vitest';
 
 import type { RegistryOptions } from '../../../src/database-registry.ts';
 import { createServer } from '../../../src/server.ts';
-import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
+import { fakeExecutor } from '../../support/fake-executor.ts';
 import { callToolText, connectClient } from '../../support/mcp-client.ts';
 import { createTestRegistry } from '../../support/registry.ts';
 
 const EXECUTION_ERROR = /^Error: .*Error executing query/u;
-
-type ExecuteQuery = SqlExecutor['executeQuery'];
 
 /** The driver factory the next server's registry uses; the real one when unset. */
 let getSqlDriver: RegistryOptions['getSqlDriver'];
@@ -29,13 +27,11 @@ function plan(extra: Record<string, unknown> = {}, node = {}) {
 
 /** A driver that answers EXPLAIN with `planData` and reports hypopg installed. */
 function useExplainDriver(planData: unknown) {
-  const executeQuery = vi.fn<ExecuteQuery>((query) =>
-    Promise.resolve(
-      query.includes('pg_extension') ? [{ cells: { extversion: '1.4.1' } }] : [{ cells: { 'QUERY PLAN': [planData] } }]
-    )
+  const driver = fakeExecutor((query) =>
+    query.includes('pg_extension') ? [{ extversion: '1.4.1' }] : [{ 'QUERY PLAN': [planData] }]
   );
-  getSqlDriver = () => ({ executeQuery });
-  return executeQuery;
+  getSqlDriver = () => driver;
+  return driver.executeQuery;
 }
 
 async function explainQuery(args: Record<string, unknown>): Promise<string> {
@@ -102,9 +98,10 @@ test('explain_query rejects analyze combined with hypothetical indexes', async (
 });
 
 test('explain_query formats a failing EXPLAIN as an error message', async () => {
-  getSqlDriver = () => ({
-    executeQuery: vi.fn<ExecuteQuery>().mockRejectedValue(new Error('Error executing query')),
-  });
+  getSqlDriver = () =>
+    fakeExecutor(() => {
+      throw new Error('Error executing query');
+    });
 
   const text = await explainQuery({ sql: 'INVALID SQL' });
 

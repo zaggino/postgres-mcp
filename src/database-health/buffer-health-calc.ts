@@ -2,7 +2,7 @@ import type { SqlExecutor } from '../sql/safe-sql.ts';
 
 async function hitRateReport(sqlDriver: SqlExecutor, query: string, label: string, threshold: number): Promise<string> {
   const result = await sqlDriver.executeQuery(query);
-  const rate = result?.[0]?.cells.rate;
+  const rate = result[0]?.rate;
 
   if (rate === null || rate === undefined) {
     return `No ${label.toLowerCase()} cache statistics available.`;

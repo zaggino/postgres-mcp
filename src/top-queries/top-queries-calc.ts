@@ -1,11 +1,9 @@
 import { toJson } from '../json.ts';
 import { logLine } from '../log.ts';
-import { checkExtension, getPostgresVersion } from '../sql/extension-utils.ts';
+import { PG_STAT_STATEMENTS, getPostgresVersion, isPgStatStatementsInstalled } from '../sql/extension-utils.ts';
 import { literal } from '../sql/literal.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
-
-export const PG_STAT_STATEMENTS = 'pg_stat_statements';
 
 const INSTALL_PG_STAT_STATEMENTS_MESSAGE =
   'The pg_stat_statements extension is required to ' +
@@ -74,9 +72,7 @@ export class TopQueriesCalc {
    * execution time or by `"mean"` execution time per call (default).
    */
   async getTopQueriesByTime(limit = 10, sortBy: 'total' | 'mean' = 'mean'): Promise<string> {
-    const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
-
-    if (!extensionStatus.isInstalled) {
+    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
       logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
       // Return installation instructions if the extension is not installed
       return INSTALL_PG_STAT_STATEMENTS_MESSAGE;
@@ -113,9 +109,7 @@ export class TopQueriesCalc {
    * `fracThreshold` filters queries by their fraction of total usage.
    */
   async getTopResourceQueries(fracThreshold = 0.05): Promise<string> {
-    const extensionStatus = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
-
-    if (!extensionStatus.isInstalled) {
+    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
       logLine(`Extension ${PG_STAT_STATEMENTS} is not installed`);
       // Return installation instructions if the extension is not installed
       return INSTALL_PG_STAT_STATEMENTS_MESSAGE;

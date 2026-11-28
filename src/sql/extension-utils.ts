@@ -147,6 +147,12 @@ export async function checkExtension(
   return result;
 }
 
+export const PG_STAT_STATEMENTS = 'pg_stat_statements';
+
+export async function isPgStatStatementsInstalled(sqlDriver: SqlExecutor): Promise<boolean> {
+  return (await checkExtension(sqlDriver, PG_STAT_STATEMENTS, false)).isInstalled;
+}
+
 /** Returns `[isInstalled, message]` with installation instructions for HypoPG. */
 export async function checkHypopgInstallationStatus(
   sqlDriver: SqlExecutor,
@@ -165,7 +171,7 @@ export async function checkHypopgInstallationStatus(
       return [
         false,
         'The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed.\n\n' +
-          "You can ask me to install 'hypopg' using the 'execute_query' tool.\n\n" +
+          "You can ask me to install 'hypopg' using the 'execute_sql' tool.\n\n" +
           "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. " +
           'It adds a virtual layer that simulates indexes without actually creating them in the database. ' +
           'It requires database privileges (often superuser) to install.\n\n' +
@@ -177,7 +183,7 @@ export async function checkHypopgInstallationStatus(
     return [
       false,
       'The hypopg extension is required to test hypothetical indexes, but it is not currently installed.\n' +
-        "You can ask me to install it using the 'execute_query' tool.\n" +
+        "You can ask me to install it using the 'execute_sql' tool.\n" +
         'It is generally safe to install and allows testing indexes without creating them.',
     ];
   }

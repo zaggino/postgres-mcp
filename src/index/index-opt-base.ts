@@ -5,17 +5,16 @@ import { errorMessage, UsageError } from '../errors.ts';
 import type { DtaTracer } from '../explain/explain-plan.ts';
 import { ExplainPlanTool } from '../explain/explain-plan.ts';
 import { isJsonObject } from '../json.ts';
-import { log, logLine } from '../log.ts';
+import { logLine } from '../log.ts';
 import { formatFixed } from '../py-format.ts';
 import { SqlBindParams, TableAliasVisitor } from '../sql/bind-params.ts';
 import * as cell from '../sql/cells.ts';
-import { checkExtension, checkHypopgInstallationStatus } from '../sql/extension-utils.ts';
+import { checkHypopgInstallationStatus, isPgStatStatementsInstalled } from '../sql/extension-utils.ts';
 import { IndexDefinition } from '../sql/index-definition.ts';
 import { AstNode, parseSql } from '../sql/pg-ast.ts';
 import type { SqlExecutor } from '../sql/safe-sql.ts';
 import { SafeSqlDriver, queryRows } from '../sql/safe-sql.ts';
 import type { Row } from '../sql/sql-driver.ts';
-import { PG_STAT_STATEMENTS } from '../top-queries/top-queries-calc.ts';
 
 export const MAX_NUM_INDEX_TUNING_QUERIES = 10;
 
@@ -279,6 +278,8 @@ export abstract class IndexTuningBase implements DtaTracer {
     }
 
     const session = new IndexTuningResult(sessionId, maxIndexSizeMb);
+    // dtaTrace appends to this same array, so every exit returns the full trace
+    session.dtaTraces = this.dtaTraces;
 
     await this.runPrechecks();
 
@@ -297,8 +298,6 @@ export abstract class IndexTuningBase implements DtaTracer {
       session.workload = await this.getQueryStats(minCalls, minAvgTimeMs, limit);
     }
 
-    session.dtaTraces = this.dtaTraces;
-
     if (session.workload.length === 0) {
       logLine('No workload to analyze');
       return session;
@@ -316,16 +315,10 @@ export abstract class IndexTuningBase implements DtaTracer {
     const workloadQueries = queryWeights.map(([query]) => query);
     this.dtaTrace(`Workload queries (${workloadQueries.length}): ${ppList(workloadQueries)}`);
 
-    try {
-      const recommendations = await this.generateRecommendations(queryWeights);
-      session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
-    } catch (error) {
-      // Leave no hypothetical index behind on a pooled connection; the original failure is the one to report
-      await queryRows(this.sqlDriver, 'SELECT hypopg_reset();').catch((resetError: unknown) => {
-        log('WARNING', `Error resetting hypothetical indexes: ${errorMessage(resetError)}`);
-      });
-      throw error;
-    }
+    const recommendations = await this.generateRecommendations(queryWeights);
+    session.recommendations = await this.formatRecommendations(queryWeights, recommendations);
+
+    // Reset HypoPG only once at the end
     await queryRows(this.sqlDriver, 'SELECT hypopg_reset();');
     return session;
   }
@@ -355,8 +348,7 @@ export abstract class IndexTuningBase implements DtaTracer {
 
   /** Throws when the workload cannot be read because pg_stat_statements is not installed. */
   async requirePgStatStatements(): Promise<void> {
-    const { isInstalled } = await checkExtension(this.sqlDriver, PG_STAT_STATEMENTS, false);
-    if (!isInstalled) {
+    if (!(await isPgStatStatementsInstalled(this.sqlDriver))) {
       throw new UsageError(
         'The pg_stat_statements extension is required to read the workload, but it is not installed in this ' +
           "database. Run 'CREATE EXTENSION pg_stat_statements;' (it must also be in shared_preload_libraries), " +

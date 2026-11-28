@@ -316,3 +316,15 @@ _BREAKING CHANGE REQUIRED_
 ## 2026-11-28 · Minor · Security · Hypothetical index definitions are built from unquoted input
 
 `IndexDefinition.definition` in `src/sql/index-definition.ts` interpolates `table`, `columns` and `using` into `CREATE INDEX ... ON <table> USING <using> (<columns>)` without quoting, and `explain_query` takes all three from the client (only typed as non-empty strings by the schema in `src/server.ts`). The text reaches Postgres as a quoted literal argument of `hypopg_create_index`, which builds a hypothetical index rather than running it, so no injection path is known; but restricted mode's allowlist walk sees only that literal, not the index expression inside it, and the values also feed the generated `postgres_mcp_idx_*` name. Harden by checking `table` as a (possibly schema-qualified) identifier, limiting `using` to the index methods (`btree`, `hash`, `gist`, `spgist`, `gin`, `brin`), and checking that each column parses as an index element.
+
+## 2026-11-28 · Major · Bug · Hypothetical indexes stay on pooled connections
+
+`generateExplainPlanWithHypotheticalIndexes` (`src/explain/explain-plan.ts`) runs `hypopg_reset(); hypopg_create_index(...); EXPLAIN ...` as one statement and leaves the indexes on that backend, and the index advisor's closing `hypopg_reset()` (`analyzeWorkload` in `src/index/index-opt-base.ts`) is a separate checkout from a pool of five, so it can reach a different backend; a failed analysis does not reset at all. A later plain `explain_query`, `execute_sql` `EXPLAIN` or advisor run on that backend then plans against indexes that do not exist. Reset on the same client that created them, for example by letting the driver run the create, `EXPLAIN` and reset on one checkout and return the `EXPLAIN` result rather than the last one.
+
+## 2026-11-28 · Minor · Bug · A `pg_stat_statements` that is installed but not preloaded passes the extension check
+
+`isPgStatStatementsInstalled` (`src/sql/extension-utils.ts`) only looks in `pg_extension`. When the extension is created but missing from `shared_preload_libraries`, `get_top_queries` and `analyze_workload_indexes` pass the check and then fail on reading the view with SQLSTATE 55000, which comes back as a statement rejection without `isError` and without the install guidance. Treat 55000 on that read as the missing prerequisite.
+
+## 2026-11-28 · Minor · Observability · The index advisor trace is lost when the analysis fails
+
+With `POSTGRES_MCP_INCLUDE_LANGFUSE_TRACE=true`, `_langfuse_trace` is part of a successful result only. A failure is thrown to `formatError`, so the trace that would explain where the search failed is dropped. If the trace is worth keeping, log it or attach it to the error result.

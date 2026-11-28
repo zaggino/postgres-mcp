@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import type { ExtensionStatus } from '../../src/sql/extension-utils.ts';
 import { queryRows } from '../../src/sql/safe-sql.ts';
 import { SqlDriver } from '../../src/sql/sql-driver.ts';
-import { PG_STAT_STATEMENTS, TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
+import { TopQueriesCalc } from '../../src/top-queries/top-queries-calc.ts';
 import { describeWithPostgres } from '../support/postgres.ts';
 
-const checkExtensionOverride = vi.hoisted(() => ({
-  status: null as ExtensionStatus | null,
+const installedOverride = vi.hoisted(() => ({
+  value: null as boolean | null,
 }));
 
 // ESM imports cannot be monkeypatched, so the module is wrapped instead: the
@@ -16,8 +15,10 @@ vi.mock('../../src/sql/extension-utils.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/sql/extension-utils.ts')>();
   return {
     ...actual,
-    checkExtension: (...args: Parameters<typeof actual.checkExtension>) =>
-      checkExtensionOverride.status ? Promise.resolve(checkExtensionOverride.status) : actual.checkExtension(...args),
+    isPgStatStatementsInstalled: (...args: Parameters<typeof actual.isPgStatStatementsInstalled>) =>
+      installedOverride.value === null
+        ? actual.isPgStatStatementsInstalled(...args)
+        : Promise.resolve(installedOverride.value),
   };
 });
 
@@ -101,12 +102,12 @@ describeWithPostgres('top queries with a real database', (postgres) => {
   let sqlDriver: SqlDriver;
 
   beforeEach(() => {
-    checkExtensionOverride.status = null;
+    installedOverride.value = null;
     sqlDriver = new SqlDriver({ engineUrl: postgres.connectionString() });
   });
 
   afterEach(async () => {
-    checkExtensionOverride.status = null;
+    installedOverride.value = null;
     await sqlDriver.conn?.close();
   });
 
@@ -149,13 +150,7 @@ describeWithPostgres('top queries with a real database', (postgres) => {
 
   test('returns installation instructions when pg_stat_statements is not installed', async () => {
     const calc = new TopQueriesCalc(sqlDriver);
-    checkExtensionOverride.status = {
-      isInstalled: false,
-      isAvailable: true,
-      name: PG_STAT_STATEMENTS,
-      message: 'Extension not installed',
-      defaultVersion: null,
-    };
+    installedOverride.value = false;
 
     const result = await calc.getTopQueriesByTime();
 

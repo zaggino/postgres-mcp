@@ -638,7 +638,7 @@ export class SqlDriver {
       if (!(error instanceof PoolClosedError)) {
         conn.recordError(error);
       }
-      throw new Error(errorMessage(error), { cause: error });
+      throw new Error(maskError(error, conn.connectionUrl), { cause: error });
     }
   }
 }

@@ -313,8 +313,10 @@ test('a string total cost in a plan is rejected instead of coerced to a number',
 test('index size estimation fails on NULL column statistics instead of assuming zero width', async () => {
   const dta = createAdvisor(createDriver(() => rows({ total_width: null, total_distinct: 5 })));
 
-  await expect(dta.estimateIndexSize('users', ['name'])).rejects.toThrow(CellError);
-  await expect(dta.estimateIndexSize('users', ['name'])).rejects.toThrow('total_width');
+  const error = await dta.estimateIndexSize('users', ['name']).catch((error_: unknown) => error_);
+
+  expect(error).toBeInstanceOf(CellError);
+  expect(error).toHaveProperty('message', expect.stringContaining('total_width'));
 });
 
 test('query statistics skip a statement whose text is hidden and keep the statistics of the rest as numbers', async () => {

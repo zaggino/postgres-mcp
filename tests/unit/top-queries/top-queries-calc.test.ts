@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExtensionStatus } from '../../../src/sql/extension-utils.ts';
 import type { SqlExecutor } from '../../../src/sql/safe-sql.ts';
 import type { Row } from '../../../src/sql/sql-driver.ts';
 import { TopQueriesCalc } from '../../../src/top-queries/top-queries-calc.ts';
 import { fakeExecutor } from '../../support/fake-executor.ts';
 
 const extensionUtils = vi.hoisted(() => ({
-  checkExtension: vi.fn(),
+  PG_STAT_STATEMENTS: 'pg_stat_statements',
+  isPgStatStatementsInstalled: vi.fn(),
   getPostgresVersion: vi.fn(),
 }));
 
@@ -17,16 +17,6 @@ type ExecuteResultSet = SqlExecutor['executeResultSet'];
 
 function row(cells: Row): Row {
   return cells;
-}
-
-function extensionStatus(isInstalled: boolean): ExtensionStatus {
-  return {
-    isInstalled,
-    isAvailable: true,
-    name: 'pg_stat_statements',
-    message: isInstalled ? 'Extension is installed' : 'Extension not installed',
-    defaultVersion: isInstalled ? '1.0' : null,
-  };
 }
 
 /** A driver that simulates the given PostgreSQL major version. */
@@ -73,7 +63,7 @@ function executedQuery(executeResultSet: ReturnType<typeof vi.fn<ExecuteResultSe
 describe(TopQueriesCalc, () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    extensionUtils.checkExtension.mockResolvedValue(extensionStatus(true));
+    extensionUtils.isPgStatStatementsInstalled.mockResolvedValue(true);
   });
 
   it('sorts by total_time on PostgreSQL 12 when sorting by total', async () => {
@@ -144,7 +134,7 @@ describe(TopQueriesCalc, () => {
 
   it('returns installation instructions when the extension is not installed', async () => {
     const { driver, executeResultSet } = createDriver(13);
-    extensionUtils.checkExtension.mockResolvedValue(extensionStatus(false));
+    extensionUtils.isPgStatStatementsInstalled.mockResolvedValue(false);
 
     const result = await new TopQueriesCalc(driver).getTopQueriesByTime(3);
 
